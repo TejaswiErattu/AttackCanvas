@@ -1,0 +1,162 @@
+@import "tailwindcss";
+
+/*
+ * AttackCanvas theme: warm cream paper, deep navy ink, a cobalt accent, with gold and teal
+ * as supporting hues. Display face Bricolage Grotesque, body face Figtree.
+ *
+ * Token names are kept from the earlier dark theme so no component changed meaning:
+ * "ink" is still the page background, "fg" the text, "mint" the accent.
+ *
+ * One light theme only. Text/background pairs, WCAG contrast (computed, AA needs 4.5):
+ *   fg     #12213f   14.4 on ink, 13.0 on surface-3
+ *   muted  #4f5a74    6.2 on ink,  5.6 on surface-3, 5.5 on mint-deep
+ *   subtle #58627b    5.5 on ink,  4.9 on surface-3, 4.9 on mint-deep
+ *   mint   #2a54d9    5.6 on ink,  5.0 on mint-deep; ink on a mint button 5.6
+ *   severity hues     4.7 or more on every surface and on their own 15% tint
+ * Severity hues are the deeper shades so they stay readable as text on the light surfaces;
+ * the -soft tints are backgrounds only.
+ */
+@theme {
+  --color-ink: #f8f3e6;
+  --color-ink-2: #f3eddd;
+  --color-surface: #fffcf4;
+  --color-surface-2: #fbf6ea;
+  --color-surface-3: #efe7d2;
+  --color-line: #e6dcc3;
+  --color-line-strong: #d3c6a5;
+  --color-fg: #12213f;
+  --color-muted: #4f5a74;
+  --color-subtle: #58627b;
+  --color-mint: #2a54d9;
+  --color-mint-strong: #2448c2;
+  --color-mint-deep: #dce6ff;
+  --color-gold: #f1c66b;
+  --color-teal: #2a9d96;
+  /* Diagram edges, used by ArchitectureGraph and the legend beside it. */
+  --color-boundary: #e0566b;
+  --color-flow: #8fa0c6;
+
+  --color-sev-critical: #b42336;
+  --color-sev-high: #9a4408;
+  --color-sev-medium: #765800;
+  --color-sev-low: #2f5bc9;
+  --color-sev-critical-soft: #ffd6de;
+  --color-sev-high-soft: #ffe6cf;
+  --color-sev-medium-soft: #fff3c6;
+  --color-sev-low-soft: #dcebff;
+
+  --font-sans: var(--font-figtree), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-bricolage), var(--font-figtree), Georgia, serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  background: var(--color-ink);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+}
+
+/* One visible focus ring everywhere, on every interactive element. */
+:focus-visible {
+  outline: 2px solid var(--color-mint);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--color-mint-deep);
+  color: var(--color-fg);
+}
+
+/* A soft sky-and-gold wash behind the hero. */
+.bg-glow {
+  background:
+    radial-gradient(60% 50% at 50% 0%, rgba(42, 84, 217, 0.08), transparent 70%),
+    radial-gradient(40% 40% at 85% 20%, rgba(241, 198, 107, 0.18), transparent 70%),
+    var(--color-ink);
+}
+
+/* Dot grid, as on the architecture canvas. */
+.bg-grid {
+  background-image: radial-gradient(var(--color-line) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+
+/* Risk paths in the home-page illustration. Static under reduced motion (below). */
+@keyframes dash-flow {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+.risk-path {
+  stroke-dasharray: 6 6;
+  animation: dash-flow 1.6s linear infinite;
+}
+
+@keyframes pulse-ring {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+.pulse-ring {
+  animation: pulse-ring 2.4s ease-in-out infinite;
+}
+
+/* React Flow, re-skinned for the cream theme. */
+.react-flow .react-flow__controls {
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: none;
+}
+.react-flow .react-flow__controls-button {
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-line);
+  fill: var(--color-fg);
+  color: var(--color-fg);
+}
+.react-flow .react-flow__controls-button:hover {
+  background: var(--color-surface-3);
+}
+.react-flow .react-flow__controls-button svg {
+  fill: var(--color-fg);
+}
+.react-flow .react-flow__minimap {
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+}
+.react-flow__node {
+  cursor: pointer;
+}
+.react-flow__node:focus-visible {
+  outline: 2px solid var(--color-mint);
+  outline-offset: 3px;
+}
+.react-flow .react-flow__edge-text {
+  font-family: var(--font-sans);
+}
+.react-flow .react-flow__attribution {
+  background: transparent;
+}
+.react-flow .react-flow__attribution a {
+  color: var(--color-subtle);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

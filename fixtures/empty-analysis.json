@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "1.0",
+  "analysisLevel": 1,
+  "repo": {
+    "owner": "acme",
+    "name": "hello-static",
+    "ref": "main",
+    "languages": ["Markdown"],
+    "frameworks": [],
+    "fileCountAnalyzed": 3,
+    "analyzedAt": "2026-09-19T12:00:00Z"
+  },
+  "components": [],
+  "dataFlows": [],
+  "trustBoundaries": [],
+  "unknowns": [],
+  "evidence": [],
+  "threats": [],
+  "questions": [],
+  "assumptions": [],
+  "limitations": [
+    "Too little application code was found to identify components, data flows or threats."
+  ]
+}

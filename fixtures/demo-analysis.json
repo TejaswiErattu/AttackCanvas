@@ -1,0 +1,682 @@
+{
+  "schemaVersion": "1.0",
+  "analysisLevel": 2,
+  "repo": {
+    "owner": "acme",
+    "name": "acme-notes",
+    "ref": "main",
+    "languages": ["TypeScript", "SQL", "HCL"],
+    "frameworks": ["React", "Express", "PostgreSQL"],
+    "fileCountAnalyzed": 142,
+    "analyzedAt": "2026-09-19T12:00:00Z"
+  },
+  "components": [
+    {
+      "id": "user",
+      "name": "User",
+      "type": "actor",
+      "description": "End user who writes, searches and shares notes from a browser.",
+      "technologies": [],
+      "files": [],
+      "assets": ["personal notes", "account credentials"],
+      "position": { "x": 0, "y": 200 }
+    },
+    {
+      "id": "web-frontend",
+      "name": "Web Frontend",
+      "type": "frontend",
+      "description": "React single-page app that renders notes and calls the API with a JWT bearer token.",
+      "technologies": ["React", "TypeScript", "Vite"],
+      "files": [
+        "src/web/App.tsx",
+        "src/web/api/client.ts",
+        "src/web/components/NoteView.tsx"
+      ],
+      "assets": ["JWT held in the browser"],
+      "position": { "x": 250, "y": 100 }
+    },
+    {
+      "id": "api-server",
+      "name": "API Server",
+      "type": "api",
+      "description": "Express API that authenticates users with JWTs, serves notes and attachments, exposes admin routes and receives Stripe webhooks.",
+      "technologies": ["Express", "Node.js", "jsonwebtoken", "node-postgres"],
+      "files": [
+        "src/server/index.ts",
+        "src/server/config.ts",
+        "src/server/middleware/auth.ts",
+        "src/server/routes/notes.ts",
+        "src/server/routes/admin.ts",
+        "src/server/routes/attachments.ts",
+        "src/server/routes/webhooks/stripe.ts",
+        "src/server/db/queries.ts"
+      ],
+      "assets": ["JWT signing secret", "user data in transit"],
+      "position": { "x": 500, "y": 300 }
+    },
+    {
+      "id": "admin-panel",
+      "name": "Admin Panel",
+      "type": "frontend",
+      "description": "React admin interface for listing users, editing accounts and exporting data.",
+      "technologies": ["React", "TypeScript"],
+      "files": ["src/admin/App.tsx", "src/admin/pages/Users.tsx"],
+      "assets": ["user management", "bulk data export"],
+      "position": { "x": 250, "y": 300 }
+    },
+    {
+      "id": "postgres-db",
+      "name": "Postgres Database",
+      "type": "database",
+      "description": "PostgreSQL database holding user accounts and notes.",
+      "technologies": ["PostgreSQL"],
+      "files": ["src/server/db/queries.ts", "db/schema.sql"],
+      "assets": ["notes", "user accounts"],
+      "position": { "x": 750, "y": 200 }
+    },
+    {
+      "id": "s3-attachments",
+      "name": "S3 Attachments Bucket",
+      "type": "storage",
+      "description": "S3 bucket storing files attached to notes.",
+      "technologies": ["AWS S3", "Terraform"],
+      "files": ["infra/terraform/s3.tf", "src/server/routes/attachments.ts"],
+      "assets": ["note attachments"],
+      "position": { "x": 750, "y": 400 }
+    },
+    {
+      "id": "stripe",
+      "name": "Stripe",
+      "type": "external_service",
+      "description": "Payment provider that sends subscription events to the API by webhook.",
+      "technologies": ["Stripe"],
+      "files": ["src/server/routes/webhooks/stripe.ts"],
+      "assets": ["payment and subscription events"],
+      "position": { "x": 250, "y": 500 }
+    }
+  ],
+  "dataFlows": [
+    {
+      "id": "user-to-frontend",
+      "sourceId": "user",
+      "targetId": "web-frontend",
+      "label": "Loads the app and reads notes",
+      "protocol": "HTTPS",
+      "dataClassification": "public",
+      "crossesTrustBoundary": false
+    },
+    {
+      "id": "user-to-admin",
+      "sourceId": "user",
+      "targetId": "admin-panel",
+      "label": "Admins open the admin panel and sign in",
+      "protocol": "HTTPS",
+      "dataClassification": "credential",
+      "crossesTrustBoundary": true,
+      "boundaryId": "application-boundary"
+    },
+    {
+      "id": "frontend-to-api",
+      "sourceId": "web-frontend",
+      "targetId": "api-server",
+      "label": "REST calls carrying the JWT bearer token",
+      "protocol": "HTTPS",
+      "dataClassification": "credential",
+      "crossesTrustBoundary": true,
+      "boundaryId": "application-boundary"
+    },
+    {
+      "id": "admin-to-api",
+      "sourceId": "admin-panel",
+      "targetId": "api-server",
+      "label": "Admin actions sent to /admin routes",
+      "protocol": "HTTPS",
+      "dataClassification": "internal",
+      "crossesTrustBoundary": false
+    },
+    {
+      "id": "stripe-to-api-webhook",
+      "sourceId": "stripe",
+      "targetId": "api-server",
+      "label": "Payment and subscription webhook events",
+      "protocol": "HTTPS",
+      "dataClassification": "sensitive",
+      "crossesTrustBoundary": true,
+      "boundaryId": "application-boundary"
+    },
+    {
+      "id": "api-to-database",
+      "sourceId": "api-server",
+      "targetId": "postgres-db",
+      "label": "Reads and writes notes and accounts",
+      "protocol": "PostgreSQL over TLS",
+      "dataClassification": "sensitive",
+      "crossesTrustBoundary": true,
+      "boundaryId": "data-boundary"
+    },
+    {
+      "id": "api-to-s3",
+      "sourceId": "api-server",
+      "targetId": "s3-attachments",
+      "label": "Uploads attachments and issues pre-signed download links",
+      "protocol": "HTTPS",
+      "dataClassification": "sensitive",
+      "crossesTrustBoundary": true,
+      "boundaryId": "data-boundary"
+    },
+    {
+      "id": "frontend-to-s3",
+      "sourceId": "web-frontend",
+      "targetId": "s3-attachments",
+      "label": "Downloads attachments through pre-signed URLs",
+      "protocol": "HTTPS",
+      "dataClassification": "sensitive",
+      "crossesTrustBoundary": true,
+      "boundaryId": "data-boundary"
+    }
+  ],
+  "trustBoundaries": [
+    {
+      "id": "internet-boundary",
+      "name": "Internet",
+      "componentIds": ["user", "web-frontend", "stripe"],
+      "description": "Untrusted clients and third parties reaching the system over the public internet."
+    },
+    {
+      "id": "application-boundary",
+      "name": "Application",
+      "componentIds": ["api-server", "admin-panel"],
+      "description": "Acme's own server-side code and admin tooling."
+    },
+    {
+      "id": "data-boundary",
+      "name": "Data",
+      "componentIds": ["postgres-db", "s3-attachments"],
+      "description": "Persistent stores holding user data, reachable only through application credentials."
+    }
+  ],
+  "unknowns": [
+    {
+      "id": "admin-panel-exposure",
+      "description": "Whether the admin panel is reachable from the public internet or restricted to a VPN or IP allowlist.",
+      "affectsComponentIds": ["admin-panel", "api-server"]
+    },
+    {
+      "id": "s3-bucket-access-policy",
+      "description": "Whether the attachments bucket enforces S3 Block Public Access and restricts reads to pre-signed URLs.",
+      "affectsComponentIds": ["s3-attachments"]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "admin-routes-no-role-check",
+      "kind": "code",
+      "source": "detector",
+      "summary": "Admin router registers /users, /users/:id and /export behind authenticate() only, with no role check and no audit logging.",
+      "filePath": "src/server/routes/admin.ts",
+      "lineStart": 8,
+      "lineEnd": 27,
+      "snippet": "router.use(authenticate);\nrouter.get(\"/users\", listAllUsers);\nrouter.patch(\"/users/:id\", updateUser);\nrouter.get(\"/export\", exportAllNotes);"
+    },
+    {
+      "id": "admin-authz-semgrep",
+      "kind": "scanner",
+      "source": "semgrep",
+      "summary": "Semgrep flagged admin route handlers reachable without an authorization check.",
+      "filePath": "src/server/routes/admin.ts",
+      "lineStart": 8,
+      "lineEnd": 14,
+      "ruleId": "acme.express.admin-route-without-role-check"
+    },
+    {
+      "id": "jwt-hardcoded-fallback-secret",
+      "kind": "code",
+      "source": "detector",
+      "summary": "JWT signing secret falls back to a hard-coded value when JWT_SECRET is unset (value redacted).",
+      "filePath": "src/server/config.ts",
+      "lineStart": 9,
+      "lineEnd": 12,
+      "snippet": "jwtSecret: process.env.JWT_SECRET ?? \"[REDACTED]\","
+    },
+    {
+      "id": "jwt-hardcoded-secret-semgrep",
+      "kind": "scanner",
+      "source": "semgrep",
+      "summary": "Semgrep found a hard-coded JWT secret.",
+      "filePath": "src/server/config.ts",
+      "lineStart": 11,
+      "lineEnd": 11,
+      "ruleId": "javascript.jsonwebtoken.security.jwt-hardcode.hardcoded-jwt-secret"
+    },
+    {
+      "id": "jsonwebtoken-advisory",
+      "kind": "dependency",
+      "source": "osv",
+      "summary": "jsonwebtoken 8.5.1 is affected by signature validation bypass through an insecure default algorithm in jwt.verify(); fixed in 9.0.0.",
+      "filePath": "package.json",
+      "lineStart": 23,
+      "lineEnd": 23,
+      "ruleId": "GHSA-qwph-4952-7xr6",
+      "url": "https://osv.dev/vulnerability/GHSA-qwph-4952-7xr6"
+    },
+    {
+      "id": "stripe-webhook-unverified",
+      "kind": "code",
+      "source": "detector",
+      "summary": "Webhook handler trusts the parsed request body and never calls stripe.webhooks.constructEvent with the Stripe-Signature header.",
+      "filePath": "src/server/routes/webhooks/stripe.ts",
+      "lineStart": 12,
+      "lineEnd": 30,
+      "snippet": "const event = req.body as Stripe.Event;\nawait handleStripeEvent(event);"
+    },
+    {
+      "id": "s3-no-public-access-block",
+      "kind": "config",
+      "source": "detector",
+      "summary": "The attachments bucket is declared without an aws_s3_bucket_public_access_block resource.",
+      "filePath": "infra/terraform/s3.tf",
+      "lineStart": 1,
+      "lineEnd": 18
+    },
+    {
+      "id": "s3-policy-not-in-repo",
+      "kind": "assumption",
+      "source": "ai",
+      "summary": "The effective bucket policy and account-level Block Public Access settings live outside the repository and could not be checked."
+    },
+    {
+      "id": "search-sql-concatenation",
+      "kind": "code",
+      "source": "detector",
+      "summary": "Note search interpolates the user-supplied term into the SQL string instead of binding it as a parameter.",
+      "filePath": "src/server/db/queries.ts",
+      "lineStart": 58,
+      "lineEnd": 66,
+      "snippet": "const sql = `SELECT id, title FROM notes WHERE owner_id = $1 AND body ILIKE '%${term}%'`;"
+    },
+    {
+      "id": "search-sql-semgrep",
+      "kind": "scanner",
+      "source": "semgrep",
+      "summary": "Semgrep found a node-postgres query built from unsanitised input.",
+      "filePath": "src/server/db/queries.ts",
+      "lineStart": 61,
+      "lineEnd": 61,
+      "ruleId": "javascript.lang.security.audit.sqli.node-postgres-sqli.node-postgres-sqli"
+    },
+    {
+      "id": "admin-mounted-publicly",
+      "kind": "code",
+      "source": "detector",
+      "summary": "Admin router is mounted on the same public Express app, with no IP allowlist or separate listener.",
+      "filePath": "src/server/index.ts",
+      "lineStart": 29,
+      "lineEnd": 33,
+      "snippet": "app.use(\"/admin\", adminRouter);"
+    },
+    {
+      "id": "admin-cors-open",
+      "kind": "scanner",
+      "source": "semgrep",
+      "summary": "CORS reflects any origin with credentials enabled, and applies to admin routes.",
+      "filePath": "src/server/index.ts",
+      "lineStart": 22,
+      "lineEnd": 25,
+      "ruleId": "javascript.express.security.cors-misconfiguration.cors-misconfiguration"
+    },
+    {
+      "id": "admin-same-origin-inference",
+      "kind": "inference",
+      "source": "ai",
+      "summary": "The admin SPA appears to be served from the same host as the main frontend, which suggests no network-level separation."
+    },
+    {
+      "id": "search-no-limits-inference",
+      "kind": "inference",
+      "source": "ai",
+      "summary": "No rate limiting, pagination or query timeout was found on the note search route, and the search pattern starts with a wildcard, so each request likely scans the notes table."
+    }
+  ],
+  "threats": [
+    {
+      "id": "admin-routes-missing-authz",
+      "title": "Admin routes accept any authenticated user",
+      "stride": ["E"],
+      "owasp": ["A01:2025"],
+      "cwe": ["CWE-862"],
+      "componentIds": ["api-server", "admin-panel"],
+      "dataFlowIds": ["admin-to-api"],
+      "asset": "All user accounts and notes",
+      "attackScenario": "An attacker with any valid account, whether self-registered or a compromised regular user, sends their ordinary JWT to GET /admin/users. The admin router in src/server/routes/admin.ts only checks that a token is present and never inspects a role claim, so the response lists every account's email address, plan and last-login time. The attacker then calls GET /admin/export, which streams the entire notes table as CSV and exposes every user's private notes and attachment links. Using PATCH /admin/users/:id they promote their own account to admin, or change the email address on a target account and take it over through the password-reset flow. Nothing is written to a log that would let the team reconstruct which records were read or changed, so the breach could go unnoticed for weeks.",
+      "evidenceIds": [
+        "admin-routes-no-role-check",
+        "admin-authz-semgrep",
+        "admin-mounted-publicly",
+        "admin-cors-open"
+      ],
+      "assumptions": [],
+      "dependsOnUnknownIds": ["admin-panel-exposure"],
+      "impact": 5,
+      "likelihood": 4,
+      "impactReason": "Full read and write access to every user's account and notes, including a bulk export of the notes table.",
+      "likelihoodReason": "Any authenticated user can reach these routes, and a missing role check is easy to discover.",
+      "severity": "critical",
+      "confidence": 0.7,
+      "confidenceLabel": "high",
+      "basis": "evidence_backed",
+      "mitigation": {
+        "summary": "Require an admin role on every admin route.",
+        "steps": [
+          "Add a requireRole(\"admin\") middleware after authenticate on the admin router.",
+          "Store the role server-side and read it from the database, not from a client-editable claim.",
+          "Restrict CORS on the admin routes to the admin panel's own origin.",
+          "Add tests asserting a non-admin token receives 403 on every /admin route."
+        ],
+        "codeLocation": "src/server/routes/admin.ts"
+      },
+      "priority": "fix_now"
+    },
+    {
+      "id": "jwt-hardcoded-secret",
+      "title": "JWT signed with a hard-coded fallback secret",
+      "stride": ["S", "E"],
+      "owasp": ["A04:2025", "A07:2025"],
+      "cwe": ["CWE-798", "CWE-321"],
+      "componentIds": ["api-server", "web-frontend"],
+      "dataFlowIds": ["frontend-to-api"],
+      "asset": "Session tokens and admin privileges",
+      "attackScenario": "When JWT_SECRET is not set in an environment, the API signs and verifies tokens with the fallback value committed to the repository. Anyone who can read the repository can mint a token for any user id, including an admin, and present it to the API as a valid bearer token. The outdated jsonwebtoken library adds further token-validation weaknesses on top of this.",
+      "evidenceIds": [
+        "jwt-hardcoded-fallback-secret",
+        "jwt-hardcoded-secret-semgrep",
+        "jsonwebtoken-advisory"
+      ],
+      "assumptions": [],
+      "dependsOnUnknownIds": [],
+      "impact": 5,
+      "likelihood": 3,
+      "impactReason": "A forged admin token gives full control of the API.",
+      "likelihoodReason": "The fallback only applies when JWT_SECRET is unset, but the fallback value is public in the repository.",
+      "severity": "high",
+      "confidence": 1,
+      "confidenceLabel": "high",
+      "basis": "evidence_backed",
+      "mitigation": {
+        "summary": "Remove the fallback and fail fast when JWT_SECRET is missing.",
+        "steps": [
+          "Delete the hard-coded default and throw at startup if JWT_SECRET is unset.",
+          "Rotate the signing secret in every environment.",
+          "Upgrade jsonwebtoken to 9.0.0 or later."
+        ],
+        "codeLocation": "src/server/config.ts"
+      },
+      "priority": "fix_now"
+    },
+    {
+      "id": "stripe-webhook-unverified",
+      "title": "Stripe webhook events are not signature-verified",
+      "stride": ["S"],
+      "owasp": ["A08:2025"],
+      "cwe": ["CWE-347"],
+      "componentIds": ["api-server", "stripe"],
+      "dataFlowIds": ["stripe-to-api-webhook"],
+      "asset": "Subscription and billing state",
+      "attackScenario": "An attacker who discovers the webhook URL posts a forged customer.subscription.updated event. Because the handler trusts the parsed body without verifying the Stripe-Signature header, the API marks the attacker's account as a paying customer, or cancels another user's subscription.",
+      "evidenceIds": ["stripe-webhook-unverified"],
+      "assumptions": [],
+      "dependsOnUnknownIds": [],
+      "impact": 4,
+      "likelihood": 3,
+      "impactReason": "Forged events can grant paid features for free or cancel legitimate subscriptions.",
+      "likelihoodReason": "The endpoint is public by design; exploiting it needs only the URL and knowledge of Stripe's event format.",
+      "severity": "high",
+      "confidence": 0.35,
+      "confidenceLabel": "low",
+      "basis": "evidence_backed",
+      "mitigation": {
+        "summary": "Verify every webhook with the Stripe signing secret.",
+        "steps": [
+          "Read the raw request body for this route, before any JSON parser runs.",
+          "Call stripe.webhooks.constructEvent with the Stripe-Signature header and reject failures with 400.",
+          "Store processed event ids and ignore repeats."
+        ],
+        "codeLocation": "src/server/routes/webhooks/stripe.ts"
+      },
+      "priority": "fix_soon"
+    },
+    {
+      "id": "s3-attachments-public-read",
+      "title": "Attachment bucket may allow public reads",
+      "stride": ["I"],
+      "owasp": ["A02:2025"],
+      "cwe": ["CWE-732"],
+      "componentIds": ["s3-attachments", "api-server"],
+      "dataFlowIds": ["api-to-s3", "frontend-to-s3"],
+      "asset": "User note attachments",
+      "attackScenario": "The bucket is declared without a public access block, and its effective policy is not visible from the repository. If the bucket or an object ACL allows public reads, anyone who obtains an object key can download another user's attachment directly from S3, bypassing the API's authorization entirely.",
+      "evidenceIds": ["s3-no-public-access-block", "s3-policy-not-in-repo"],
+      "assumptions": [
+        "The attachments bucket does not have S3 Block Public Access enabled."
+      ],
+      "dependsOnUnknownIds": ["s3-bucket-access-policy"],
+      "impact": 3,
+      "likelihood": 3,
+      "impactReason": "Attachments are private user files, but exposure is limited to objects whose keys are known.",
+      "likelihoodReason": "Depends on the bucket policy, which is unconfirmed; object keys are hard to guess.",
+      "severity": "medium",
+      "confidence": 0,
+      "confidenceLabel": "low",
+      "basis": "evidence_backed",
+      "mitigation": {
+        "summary": "Block public access and serve attachments only through short-lived pre-signed URLs.",
+        "steps": [
+          "Add an aws_s3_bucket_public_access_block with all four settings set to true.",
+          "Confirm no bucket policy or object ACL grants public read.",
+          "Keep pre-signed URL lifetimes short."
+        ],
+        "codeLocation": "infra/terraform/s3.tf"
+      },
+      "priority": "monitor"
+    },
+    {
+      "id": "sql-injection-note-search",
+      "title": "SQL injection in note search",
+      "stride": ["T"],
+      "owasp": ["A05:2025"],
+      "cwe": ["CWE-89"],
+      "componentIds": ["api-server", "postgres-db"],
+      "dataFlowIds": ["api-to-database"],
+      "asset": "Notes and account records in Postgres",
+      "attackScenario": "A signed-in user submits a search term containing SQL, such as a quote followed by a UNION SELECT. The term is concatenated into the query string, so the attacker can read other users' notes and account rows, and can modify or delete data through the same injection point.",
+      "evidenceIds": ["search-sql-concatenation", "search-sql-semgrep"],
+      "assumptions": [],
+      "dependsOnUnknownIds": [],
+      "impact": 4,
+      "likelihood": 4,
+      "impactReason": "Reads and writes across the whole notes table, not just the caller's rows.",
+      "likelihoodReason": "The parameter is user-controlled, two independent tools confirm the sink, and any signed-in user can reach the route.",
+      "severity": "high",
+      "confidence": 0.7,
+      "confidenceLabel": "high",
+      "basis": "evidence_backed",
+      "mitigation": {
+        "summary": "Use a parameterised query for the search term.",
+        "steps": [
+          "Pass the term as a bound parameter, for example body ILIKE $2, and wrap it with wildcards in code.",
+          "Escape LIKE metacharacters in the term.",
+          "Add a test that a term containing a quote does not change the query."
+        ],
+        "codeLocation": "src/server/db/queries.ts"
+      },
+      "priority": "fix_now"
+    },
+    {
+      "id": "vulnerable-jsonwebtoken-dependency",
+      "title": "jsonwebtoken 8.5.1 has published vulnerabilities",
+      "stride": ["S"],
+      "owasp": ["A03:2025"],
+      "cwe": ["CWE-1395"],
+      "componentIds": ["api-server"],
+      "dataFlowIds": [],
+      "asset": "Session token integrity",
+      "attackScenario": "The API depends on jsonwebtoken 8.5.1, which OSV lists as affected by a signature validation bypass. When jwt.verify() is called with a falsy secret and no algorithms option, the library can fall back to the insecure none algorithm, letting an attacker present an unsigned token as valid.",
+      "evidenceIds": ["jsonwebtoken-advisory"],
+      "assumptions": [],
+      "dependsOnUnknownIds": [],
+      "impact": 3,
+      "likelihood": 2,
+      "impactReason": "A bypass would let an attacker act as another user.",
+      "likelihoodReason": "Exploitation needs a falsy secret and no pinned algorithms, and how verify() is called was not fully analysed.",
+      "severity": "medium",
+      "confidence": 0.3,
+      "confidenceLabel": "low",
+      "basis": "evidence_backed",
+      "mitigation": {
+        "summary": "Upgrade jsonwebtoken and pin the accepted algorithms.",
+        "steps": [
+          "Upgrade jsonwebtoken to 9.0.0 or later.",
+          "Pass an explicit algorithms array to every jwt.verify() call."
+        ],
+        "codeLocation": "package.json"
+      },
+      "priority": "monitor"
+    },
+    {
+      "id": "admin-actions-unaudited",
+      "title": "Admin actions are not audited",
+      "stride": ["R"],
+      "owasp": ["A09:2025"],
+      "cwe": ["CWE-778"],
+      "componentIds": ["admin-panel", "api-server"],
+      "dataFlowIds": ["admin-to-api"],
+      "asset": "Audit trail for privileged actions",
+      "attackScenario": "A malicious or compromised admin exports data or changes accounts, and no log records who did what. The team cannot investigate the incident, attribute the actions to a person, or rule out that an admin's account was misused.",
+      "evidenceIds": ["admin-routes-no-role-check"],
+      "assumptions": [],
+      "dependsOnUnknownIds": [],
+      "impact": 2,
+      "likelihood": 2,
+      "impactReason": "Limits detection and investigation rather than causing direct data loss.",
+      "likelihoodReason": "Only matters after another failure, such as a compromised admin account.",
+      "severity": "low",
+      "confidence": 0.35,
+      "confidenceLabel": "low",
+      "basis": "evidence_backed",
+      "mitigation": {
+        "summary": "Write an audit record for every admin action.",
+        "steps": [
+          "Log actor id, action, target and timestamp for each admin route.",
+          "Ship audit logs to storage that admins cannot edit."
+        ],
+        "codeLocation": "src/server/routes/admin.ts"
+      },
+      "priority": "monitor"
+    },
+    {
+      "id": "admin-panel-exposed",
+      "title": "Admin panel may be reachable from the public internet",
+      "stride": ["E"],
+      "owasp": ["A06:2025"],
+      "cwe": [],
+      "componentIds": ["admin-panel"],
+      "dataFlowIds": ["user-to-admin"],
+      "asset": "Admin interface and privileged sessions",
+      "attackScenario": "The admin panel appears to be served alongside the public frontend. If nothing at the network layer restricts it, attackers can find /admin and brute-force or phish admin credentials, and a single compromised admin session exposes every user's data.",
+      "evidenceIds": ["admin-same-origin-inference"],
+      "assumptions": [
+        "The admin panel is deployed on the public internet without a VPN or IP allowlist.",
+        "No WAF or bot protection sits in front of the admin panel."
+      ],
+      "dependsOnUnknownIds": ["admin-panel-exposure"],
+      "impact": 4,
+      "likelihood": 3,
+      "impactReason": "Compromising an admin session exposes every user's data.",
+      "likelihoodReason": "Public exposure is unconfirmed; the panel only appears to share a host with the public frontend.",
+      "severity": "high",
+      "confidence": 0.05,
+      "confidenceLabel": "low",
+      "basis": "assumption_dependent",
+      "mitigation": {
+        "summary": "Restrict the admin panel to trusted networks and protect its sign-in.",
+        "steps": [
+          "Serve the admin panel from a separate host behind a VPN or IP allowlist.",
+          "Add rate limiting and bot protection to admin sign-in.",
+          "Require multi-factor authentication for admin sign-in."
+        ],
+        "codeLocation": "src/server/index.ts"
+      },
+      "priority": "fix_soon"
+    },
+    {
+      "id": "note-search-resource-exhaustion",
+      "title": "Unbounded note search can exhaust database resources",
+      "stride": ["D"],
+      "owasp": ["A06:2025"],
+      "cwe": ["CWE-400"],
+      "componentIds": ["api-server", "postgres-db"],
+      "dataFlowIds": ["api-to-database"],
+      "asset": "API and database availability",
+      "attackScenario": "A signed-in user repeatedly searches for short terms with a leading wildcard. Each query scans the notes table and returns an unlimited result set, so a few concurrent requests can saturate database CPU and connections and slow or take down the service for everyone.",
+      "evidenceIds": ["search-no-limits-inference"],
+      "assumptions": [
+        "No API gateway or reverse proxy in front of the API applies rate limiting."
+      ],
+      "dependsOnUnknownIds": [],
+      "impact": 3,
+      "likelihood": 3,
+      "impactReason": "Degrades the service for all users until the load stops.",
+      "likelihoodReason": "The route is reachable by any signed-in user and needs no special skill to abuse.",
+      "severity": "medium",
+      "confidence": 0.05,
+      "confidenceLabel": "low",
+      "basis": "assumption_dependent",
+      "mitigation": {
+        "summary": "Bound search cost with limits and rate limiting.",
+        "steps": [
+          "Add a LIMIT and pagination to the search query.",
+          "Rate limit the search endpoint per user.",
+          "Consider a full-text index instead of a leading-wildcard ILIKE."
+        ],
+        "codeLocation": "src/server/db/queries.ts"
+      },
+      "priority": "monitor"
+    }
+  ],
+  "questions": [
+    {
+      "id": "admin-panel-network-access",
+      "text": "Who can reach the admin panel over the network?",
+      "whyAsking": "Public exposure decides how likely the admin authorization and credential attacks are.",
+      "options": [
+        "Only through a VPN or IP allowlist",
+        "The public internet, behind login only",
+        "The public internet, with no extra protection"
+      ],
+      "allowsUnsure": true,
+      "affectedThreatIds": ["admin-routes-missing-authz", "admin-panel-exposed"],
+      "unknownId": "admin-panel-exposure",
+      "defaultAssumption": "The admin panel is reachable from the public internet behind login only.",
+      "valueScore": 0.85
+    },
+    {
+      "id": "attachments-bucket-public-access",
+      "text": "Is S3 Block Public Access enabled for the attachments bucket?",
+      "whyAsking": "The bucket policy is not in the repository, and it decides whether attachments can be read without going through the API.",
+      "options": [
+        "Yes, at both bucket and account level",
+        "Yes, at bucket level only",
+        "No"
+      ],
+      "allowsUnsure": true,
+      "affectedThreatIds": ["s3-attachments-public-read"],
+      "unknownId": "s3-bucket-access-policy",
+      "defaultAssumption": "The attachments bucket does not have S3 Block Public Access enabled.",
+      "valueScore": 0.6
+    }
+  ],
+  "assumptions": ["The default branch reflects what is deployed to production."],
+  "limitations": [
+    "Infrastructure outside the repository, such as network rules, WAF settings and AWS account configuration, was not visible.",
+    "Behaviour was inferred from source code; nothing was executed."
+  ]
+}
