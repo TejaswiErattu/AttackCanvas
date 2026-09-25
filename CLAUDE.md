@@ -21,7 +21,9 @@ Rules:
      semgrep +0.25, osv +0.30, developer answer +0.30, second independent
      source +0.10, inference only +0.20, unconfirmed assumption -0.15;
      clamp 0..1. Gap floor: if every supporting evidence item is a control
-     gap and their combined certainty is >= 0.8, confidence is at least 0.40.
+     gap and their combined certainty is >= 0.8, confidence is at least 0.40,
+     but only when every CWE claimed by the threat is among the CWEs asserted
+     by its cited control gaps (a threat with no CWE gets no floor).
      Inference and assumption items are not supporting evidence: an
      inference is a conclusion, not direct support, so it neither blocks the
      floor nor counts toward it.

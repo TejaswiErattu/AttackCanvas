@@ -108,7 +108,7 @@ export function scoreThreat(
   gaps: ReadonlyMap<string, ControlGap>,
 ): ScoredThreat {
   const cited = evidence.filter((e) => draft.evidenceIds.includes(e.id));
-  const { value, breakdown } = confidenceOf(cited, gaps, draft.assumptions);
+  const { value, breakdown } = confidenceOf(cited, gaps, draft.assumptions, draft.cwe);
   const severity = severityOf(draft.impact, draft.likelihood);
   return {
     threat: {
