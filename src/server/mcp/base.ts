@@ -260,6 +260,42 @@ export type Connection = {
   closeClient(): Promise<void>;
 };
 
+// Shutdown handlers are process-wide, not per connection: each connection only adds
+// its closer to this set, and one exit/SIGINT/SIGTERM listener set closes them all.
+// The state lives on globalThis so a reloaded module (dev HMR, vi.resetModules) shares
+// it instead of stacking another listener set on `process`.
+type ShutdownState = { closers: Set<() => Promise<void>>; registered: boolean };
+const SHUTDOWN_KEY = Symbol.for("attackcanvas.mcp.shutdown");
+const shutdownState: ShutdownState = ((globalThis as Record<symbol, unknown>)[SHUTDOWN_KEY] ??= {
+  closers: new Set(),
+  registered: false,
+}) as ShutdownState;
+const openConnections = shutdownState.closers;
+
+function closeAll(): Promise<unknown> {
+  return Promise.allSettled([...openConnections].map((close) => close()));
+}
+
+function registerShutdownOnce(): void {
+  if (shutdownState.registered) return;
+  shutdownState.registered = true;
+
+  process.once("exit", () => {
+    void closeAll();
+  });
+
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    process.once(signal, () => {
+      void closeAll().finally(() => {
+        // Our listener suppressed the default action, so when it was the only one, put
+        // that back by re-raising. When someone else is listening they got this signal
+        // too and own the decision to exit; re-raising would invoke them a second time.
+        if (process.listenerCount(signal) === 0) process.kill(process.pid, signal);
+      });
+    });
+  }
+}
+
 /**
  * Connects on first use and reuses the connection afterwards, closing it on exit and
  * on SIGINT/SIGTERM. A failed connection is not cached, so the next call retries, and
@@ -269,35 +305,17 @@ export type Connection = {
  */
 export function createStdioConnection(config: StdioConnectionConfig): Connection {
   let clientPromise: Promise<Client> | null = null;
-  let shutdownRegistered = false;
 
   async function closeClient(): Promise<void> {
     const pending = clientPromise;
     clientPromise = null;
+    openConnections.delete(closeClient);
     if (!pending) return;
     try {
       const client = await pending;
       await client.close();
     } catch {
       // Shutting down: nothing useful to do with a close failure.
-    }
-  }
-
-  function registerShutdown(): void {
-    if (shutdownRegistered) return;
-    shutdownRegistered = true;
-
-    process.once("exit", () => {
-      void closeClient();
-    });
-
-    for (const signal of ["SIGINT", "SIGTERM"] as const) {
-      process.once(signal, () => {
-        void closeClient().finally(() => {
-          process.kill(process.pid, signal);
-        });
-        process.removeAllListeners(signal);
-      });
     }
   }
 
@@ -317,7 +335,8 @@ export function createStdioConnection(config: StdioConnectionConfig): Connection
     // Protocol.onclose: fired once the transport has closed, whoever closed it.
     client.onclose = onClosed;
     await client.connect(transport);
-    registerShutdown();
+    openConnections.add(closeClient);
+    registerShutdownOnce();
     return client;
   }
 
