@@ -38,6 +38,12 @@ import {
   type Range,
 } from "@/server/analysis/context";
 import type { MergedArchitecture } from "@/server/analysis/architecture";
+import {
+  EXTRA_CONTEXT_CHARS,
+  extraWindows,
+  servesHttp,
+  type ExtraWindow,
+} from "@/server/analysis/handlerWindows";
 import type { ControlGap } from "@/server/detect/types";
 import { modelBoundFiles, type LoadedFile } from "@/server/ingest/loader";
 import { redact } from "@/server/security/redactor";
@@ -178,6 +184,8 @@ export type ThreatBatch = {
   droppedFiles: string[];
   /** Requested ids that matched no component or flow. P2 records these. */
   unresolvedIds: string[];
+  /** Handler, DAO and startup windows admitted within EXTRA_CONTEXT_CHARS (handlerWindows.ts). */
+  extraWindows: ExtraWindow[];
   estimatedTokens: number;
 };
 
@@ -438,6 +446,7 @@ function rangesForFile(
   lineCount: number,
   elements: readonly ThreatElement[],
   evidenceById: ReadonlyMap<string, Evidence>,
+  extra: readonly Range[] = [],
 ): Range[] {
   const ranges: Range[] = [];
   const add = (first: number, last: number) => {
@@ -459,10 +468,68 @@ function rangesForFile(
       add(e.lineStart, e.lineEnd ?? e.lineStart);
     }
   }
-  if (ranges.length === 0) {
-    return [[1, Math.min(lineCount, COVERAGE_LINES)]];
-  }
+  if (ranges.length === 0) ranges.push([1, Math.min(lineCount, COVERAGE_LINES)]);
+  // Handler, DAO and startup windows add to whatever the file already shows.
+  for (const [lo, hi] of extra) if (lo <= lineCount) ranges.push([lo, Math.min(hi, lineCount)]);
   return mergeRanges(ranges);
+}
+
+/** Component types on the browser side of an HTTP request. */
+const BROWSER_SIDE = new Set<string>(["actor", "frontend"]);
+
+/**
+ * Whether an element handles browser requests, which is when the application's startup
+ * configuration (session, CSRF and header middleware) bears on its threats:
+ *   - a component whose own files define request handlers or register routes;
+ *   - a data flow with a browser-side endpoint (actor or frontend) whose other endpoint's
+ *     files do.
+ * A database, CI or deployment element does not, so its batch is not given the startup file.
+ */
+export function servesBrowserRequests(
+  element: Pick<ThreatElement, "kind" | "id" | "files">,
+  architecture: Pick<MergedArchitecture, "components" | "dataFlows">,
+  loaded: ReadonlyMap<string, readonly string[]>,
+): boolean {
+  const serves = (paths: readonly string[]) =>
+    paths.some((p) => {
+      const lines = loaded.get(p);
+      return lines !== undefined && servesHttp(lines.join("\n"));
+    });
+  if (element.kind === "component") return serves(element.files);
+  const flow = architecture.dataFlows.find((f) => f.id === element.id);
+  if (!flow) return false;
+  const [source, target] = [flow.sourceId, flow.targetId].map((id) =>
+    architecture.components.find((c) => c.id === id),
+  );
+  if (!source || !target) return false;
+  return (
+    (BROWSER_SIDE.has(source.type) && serves(target.files)) ||
+    (BROWSER_SIDE.has(target.type) && serves(source.files))
+  );
+}
+
+/**
+ * The extra windows this batch may show, whole windows in priority order until
+ * EXTRA_CONTEXT_CHARS is spent. Measured on the redacted lines the batch will render, so
+ * the cap bounds what is actually sent.
+ */
+function admitExtraWindows(
+  elements: readonly ThreatElement[],
+  loaded: ReadonlyMap<string, string[]>,
+  architecture: Pick<MergedArchitecture, "components" | "dataFlows">,
+): ExtraWindow[] {
+  const files = [...loaded].map(([path, lines]) => ({ path, content: lines.join("\n") }));
+  const startup = elements.some((e) => servesBrowserRequests(e, architecture, loaded));
+  const admitted: ExtraWindow[] = [];
+  let spent = 0;
+  for (const w of extraWindows(elements.map((e) => e.files), files, { startup })) {
+    const lines = loaded.get(w.path) ?? [];
+    const cost = lines.slice(w.range[0] - 1, w.range[1]).reduce((n, l) => n + l.length + 1, 0);
+    if (spent + cost > EXTRA_CONTEXT_CHARS) continue;
+    admitted.push(w);
+    spent += cost;
+  }
+  return admitted;
 }
 
 // ---------------------------------------------------------------------------
@@ -505,7 +572,12 @@ export function buildThreatBatch(input: BuildThreatBatchInput): ThreatBatch {
   );
 
   const limit = maxCharsFor(input.budgetTokens ?? THREATS_CONTEXT_TOKENS);
-  const wanted = [...new Set(elements.flatMap((e) => e.files))];
+  const admitted = admitExtraWindows(elements, loaded, architecture);
+  const extraByPath = new Map<string, Range[]>();
+  for (const w of admitted) extraByPath.set(w.path, [...(extraByPath.get(w.path) ?? []), w.range]);
+  // Element files first, then files only an extra window points at (a DAO, the startup
+  // file), so a tight budget drops the extras before the elements' own files.
+  const wanted = [...new Set([...elements.flatMap((e) => e.files), ...extraByPath.keys()])];
   const includedFiles: string[] = [];
   const droppedFiles: string[] = [];
   const rendered: string[] = [];
@@ -520,7 +592,7 @@ export function buildThreatBatch(input: BuildThreatBatchInput): ThreatBatch {
     const block = renderFile(
       path,
       lines,
-      rangesForFile(path, lines.length, elements, evidenceById),
+      rangesForFile(path, lines.length, elements, evidenceById, extraByPath.get(path)),
     );
     if (spent + block.length > limit) {
       droppedFiles.push(path);
@@ -538,6 +610,7 @@ export function buildThreatBatch(input: BuildThreatBatchInput): ThreatBatch {
     includedFiles,
     droppedFiles,
     unresolvedIds,
+    extraWindows: admitted.filter((w) => includedFiles.includes(w.path)),
     estimatedTokens: estimateTokens(text),
   };
   assertBatchClean(batch);

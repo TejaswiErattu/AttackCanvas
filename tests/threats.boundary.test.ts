@@ -60,6 +60,7 @@ function stubBatch(text: string, files: string[] = []) {
     includedFiles: [],
     droppedFiles: [],
     unresolvedIds: [],
+    extraWindows: [],
     estimatedTokens: 1,
   };
 }
