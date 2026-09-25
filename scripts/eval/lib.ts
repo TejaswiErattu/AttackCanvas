@@ -102,6 +102,22 @@ export function parseYamlWith<T>(text: string, schema: z.ZodType<T>, label: stri
   return result.data;
 }
 
+/**
+ * Result files that already exist for these repos, as paths relative to `root`. run.ts
+ * refuses to start when any exist, so a finished result (a baseline) is never replaced by
+ * a later run. There is no override flag: move the file away or add a new repo name.
+ */
+export function existingResultPaths(
+  repos: readonly EvalRepo[],
+  root: string,
+  exists: (path: string) => boolean,
+): string[] {
+  return repos
+    .map((repo) => evalPaths(root, repo.name).result)
+    .filter(exists)
+    .map((path) => path.slice(root.length + 1));
+}
+
 /** The repos to act on: all of them, or the named subset. Unknown names are an error. */
 export function selectRepos(repos: readonly EvalRepo[], names: readonly string[]): EvalRepo[] {
   if (names.length === 0) return [...repos];

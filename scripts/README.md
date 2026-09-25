@@ -60,8 +60,10 @@ pnpm try scripts/eval/score.ts [repo...]   # -> docs/evaluation.md
 
 `--timeout` overrides the pipeline's 10-minute budget (per phase: the analysis, then a fresh
 one after answers). It limits time, not spend: a call in flight at the deadline is still
-billed. A failed repo writes nothing and prints the stage it failed during, the pipeline's
-recorded call count and cost at the moment of failure, elapsed time and the safe error.
+billed. `run.ts` refuses to start if a selected repo already has a result file, before any
+network work; to run again, add a new repo name (e.g. `nodegoat-after-fix`). A failed repo
+writes nothing and prints the stage it failed during, the pipeline's recorded call count
+and cost at the moment of failure, elapsed time and the safe error.
 
 `evidenceCorrect` is correct/total over the entries in `evidenceLocations` (write `0/0` for
 none). `matchesExpected` lists expected ids separated by `;`; blank means the threat matches

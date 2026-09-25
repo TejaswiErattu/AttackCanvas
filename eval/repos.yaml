@@ -9,3 +9,8 @@ repos:
     # Pinned to the commit the answer key was drafted from. The pipeline passes the
     # /tree/<ref> segment to the loader and records it as threatModel.repo.ref.
     url: "https://github.com/OWASP/NodeGoat/tree/c5cb68a7084e4ae7dcc60e6a98768720a81841e8"
+  - name: nodegoat-after-fix # OWASP/NodeGoat again, after fixes d2ec8b7 + d21360d
+    # Same pinned commit as "nodegoat", so the two results differ only by AttackCanvas
+    # changes. Scored against eval/expected/nodegoat-after-fix.yaml, a byte-identical
+    # copy of the nodegoat draft key.
+    url: "https://github.com/OWASP/NodeGoat/tree/c5cb68a7084e4ae7dcc60e6a98768720a81841e8"

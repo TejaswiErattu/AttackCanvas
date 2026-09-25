@@ -13,6 +13,10 @@
  * model call still in flight when the deadline fires is orphaned, not cancelled, and is
  * billed. Validated before any paid work; an invalid value exits 1 having done nothing.
  *
+ * Refuses to start if any selected repo already has eval/results/<name>.json, before the
+ * API key check or any network work; there is no override (move the file, or add a new
+ * repo name).
+ *
  * On failure, prints the stage it failed during, the pipeline's own recorded call count
  * and cost at the moment it failed (never an estimate), elapsed time and the safe error;
  * nothing is written to eval/results.
@@ -24,7 +28,7 @@
  * stop the others; the exit code is 1 if any failed. Nothing is written for a failed repo.
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { closeClient } from "@/server/mcp/githubClient";
 import { closeSemgrepClient } from "@/server/mcp/semgrepClient";
@@ -41,6 +45,7 @@ import { formatUsd } from "@/server/ai/usage";
 import {
   ReposFileSchema,
   evalPaths,
+  existingResultPaths,
   formatRunFailure,
   parseRunArgs,
   parseYamlWith,
@@ -67,16 +72,26 @@ async function main(): Promise<void> {
     return;
   }
   const { names, timeoutMs } = args.value;
+  const config = parseYamlWith(readFileSync(`${ROOT}/eval/repos.yaml`, "utf8"), ReposFileSchema, "eval/repos.yaml");
+  const repos = selectRepos(config.repos, names);
+  // Fail on a blank URL before spending anything on the earlier repos.
+  repos.forEach(requireRepoUrl);
+  // Never replace a finished result. Checked before the API key and before any network
+  // or model work, so a refused run costs nothing.
+  const existing = existingResultPaths(repos, ROOT, existsSync);
+  if (existing.length > 0) {
+    console.error(
+      `refusing to overwrite existing result(s): ${existing.join(", ")}\n` +
+        "Move the file away, or add a new repo name to eval/repos.yaml for another run.",
+    );
+    process.exitCode = 1;
+    return;
+  }
   if (!process.env.ANTHROPIC_API_KEY?.trim()) {
     console.error("ANTHROPIC_API_KEY is not set. Add it to .env.local (gitignored) or export it.");
     process.exitCode = 1;
     return;
   }
-
-  const config = parseYamlWith(readFileSync(`${ROOT}/eval/repos.yaml`, "utf8"), ReposFileSchema, "eval/repos.yaml");
-  const repos = selectRepos(config.repos, names);
-  // Fail on a blank URL before spending anything on the earlier repos.
-  repos.forEach(requireRepoUrl);
 
   for (const repo of repos) {
     console.log(

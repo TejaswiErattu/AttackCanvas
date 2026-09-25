@@ -9,7 +9,7 @@ import {
 } from "@/server/analysis/pipeline";
 import { validateThreatModel, type AnalysisStage, type ThreatModel } from "@/shared/schema";
 import { analyseRepo, type PipelineApi } from "../scripts/eval/analyse";
-import { StageTracker, formatRunFailure, parseRunArgs, stageBefore } from "../scripts/eval/lib";
+import { StageTracker, existingResultPaths, formatRunFailure, parseRunArgs, stageBefore } from "../scripts/eval/lib";
 import demoJson from "../fixtures/demo-analysis.json";
 
 const parsed = validateThreatModel(demoJson);
@@ -173,5 +173,23 @@ describe("analyseRepo", () => {
     if (!out.ok) return;
     expect(out.result.cost).toEqual({ calls: 16, totalUsd: 5.5 });
     expect(out.result.threatModel.threats.length).toBe(model.threats.length);
+  });
+});
+
+describe("existingResultPaths (overwrite guard)", () => {
+  const root = "/repo";
+  const repos = [
+    { name: "nodegoat", url: "u" },
+    { name: "nodegoat-after-fix", url: "u" },
+  ];
+
+  it("reports an existing result so run.ts refuses", () => {
+    const exists = (p: string) => p === "/repo/eval/results/nodegoat.json";
+    expect(existingResultPaths(repos, root, exists)).toEqual(["eval/results/nodegoat.json"]);
+  });
+
+  it("allows a new result path", () => {
+    const exists = (p: string) => p === "/repo/eval/results/nodegoat.json";
+    expect(existingResultPaths([repos[1]], root, exists)).toEqual([]);
   });
 });
