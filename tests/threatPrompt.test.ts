@@ -743,12 +743,12 @@ describe("file excerpts", () => {
 // The prompt file
 // ---------------------------------------------------------------------------
 
-describe("prompts/threats.v1.md", () => {
+describe("prompts/threats.v2.md", () => {
   const prompt = loadPrompt(THREATS_PROMPT_NAME, THREATS_PROMPT_VERSION);
 
   it("loads under the id the result records", () => {
-    expect(prompt.id).toBe("threats.v1");
-    expect(prompt.path).toBe("prompts/threats.v1.md");
+    expect(prompt.id).toBe("threats.v2");
+    expect(prompt.path).toBe("prompts/threats.v2.md");
   });
 
   it("has both passes and permits silence", () => {
@@ -1122,7 +1122,7 @@ describe("prompts/threats.v1.md", () => {
   });
 
   it("is the file on disk, verbatim, behind the shared security preamble", () => {
-    const file = readFileSync("prompts/threats.v1.md", "utf8");
+    const file = readFileSync("prompts/threats.v2.md", "utf8");
     expect(prompt.body).toBe(file);
     expect(prompt.text).toBe(`${SECURITY_PREAMBLE}${file}`);
   });

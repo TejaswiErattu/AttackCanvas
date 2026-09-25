@@ -827,6 +827,7 @@ async function runSteps(state: AnalysisState, deps: PipelineDeps): Promise<Analy
     gaps: detector.gaps,
     routePaths: detector.routes.map((route) => route.normalizedPath),
     files: loaded.files,
+    sessionCookies: detector.sessionCookies,
     analysisId: state.id,
     deps: deps.ai,
     // Checked before every batch: no new provider request once the job is cancelled or

@@ -651,7 +651,7 @@ describe("schema and deadline sent by the engine", () => {
     const h = harness(() => ({ threats: [] }));
     await run(h, arch(["svc-01"]));
     const system = h.calls[0].body.system as { text: string }[];
-    const file = readFileSync("prompts/threats.v1.md", "utf8");
+    const file = readFileSync("prompts/threats.v2.md", "utf8");
     expect(system[0].text).toBe(`${SECURITY_PREAMBLE}${file}`);
   });
 
@@ -1799,7 +1799,7 @@ describe("model failures", () => {
     const result = await run(h, five);
     expect(result.usage).toHaveLength(3);
     expect(result.usage.every((u) => u.stage === "stride")).toBe(true);
-    expect(result.promptId).toBe("threats.v1");
+    expect(result.promptId).toBe("threats.v2");
   });
 });
 
@@ -1830,7 +1830,7 @@ describe("no live network", () => {
     expect(h.calls[0].body.messages[0].content as string).toContain("[REDACTED:generic_secret]");
     // The trusted system prompt is exactly the prompt file, untouched.
     const system = h.calls[0].body.system as { text: string }[];
-    const file = readFileSync("prompts/threats.v1.md", "utf8");
+    const file = readFileSync("prompts/threats.v2.md", "utf8");
     expect(system[0].text).toBe(`${SECURITY_PREAMBLE}${file}`);
   });
 

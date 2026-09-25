@@ -45,6 +45,7 @@ import {
   type ExtraWindow,
 } from "@/server/analysis/handlerWindows";
 import type { ControlGap } from "@/server/detect/types";
+import type { CookieAttribute, SessionCookie } from "@/server/detect/sessionCookies";
 import { modelBoundFiles, type LoadedFile } from "@/server/ingest/loader";
 import { redact } from "@/server/security/redactor";
 import type {
@@ -60,7 +61,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 export const THREATS_PROMPT_NAME = "threats";
-export const THREATS_PROMPT_VERSION = 1;
+export const THREATS_PROMPT_VERSION = 2;
 
 /**
  * Output budget for one batch of two elements. Two elements can ask for up to six
@@ -196,6 +197,8 @@ export type BuildThreatBatchInput = {
   /** Component and data flow ids in this batch, in the order they should appear. */
   elementIds: readonly string[];
   files: readonly LoadedFile[];
+  /** Session cookies the detector found, rendered as a context block (not evidence). */
+  sessionCookies?: readonly SessionCookie[];
   /** Defaults to THREATS_CONTEXT_TOKENS. */
   budgetTokens?: number;
 };
@@ -544,6 +547,29 @@ function admitExtraWindows(
  * whole file at a time, in element order, so the first element's files are the ones that
  * survive a tight budget.
  */
+const yesNo = (a: CookieAttribute<boolean>, yes: string, no: string): string =>
+  a.value === "unknown" ? "unknown (not a literal)" : `${a.value ? yes : no} (${a.source === "default" ? "library default" : "set explicitly"})`;
+
+/**
+ * The detected session cookies as a context block, or nothing when there are none, so a
+ * repository without one gets exactly the batch it got before. Every value is from a fixed
+ * vocabulary; the file path is repository text and goes through clean().
+ */
+export function renderSessionCookies(cookies: readonly SessionCookie[]): string[] {
+  if (cookies.length === 0) return [];
+  const lines = cookies.map((c) => {
+    const sameSite =
+      c.sameSite.value === "unknown"
+        ? "unknown (not a literal)"
+        : `${c.sameSite.value === null ? "not set" : c.sameSite.value} (${c.sameSite.source === "default" ? "library default" : "set explicitly"})`;
+    return `- ${c.library} at ${clean(c.file, 200)}:${c.line}: HttpOnly ${yesNo(c.httpOnly, "yes", "no")}; Secure ${yesNo(c.secure, "yes", "no")}; SameSite ${sameSite}.`;
+  });
+  return [SESSION_COOKIES_HEADER, ...lines, ""];
+}
+
+/** Header of the session-cookie context block; the threats prompt describes it. */
+export const SESSION_COOKIES_HEADER = "## SESSION COOKIES";
+
 export function buildThreatBatch(input: BuildThreatBatchInput): ThreatBatch {
   const { architecture } = input;
   const evidenceById = new Map(architecture.evidence.map((e) => [e.id, e]));
@@ -560,7 +586,8 @@ export function buildThreatBatch(input: BuildThreatBatchInput): ThreatBatch {
 
   const header = `## BATCH (${elements.length} element${elements.length === 1 ? "" : "s"})`;
   const blocks = elements.map((e) => renderElement(e, evidenceById));
-  const prefix = `${[header, "", ...blocks, "", EXCERPT_HEADER].join("\n")}\n`;
+  const cookies = renderSessionCookies(input.sessionCookies ?? []);
+  const prefix = `${[header, "", ...blocks, "", ...cookies, EXCERPT_HEADER].join("\n")}\n`;
 
   // Redact each whole file before any window is taken, so a multi-line secret is never
   // split by a range boundary and smuggled through in halves.

@@ -37,6 +37,7 @@ import {
   type ThreatBatch,
 } from "@/server/analysis/threatPrompt";
 import type { ControlGap } from "@/server/detect/types";
+import type { SessionCookie } from "@/server/detect/sessionCookies";
 import type { LoadedFile } from "@/server/ingest/loader";
 import { isPositiveObservation } from "@/server/scoring";
 import { stripCrossRouteGapCitations, type RemovedCitation } from "@/server/analysis/routeScope";
@@ -119,6 +120,8 @@ export type ThreatEngineInput = {
    */
   routePaths?: readonly string[];
   files: readonly LoadedFile[];
+  /** Session cookies with effective attributes, shown to the model as context. */
+  sessionCookies?: readonly SessionCookie[];
   analysisId: string;
   /**
    * Run exactly these batches instead of batching the whole architecture. For a smoke
@@ -753,6 +756,7 @@ export async function generateThreats(
         gaps: input.gaps,
         elementIds,
         files: input.files,
+        sessionCookies: input.sessionCookies,
         budgetTokens: input.budgetTokens ?? THREATS_CONTEXT_TOKENS,
       });
 

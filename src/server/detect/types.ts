@@ -1,3 +1,4 @@
+import type { SessionCookie } from "@/server/detect/sessionCookies";
 import type { Evidence, Owasp2025, Stride } from "@/shared/schema";
 
 /**
@@ -207,6 +208,8 @@ export type DetectorResult = {
   envNames: EnvName[];
   deployment: Deployment[];
   tokens: TokenCheck[];
+  /** Session cookies with effective attributes (sessionCookies.ts). Context, not evidence. */
+  sessionCookies: SessionCookie[];
   gaps: ControlGap[];
   evidence: Evidence[];
 };

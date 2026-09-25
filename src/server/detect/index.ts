@@ -6,6 +6,7 @@ import { detectDatastores } from "@/server/detect/datastores";
 import { detectEnvNames } from "@/server/detect/envNames";
 import { detectDeployment } from "@/server/detect/deployment";
 import { detectGaps } from "@/server/detect/gaps";
+import { detectSessionCookies } from "@/server/detect/sessionCookies";
 import type {
   DetectorInput,
   DetectorResult,
@@ -34,6 +35,7 @@ export { detectDatastores } from "@/server/detect/datastores";
 export { detectEnvNames } from "@/server/detect/envNames";
 export { detectDeployment } from "@/server/detect/deployment";
 export { detectGaps } from "@/server/detect/gaps";
+export { detectSessionCookies, type SessionCookie } from "@/server/detect/sessionCookies";
 export { normalizeRoutePath } from "@/server/detect/shared";
 
 /**
@@ -152,6 +154,7 @@ export function runDetectors(files: readonly DetectorInput[]): DetectorResult {
     envNames,
     deployment,
     tokens,
+    sessionCookies: detectSessionCookies(sorted),
     gaps: [],
     evidence: evidence.all(),
   };
