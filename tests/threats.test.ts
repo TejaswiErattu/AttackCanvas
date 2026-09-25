@@ -1016,6 +1016,65 @@ describe("reference validation", () => {
     ).toEqual([]);
   });
 
+  describe("route-scoped gap citations", () => {
+    const withLearnGap = () => {
+      const a = arch(["alpha"], [], "alpha");
+      a.gaps[0] = { ...a.gaps[0], kind: "input_validation_missing", routePath: "/learn", summary: "GET /learn reads request input" };
+      return a;
+    };
+    const runWith = (h: Harness, a: ReturnType<typeof withLearnGap>) =>
+      generateThreats({
+        architecture: a.architecture,
+        gaps: a.gaps,
+        routePaths: ["/learn", "/research"],
+        files: files(["alpha"]),
+        analysisId: "test-analysis",
+        deps: h.deps,
+      });
+    const base = { componentIds: ["alpha"], assumptions: [], impact: 4, likelihood: 3 };
+
+    it("keeps a same-route citation", async () => {
+      const h = harness(() => ({
+        threats: [threat({ ...base, title: "Open redirect on GET /learn", attackScenario: "url", evidenceIds: ["ev-alpha", "ev-gap-1"] })],
+      }));
+      const result = await runWith(h, withLearnGap());
+      expect(result.threats[0].evidenceIds).toEqual(["ev-alpha", "ev-gap-1"]);
+      expect(result.limitations).toEqual([]);
+    });
+
+    it("removes a cross-route citation, records why, and keeps the threat on its other evidence", async () => {
+      const h = harness(() => ({
+        threats: [threat({ ...base, title: "SSRF on GET /research", attackScenario: "fetch", evidenceIds: ["ev-alpha", "ev-gap-1"] })],
+      }));
+      const result = await runWith(h, withLearnGap());
+      expect(result.threats[0].evidenceIds).toEqual(["ev-alpha"]);
+      expect(result.evidence.map((e) => e.id)).toEqual(["ev-alpha"]);
+      expect(result.limitations).toEqual([
+        'Removed citation ev-gap-1 from threat "SSRF on GET /research" in batch 1: the gap is about /learn, the threat names /research.',
+      ]);
+    });
+
+    it("drops the threat under the existing rule when the wrong citation was its only support", async () => {
+      const h = harness(() => ({
+        threats: [threat({ ...base, title: "SSRF on GET /research", attackScenario: "fetch", evidenceIds: ["ev-gap-1"] })],
+      }));
+      const result = await runWith(h, withLearnGap());
+      expect(result.threats).toEqual([]);
+      expect(result.limitations).toEqual([
+        'Dropped threat "SSRF on GET /research" from batch 1: cites no evidence and states no assumption.',
+        'Removed citation ev-gap-1 from threat "SSRF on GET /research" in batch 1: the gap is about /learn, the threat names /research.',
+      ]);
+    });
+
+    it("keeps the citation when the threat names no route", async () => {
+      const h = harness(() => ({
+        threats: [threat({ ...base, title: "Unvalidated input", attackScenario: "no validation", evidenceIds: ["ev-gap-1"] })],
+      }));
+      const result = await runWith(h, withLearnGap());
+      expect(result.threats[0].evidenceIds).toEqual(["ev-gap-1"]);
+    });
+  });
+
   it("drops a threat that borrows a co-batched element's evidence, so it cannot read as evidence-backed", async () => {
     // alpha and beta have no flows, so first-fit packs them into ONE batch. The model is
     // shown ev-alpha only under alpha, then cites it for a threat about beta alone.

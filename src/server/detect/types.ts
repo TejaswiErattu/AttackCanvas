@@ -170,6 +170,8 @@ export type ControlGap = {
    * evidence summary. Optional only so hand-built gaps in tests need not carry one.
    */
   summary?: string;
+  /** The route's normalized path ("/learn") when routeId is set; lets a citation be checked. */
+  routePath?: string;
   /** Detector facts that established the expectation. */
   basisFacts: string[];
   /** 0..1, how sure the control is truly absent. */

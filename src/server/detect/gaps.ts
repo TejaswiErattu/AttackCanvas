@@ -1383,6 +1383,7 @@ export function detectGaps(
   const ctx = buildContext(sorted, facts);
   const builder = new EvidenceBuilder();
   const gaps: ControlGap[] = [];
+  const routePathOf = new Map(ctx.routes.map((route) => [route.id, route.normalizedPath]));
 
   for (const [kind, check] of CHECKS) {
     const meta = META[kind];
@@ -1396,6 +1397,9 @@ export function detectGaps(
         file: finding.file,
         line: Math.max(1, Math.floor(finding.line)),
         ...(finding.routeId ? { routeId: finding.routeId } : {}),
+        ...(finding.routeId && routePathOf.has(finding.routeId)
+          ? { routePath: routePathOf.get(finding.routeId) }
+          : {}),
         summary: finding.summary,
         basisFacts: finding.basisFacts,
         certainty: finding.certainty,

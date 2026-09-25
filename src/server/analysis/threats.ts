@@ -39,6 +39,7 @@ import {
 import type { ControlGap } from "@/server/detect/types";
 import type { LoadedFile } from "@/server/ingest/loader";
 import { isPositiveObservation } from "@/server/scoring";
+import { stripCrossRouteGapCitations, type RemovedCitation } from "@/server/analysis/routeScope";
 import {
   DraftThreatSchema,
   type DraftThreat,
@@ -111,6 +112,12 @@ export type ThreatEngineInput = {
   architecture: MergedArchitecture;
   /** The detector's gaps, the same list mergeArchitecture bound. */
   gaps: readonly ControlGap[];
+  /**
+   * Normalized paths of the detector's routes, used to tell which route a threat names
+   * (routeScope.ts). Optional: without it only the gaps' own routes are known, which is
+   * more conservative (fewer threats read as naming a different route).
+   */
+  routePaths?: readonly string[];
   files: readonly LoadedFile[];
   analysisId: string;
   /**
@@ -417,6 +424,25 @@ export function isPlaceholderAssumption(text: string): boolean {
   return words <= PLACEHOLDER_MAX_WORDS && /\bplaceholder\b/i.test(trimmed);
 }
 
+/** Route-scoped gaps shown in a batch: evidence id -> the route the gap is about. */
+function gapRouteByEvidenceId(batch: ThreatBatch): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const element of batch.elements) {
+    for (const gap of element.gaps) {
+      if (gap.routeScoped && gap.routePath !== undefined) out.set(gap.evidenceId, gap.routePath);
+    }
+  }
+  return out;
+}
+
+function describeRemovedCitation(threat: DraftThreat, index: number, r: RemovedCitation): string {
+  const title = oneLine(threat.title, LIMITATION_TITLE_CHARS);
+  return (
+    `Removed citation ${r.evidenceId} from threat "${title}" in batch ${index + 1}: ` +
+    `the gap is about ${r.gapRoute}, the threat names ${r.threatRoutes.join(", ")}.`
+  );
+}
+
 function describeDrop(threat: DraftThreat, index: number, issues: string[]): string {
   const title = oneLine(threat.title, LIMITATION_TITLE_CHARS);
   return `Dropped threat "${title}" from batch ${index + 1}: ${issues.join("; ")}.`;
@@ -688,6 +714,10 @@ export async function generateThreats(
     input.promptDir,
   );
   const batches = (input.batches ?? batchElements(architecture)).map((b) => [...b]);
+  const knownPaths = new Set([
+    ...(input.routePaths ?? []),
+    ...input.gaps.flatMap((g) => (g.routePath === undefined ? [] : [g.routePath])),
+  ]);
 
   const outcomes = await runPool(
     batches,
@@ -723,9 +753,14 @@ export async function generateThreats(
       });
 
       const offered = offeredBy(batch);
+      const gapRoutes = gapRouteByEvidenceId(batch);
       const kept: DraftThreat[] = [];
       const limitations: string[] = [];
-      for (const threat of value.threats) {
+      for (const returned of value.threats) {
+        // Before reference validation, so a threat left with no support is dropped by the
+        // existing "cites no evidence and states no assumption" rule.
+        const { threat, removed } = stripCrossRouteGapCitations(returned, gapRoutes, knownPaths);
+        for (const r of removed) limitations.push(describeRemovedCitation(threat, index, r));
         const issues = referenceIssues(threat, architecture, offered);
         if (issues.length === 0) kept.push(threat);
         else limitations.push(describeDrop(threat, index, issues));

@@ -811,6 +811,7 @@ async function runSteps(state: AnalysisState, deps: PipelineDeps): Promise<Analy
   const engine = await deps.generateThreats({
     architecture,
     gaps: detector.gaps,
+    routePaths: detector.routes.map((route) => route.normalizedPath),
     files: loaded.files,
     analysisId: state.id,
     deps: deps.ai,

@@ -146,6 +146,8 @@ export type BoundGap = {
   summary?: string;
   /** True when the gap is about one route, not the whole component. */
   routeScoped: boolean;
+  /** That route's normalized path, when known. */
+  routePath?: string;
   viaComponentId?: string;
 };
 
@@ -226,6 +228,7 @@ function toBoundGap(gap: ControlGap, viaComponentId?: string): BoundGap {
     line: gap.line,
     ...(gap.summary === undefined ? {} : { summary: gap.summary }),
     routeScoped: gap.scope === "route",
+    ...(gap.routePath === undefined ? {} : { routePath: gap.routePath }),
     ...(viaComponentId === undefined ? {} : { viaComponentId }),
   };
 }
