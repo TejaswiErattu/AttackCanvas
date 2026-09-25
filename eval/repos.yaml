@@ -14,3 +14,7 @@ repos:
     # changes. Scored against eval/expected/nodegoat-after-fix.yaml, a byte-identical
     # copy of the nodegoat draft key.
     url: "https://github.com/OWASP/NodeGoat/tree/c5cb68a7084e4ae7dcc60e6a98768720a81841e8"
+  - name: nodegoat-f64cfa8 # OWASP/NodeGoat again, at AttackCanvas f64cfa8 (CWE-scoped gap floor)
+    # Same pinned commit; differs from nodegoat-7a0fb27 by f64cfa8 only.
+    # Scored against eval/expected/nodegoat-f64cfa8.yaml, a byte-identical copy of the draft key.
+    url: "https://github.com/OWASP/NodeGoat/tree/c5cb68a7084e4ae7dcc60e6a98768720a81841e8"
