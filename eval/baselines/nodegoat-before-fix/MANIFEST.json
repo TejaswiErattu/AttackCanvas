@@ -1,0 +1,31 @@
+{
+  "name": "nodegoat-before-fix",
+  "purpose": "First NodeGoat evaluation run, before the detector and citation fixes in d2ec8b7 and d21360d. Read-only baseline; do not overwrite or relabel.",
+  "repo": {
+    "url": "https://github.com/OWASP/NodeGoat/tree/c5cb68a7084e4ae7dcc60e6a98768720a81841e8",
+    "commit": "c5cb68a7084e4ae7dcc60e6a98768720a81841e8"
+  },
+  "attackCanvasRevision": "3700d90 (eval-runner, before d2ec8b7)",
+  "modelProfile": "demo",
+  "questions": "all skipped",
+  "timeoutMs": 1200000,
+  "ranAt": "2026-09-25T03:33:27.413Z",
+  "labelSheetLastModifiedAt": "2026-09-25T03:34:45.518Z",
+  "cost": {
+    "calls": 18,
+    "totalUsd": 2.8433075000000003,
+    "source": "pipeline usage ledger at list prices (src/server/ai/models.ts); not an invoice"
+  },
+  "threats": 86,
+  "labels": "scored columns (matchesExpected, supported, evidenceCorrect) blank; notes hold Claude-drafted SUGGESTED: judgments, not human labels",
+  "answerKey": "eval/expected/nodegoat.yaml (draft, not human-verified)",
+  "files": {
+    "result.json": {
+      "sha256": "b839faea09b9fb3bfb9872f81413efc8fb4efd6968fde56eaf62cbacbd0723ee"
+    },
+    "labels.csv": {
+      "sha256": "594f397dda55add647770d7508cac18b4fbc4415fb6b7d1e72b9e02bfe3b31ad"
+    }
+  },
+  "secretReview": "No project or user credentials. Contains NodeGoat public demo password Admin_123 (from its README) in model text, and a placeholder mongodb://user:pass@... in a mitigation."
+}

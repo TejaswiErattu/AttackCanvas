@@ -14,6 +14,14 @@ repos:
     # changes. Scored against eval/expected/nodegoat-after-fix.yaml, a byte-identical
     # copy of the nodegoat draft key.
     url: "https://github.com/OWASP/NodeGoat/tree/c5cb68a7084e4ae7dcc60e6a98768720a81841e8"
+  - name: nodegoat-7f7211d # OWASP/NodeGoat again, at AttackCanvas 7f7211d (targeted Semgrep rules + handler/DAO/startup windows)
+    # Same pinned commit as "nodegoat-after-fix"; differs only by AttackCanvas changes in 7f7211d.
+    # Scored against eval/expected/nodegoat-7f7211d.yaml, a byte-identical copy of the draft key.
+    url: "https://github.com/OWASP/NodeGoat/tree/c5cb68a7084e4ae7dcc60e6a98768720a81841e8"
+  - name: nodegoat-7a0fb27 # OWASP/NodeGoat again, at AttackCanvas 7a0fb27 (live-use header and CSRF detectors)
+    # Same pinned commit; differs from nodegoat-7f7211d (run at c8dd73f) only by 7a0fb27.
+    # Scored against eval/expected/nodegoat-7a0fb27.yaml, a byte-identical copy of the draft key.
+    url: "https://github.com/OWASP/NodeGoat/tree/c5cb68a7084e4ae7dcc60e6a98768720a81841e8"
   - name: nodegoat-f64cfa8 # OWASP/NodeGoat again, at AttackCanvas f64cfa8 (CWE-scoped gap floor)
     # Same pinned commit; differs from nodegoat-7a0fb27 by f64cfa8 only.
     # Scored against eval/expected/nodegoat-f64cfa8.yaml, a byte-identical copy of the draft key.

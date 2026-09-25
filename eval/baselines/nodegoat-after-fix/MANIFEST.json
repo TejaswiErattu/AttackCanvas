@@ -1,0 +1,20 @@
+{
+  "name": "nodegoat-after-fix",
+  "purpose": "Second NodeGoat evaluation run, after d2ec8b7 and d21360d and before 7f7211d (targeted Semgrep rules and handler/DAO/startup windows). Read-only baseline with final human labels; do not overwrite or relabel.",
+  "repo": {
+    "url": "https://github.com/OWASP/NodeGoat/tree/c5cb68a7084e4ae7dcc60e6a98768720a81841e8",
+    "commit": "c5cb68a7084e4ae7dcc60e6a98768720a81841e8"
+  },
+  "attackCanvasRevision": "4bffacd (eval-runner, before 7f7211d)",
+  "modelProfile": "demo",
+  "analysisLevel": 2,
+  "questions": "all skipped",
+  "timeoutMs": "not recorded",
+  "ranAt": "2026-09-25T04:13:24.320Z",
+  "labelSheetLastModifiedAt": "2026-09-25T07:48:36Z",
+  "cost": { "calls": 23, "totalUsd": 3.1885829999999995, "source": "pipeline usage ledger at list prices (src/server/ai/models.ts); not an invoice" },
+  "threats": 109,
+  "labels": "final human labels for all 109 rows (matchesExpected, supported, evidenceCorrect, notes)",
+  "answerKey": "eval/expected/nodegoat-after-fix.yaml (draft, not human-verified)",
+  "files": { "result.json": { "sha256": "7d22abc08d512a5e7d768f706f1542581ec81a30dc2b82394e33bc837fe7f1af" }, "labels.csv": { "sha256": "3fd29781bf9f7bd4bcd3bbc2546ee8009294b1cd99ea27b13241065df5ec87c9" } }
+}
