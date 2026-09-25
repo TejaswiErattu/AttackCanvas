@@ -233,20 +233,38 @@ function readToken(): string {
   return token;
 }
 
+const DOCKER_ARGS = [
+  "run",
+  "-i",
+  "--rm",
+  "-e",
+  "GITHUB_PERSONAL_ACCESS_TOKEN",
+  "-e",
+  "GITHUB_TOOLSETS",
+  "-e",
+  "GITHUB_READ_ONLY",
+  IMAGE,
+];
+
+/**
+ * How to start the server. Locally: `docker run` of the pinned IMAGE. On a host with no
+ * Docker (the production container), GITHUB_MCP_BINARY names the server binary copied
+ * out of that same pinned image (see Dockerfile), run with the image's own `stdio`
+ * command. The read-only env below is identical on both paths.
+ */
+export function launchCommand(env: Partial<Record<string, string>>): { command: string; args: string[] } {
+  const binary = env.GITHUB_MCP_BINARY?.trim();
+  if (binary) return { command: binary, args: ["stdio"] };
+  return { command: "docker", args: [...DOCKER_ARGS] };
+}
+
 const connection = createStdioConnection({
-  command: "docker",
-  args: [
-    "run",
-    "-i",
-    "--rm",
-    "-e",
-    "GITHUB_PERSONAL_ACCESS_TOKEN",
-    "-e",
-    "GITHUB_TOOLSETS",
-    "-e",
-    "GITHUB_READ_ONLY",
-    IMAGE,
-  ],
+  get command() {
+    return launchCommand(process.env).command;
+  },
+  get args() {
+    return launchCommand(process.env).args;
+  },
   // Read lazily: the token must be re-read on every reconnect, not captured once.
   get env() {
     return {
