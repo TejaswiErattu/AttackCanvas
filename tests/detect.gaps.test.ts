@@ -67,10 +67,10 @@ const CASES: Case[] = [
   {
     kind: "csrf_missing",
     absent: expressRepo(`app.post("/checkout", ${HANDLER});`, NEXT_DEP),
-    present: expressRepo(`app.post("/checkout", ${HANDLER});`, {
-      ...NEXT_DEP,
-      csurf: "^1.11.0",
-    }),
+    present: expressRepo(
+      `const csrf = require("csurf");\napp.use(csrf());\napp.post("/checkout", ${HANDLER});`,
+      { ...NEXT_DEP, csurf: "^1.11.0" },
+    ),
   },
   {
     kind: "security_headers_missing",
