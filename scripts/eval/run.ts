@@ -24,8 +24,10 @@
  * Runs on the demo model profile (ATTACKCANVAS_MODEL_PROFILE=demo, set here regardless of
  * the shell) with every developer question answered "skipped", so a result depends only on
  * the repository. Needs ANTHROPIC_API_KEY, GITHUB_PERSONAL_ACCESS_TOKEN and Docker, plus
- * the semgrep CLI (see scripts/try-pipeline.ts). A repo that fails is reported and does not
- * stop the others; the exit code is 1 if any failed. Nothing is written for a failed repo.
+ * the semgrep CLI (see scripts/try-pipeline.ts). A failed job also logs one metadata-only
+ * diagnostic line to stderr (pipeline.ts logFailure; never prompts, responses or content).
+ * A repo that fails is reported and does not stop the others; the exit code is 1 if any
+ * failed. Nothing is written for a failed repo.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -35,6 +37,7 @@ import { closeSemgrepClient } from "@/server/mcp/semgrepClient";
 import {
   MAX_TIMEOUT_MS,
   PIPELINE_TIMEOUT_MS,
+  FAILURE_DIAGNOSTICS_ENV,
   createAnalysis,
   getAnalysis,
   resumeWithAnswers,
@@ -65,6 +68,9 @@ const PIPELINE: PipelineApi = { createAnalysis, runAnalysis, resumeWithAnswers, 
 
 async function main(): Promise<void> {
   process.env.ATTACKCANVAS_MODEL_PROFILE = PROFILE;
+  // A failed job logs one metadata line (stage, batch, attempts, status, error type) to
+  // stderr. NODE_ENV is untouched, so no prompt dumps are written under .debug/.
+  process.env[FAILURE_DIAGNOSTICS_ENV] = "1";
   const args = parseRunArgs(process.argv.slice(2), PIPELINE_TIMEOUT_MS, MAX_TIMEOUT_MS);
   if (!args.ok) {
     console.error(args.message);

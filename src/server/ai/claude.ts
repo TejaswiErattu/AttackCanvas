@@ -219,9 +219,25 @@ export type RequestDiagnostic = {
   allMessagesWellFormed: boolean;
 };
 
+/**
+ * Which provider request failed and how: codes and counts only. Never the provider's own
+ * message, headers, or any request or response text.
+ */
+export type CallFailure = {
+  stage: AiStage;
+  /** The validation attempt the failed request belonged to: 1, or 2 for the retry. */
+  validationAttempt: number;
+  /** Requests sent for that attempt, including backoff retries (at most MAX_TRANSPORT_ATTEMPTS). */
+  transportAttempts: number;
+  status?: number;
+  /** The provider's error type ("overloaded_error", ...) or else the error's code or class name. */
+  errorType?: string;
+};
+
 export class AiError extends Error {
   readonly issues: readonly ValidationIssue[];
   readonly request?: RequestDiagnostic;
+  readonly call?: CallFailure;
 
   constructor(
     readonly code: ErrorCode,
@@ -230,12 +246,14 @@ export class AiError extends Error {
       cause?: unknown;
       issues?: readonly ValidationIssue[];
       request?: RequestDiagnostic;
+      call?: CallFailure;
     },
   ) {
     super(message, options);
     this.name = "AiError";
     this.issues = options?.issues ?? [];
     if (options?.request) this.request = options.request;
+    if (options?.call) this.call = options.call;
   }
 }
 
@@ -625,6 +643,7 @@ async function send(args: {
       if (args.isTimedOut()) {
         throw new AiError("TIMEOUT", `model call exceeded ${args.timeoutMs}ms`, {
           cause: error,
+          call: callFailureOf(error, statusOf(error), args.stage, args.attempt, attempt),
         });
       }
       if (error instanceof AiError) throw error;
@@ -633,6 +652,7 @@ async function send(args: {
       if (status === undefined || !isRetryableStatus(status)) {
         throw new AiError("AI_FAILURE", `model call failed: ${reasonOf(error)}`, {
           cause: error,
+          call: callFailureOf(error, status, args.stage, args.attempt, attempt),
           ...clientErrorDiagnostic(error, status, args.stage, args.attempt, system, messages),
         });
       }
@@ -649,6 +669,7 @@ async function send(args: {
     `model call failed after ${MAX_TRANSPORT_ATTEMPTS} attempts: ${reasonOf(lastError)}`,
     {
       cause: lastError,
+      call: callFailureOf(lastError, status, args.stage, args.attempt, MAX_TRANSPORT_ATTEMPTS),
       ...clientErrorDiagnostic(lastError, status, args.stage, args.attempt, system, messages),
     },
   );
@@ -670,6 +691,27 @@ function wellFormedMessage(message: Anthropic.MessageParam): Anthropic.MessagePa
 function textLengthOf(message: Anthropic.MessageParam): string {
   if (typeof message.content === "string") return message.content;
   return message.content.map((block) => (block.type === "text" ? block.text : "")).join("");
+}
+
+/** The CallFailure for a request that threw: safe codes only (see classifyError). */
+function callFailureOf(
+  error: unknown,
+  status: number | undefined,
+  stage: AiStage,
+  validationAttempt: number,
+  transportAttempts: number,
+): CallFailure {
+  const body = (error as { error?: { error?: { type?: unknown }; type?: unknown } } | null)?.error;
+  const c = classifyError(error);
+  const errorType =
+    safeCode(body?.error?.type) ?? safeCode(body?.type) ?? c.code ?? c.className ?? c.valueType;
+  return {
+    stage,
+    validationAttempt,
+    transportAttempts,
+    ...(status !== undefined ? { status } : {}),
+    ...(errorType ? { errorType } : {}),
+  };
 }
 
 /**

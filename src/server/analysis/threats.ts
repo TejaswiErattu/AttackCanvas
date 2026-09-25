@@ -692,6 +692,31 @@ type BatchOutcome = {
   usage: CallUsage;
 };
 
+/** Which batch a thrown value came from, recorded by generateThreats for failure logs. */
+const failedBatches = new WeakMap<object, { number: number; of: number }>();
+
+/**
+ * The batch (1-based number, and the batch count) whose call threw `error`, when it came
+ * from a threat batch. Numbers only: element ids are model-written and are not returned.
+ */
+export function failedBatchOf(error: unknown): { number: number; of: number } | undefined {
+  return typeof error === "object" && error !== null ? failedBatches.get(error) : undefined;
+}
+
+/** `task`, recording which of `total` batches a rejection came from (first tag wins). */
+function tagBatchErrors<T, R>(
+  task: (item: T, index: number) => Promise<R>,
+  total: number,
+): (item: T, index: number) => Promise<R> {
+  return (item, index) =>
+    task(item, index).catch((error: unknown) => {
+      if (typeof error === "object" && error !== null && !failedBatches.has(error)) {
+        failedBatches.set(error, { number: index + 1, of: total });
+      }
+      throw error;
+    });
+}
+
 /**
  * Generates threats for a merged architecture.
  *
@@ -722,7 +747,7 @@ export async function generateThreats(
   const outcomes = await runPool(
     batches,
     input.concurrency ?? THREATS_CONCURRENCY,
-    async (elementIds, index): Promise<BatchOutcome> => {
+    tagBatchErrors(async (elementIds, index): Promise<BatchOutcome> => {
       const batch = buildThreatBatch({
         architecture,
         gaps: input.gaps,
@@ -774,7 +799,7 @@ export async function generateThreats(
         limitations: limitations.sort(cmp),
         usage,
       };
-    },
+    }, batches.length),
     input.shouldContinue,
   ).catch((cause: unknown) => {
     // Some batches never ran: fail closed, never return a partial threat list.
