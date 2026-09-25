@@ -45,3 +45,24 @@ counts, gaps, limitations and cost.
 pnpm try scripts/try-pipeline.ts <owner>/<repo>
 pnpm try scripts/try-pipeline.ts <owner>/<repo> --timeout 600000   # override the 10-minute budget
 ```
+
+## Evaluation runner (`scripts/eval/`)
+
+Measures the pipeline against hand labels. No model ever labels anything. Repos are listed
+in `eval/repos.yaml` (fill in the URLs first).
+
+```
+pnpm try scripts/eval/run.ts [repo...] [--timeout <ms>]   # PAID. Demo profile, questions skipped -> eval/results/<repo>.json
+pnpm try scripts/eval/label.ts [repo...]   # -> eval/labels/<repo>.csv, one row per threat (never overwrites; --force to)
+# fill matchesExpected, supported (y/n), evidenceCorrect (e.g. 2/3), notes; write eval/expected/<repo>.yaml
+pnpm try scripts/eval/score.ts [repo...]   # -> docs/evaluation.md
+```
+
+`--timeout` overrides the pipeline's 10-minute budget (per phase: the analysis, then a fresh
+one after answers). It limits time, not spend: a call in flight at the deadline is still
+billed. A failed repo writes nothing and prints the stage it failed during, the pipeline's
+recorded call count and cost at the moment of failure, elapsed time and the safe error.
+
+`evidenceCorrect` is correct/total over the entries in `evidenceLocations` (write `0/0` for
+none). `matchesExpected` lists expected ids separated by `;`; blank means the threat matches
+none. `score.ts` refuses a half-labeled sheet and lists every problem.

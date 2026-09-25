@@ -1,0 +1,11 @@
+# Repositories the evaluation runner analyses (scripts/eval/run.ts).
+#   name: file-safe id; becomes eval/results/<name>.json, eval/labels/<name>.csv
+#         and eval/expected/<name>.yaml (lowercase letters, digits, hyphens).
+#   url:  public GitHub repo URL, e.g. https://github.com/<owner>/<repo>
+repos:
+  - name: testbed # Jasnoor's project
+    url: ""
+  - name: nodegoat # OWASP/NodeGoat
+    # Pinned to the commit the answer key was drafted from. The pipeline passes the
+    # /tree/<ref> segment to the loader and records it as threatModel.repo.ref.
+    url: "https://github.com/OWASP/NodeGoat/tree/c5cb68a7084e4ae7dcc60e6a98768720a81841e8"
