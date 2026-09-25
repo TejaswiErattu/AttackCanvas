@@ -1396,6 +1396,7 @@ export function detectGaps(
         file: finding.file,
         line: Math.max(1, Math.floor(finding.line)),
         ...(finding.routeId ? { routeId: finding.routeId } : {}),
+        summary: finding.summary,
         basisFacts: finding.basisFacts,
         certainty: finding.certainty,
         owasp: [...meta.owasp],

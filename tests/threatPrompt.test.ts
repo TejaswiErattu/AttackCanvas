@@ -1126,3 +1126,27 @@ describe("prompts/threats.v1.md", () => {
     expect(prompt.text).toBe(`${SECURITY_PREAMBLE}${file}`);
   });
 });
+
+describe("gap rendering: route scope", () => {
+  it("names the route a route-scoped gap is about and limits where it may be cited", () => {
+    const batch = buildThreatBatch({
+      architecture: architecture(),
+      gaps: [gap("gap-1", { summary: "GET /learn reads request input and its file imports no validation library" })],
+      elementIds: ["orders-api"],
+      files: FILES,
+    });
+    const block = blockFor(batch.text, "orders-api");
+    expect(block).toContain("finding: GET /learn reads request input");
+    expect(block).toContain("scope: this one route only; cite ev-gap-1 only for a threat about that route");
+  });
+
+  it("adds no scope line for a repository-wide gap", () => {
+    const batch = buildThreatBatch({
+      architecture: architecture(),
+      gaps: [gap("gap-1", { scope: "repository" })],
+      elementIds: ["orders-api"],
+      files: FILES,
+    });
+    expect(blockFor(batch.text, "orders-api")).not.toContain("scope: this one route only");
+  });
+});

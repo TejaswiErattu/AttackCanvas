@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { authForRoute, detectAuth, handlerBody } from "@/server/detect/auth";
+import { aliasTarget, authForRoute, detectAuth, handlerBody, isGuardName } from "@/server/detect/auth";
 import { detectRoutes } from "@/server/detect/routes";
 import type { DetectorInput, Route } from "@/server/detect/types";
 import { NEXT_APP_ROUTE, SAMPLE_REPO } from "./detectSamples";
@@ -334,5 +334,64 @@ describe("detectAuth: shape", () => {
     for (const fact of auth) {
       expect(new Set(fact.signals).size).toBe(fact.signals.length);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NodeGoat-style middleware (OWASP/NodeGoat app/routes/index.js)
+// ---------------------------------------------------------------------------
+
+describe("detectAuth: member-alias middleware", () => {
+  const NODEGOAT_INDEX = [
+    'const SessionHandler = require("./session");',
+    'const ProfileHandler = require("./profile");',
+    "const index = (app, db) => {",
+    "    const sessionHandler = new SessionHandler(db);",
+    "    const profileHandler = new ProfileHandler(db);",
+    "    // Middleware to check if a user is logged in",
+    "    const isLoggedIn = sessionHandler.isLoggedInMiddleware;",
+    "    const check = sessionHandler.isLoggedInMiddleware;",
+    "    const opaque = sessionHandler.somethingElse;",
+    '    app.post("/login", sessionHandler.handleLoginRequest);',
+    '    app.post("/profile", isLoggedIn, profileHandler.handleProfileUpdate);',
+    '    app.post("/memos", check, profileHandler.addMemos);',
+    '    app.post("/contributions", opaque, profileHandler.update);',
+    '    app.post("/open", profileHandler.update);',
+    "};",
+    "module.exports = index;",
+  ].join("\n");
+  const file: DetectorInput = { path: "app/routes/index.js", content: NODEGOAT_INDEX };
+  const found = detectRoutes([file]);
+  const fact = (path: string) => authForRoute(file, found.find((r) => r.path === path)!);
+
+  it("treats isLoggedIn as an authentication guard", () => {
+    expect(fact("/profile").status).toBe("authenticated");
+    expect(fact("/profile").signals).toContain("isLoggedIn");
+  });
+
+  it("judges a neutral alias by the member it points at", () => {
+    expect(aliasTarget(NODEGOAT_INDEX, "check")).toBe("sessionHandler.isLoggedInMiddleware");
+    expect(fact("/memos").status).toBe("authenticated");
+    expect(fact("/memos").signals).toContain("check = sessionHandler.isLoggedInMiddleware");
+  });
+
+  it("reports an alias to an unrecognised member as unknown, not unauthenticated", () => {
+    expect(fact("/contributions").status).toBe("unknown");
+  });
+
+  it("still reports a route with no middleware as unauthenticated", () => {
+    expect(fact("/open").status).toBe("unauthenticated");
+  });
+
+  it("does not read a login handler or rate limiter as a guard", () => {
+    expect(isGuardName("handleLoginRequest")).toBe(false);
+    expect(isGuardName("loggedInLimiter")).toBe(false);
+    expect(isGuardName("ensureLoggedIn")).toBe(true);
+  });
+
+  it("ignores a commented-out alias and non-member right-hand sides", () => {
+    expect(aliasTarget("// const g = a.isLoggedInMiddleware;", "g")).toBeUndefined();
+    expect(aliasTarget("const g = makeGuard();", "g")).toBeUndefined();
+    expect(aliasTarget("const g = a.b;", "a.b")).toBeUndefined();
   });
 });

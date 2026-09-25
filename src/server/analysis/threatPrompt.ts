@@ -142,6 +142,10 @@ export type BoundGap = {
   certainty: number;
   file: string;
   line: number;
+  /** The detector's finding, naming what it is about ("GET /learn reads request input ..."). */
+  summary?: string;
+  /** True when the gap is about one route, not the whole component. */
+  routeScoped: boolean;
   viaComponentId?: string;
 };
 
@@ -220,6 +224,8 @@ function toBoundGap(gap: ControlGap, viaComponentId?: string): BoundGap {
     certainty: gap.certainty,
     file: gap.file,
     line: gap.line,
+    ...(gap.summary === undefined ? {} : { summary: gap.summary }),
+    routeScoped: gap.scope === "route",
     ...(viaComponentId === undefined ? {} : { viaComponentId }),
   };
 }
@@ -358,8 +364,14 @@ function formatGap(gap: BoundGap): string[] {
   const via = gap.viaComponentId === undefined ? "" : ` via ${gap.viaComponentId}`;
   return [
     `  [${gap.id}] ${gap.kind} (certainty ${gap.certainty.toFixed(2)}) at ${clean(gap.file)}:${gap.line}${via} (evidence: ${gap.evidenceId})`,
+    ...(gap.summary === undefined ? [] : [`    finding: ${clean(gap.summary)}`]),
     `    control: ${clean(gap.control)}`,
     `    expected because: ${clean(gap.expectation)}`,
+    // A component is bound every gap in its files, so without this line a gap about one
+    // route reads as a fact about the whole component and gets cited for unrelated threats.
+    ...(gap.routeScoped
+      ? [`    scope: this one route only; cite ${gap.evidenceId} only for a threat about that route`]
+      : []),
   ];
 }
 

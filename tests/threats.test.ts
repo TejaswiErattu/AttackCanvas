@@ -1353,6 +1353,28 @@ describe("dedupe", () => {
     }
   });
 
+  it("does not treat an inference as evidence when picking the winner (same rule as scoring's basis)", () => {
+    const withInference = [...EV, ev("ev-inf", { kind: "inference" })];
+    const inferred = threat({
+      title: "Aaa driven wording zq1 zq2 zq3 zq4",
+      attackScenario: "zq5",
+      evidenceIds: ["ev-inf"],
+      mitigation: { summary: "Inferred fix", steps: ["inferred step"] },
+    });
+    const backed = threat({
+      title: "Zzz driven wording zq1 zq2 zq3 zq4",
+      attackScenario: "zq5",
+      evidenceIds: ["ev-code"],
+      mitigation: { summary: "Evidence fix", steps: ["evidence step"] },
+    });
+    // "Aaa" sorts first, so before the fix the inference-only threat won the tie.
+    for (const input of [[inferred, backed], [backed, inferred]]) {
+      const [merged, ...rest] = dedupeThreats(input, withInference);
+      expect(rest).toEqual([]);
+      expect(merged.mitigation.summary).toBe("Evidence fix");
+    }
+  });
+
   it("prefers the evidence-backed threat even when its impact is lower", () => {
     const gapOnly = threat({ title: "zq1 zq2 zq3 zq4 zq5", attackScenario: "gapword", evidenceIds: ["ev-gap-1"], impact: 5 });
     const backed = threat({ title: "zq1 zq2 zq3 zq4 zq5", attackScenario: "backword", evidenceIds: ["ev-code"], impact: 2 });

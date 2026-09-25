@@ -38,7 +38,7 @@ import {
 } from "@/server/analysis/threatPrompt";
 import type { ControlGap } from "@/server/detect/types";
 import type { LoadedFile } from "@/server/ingest/loader";
-import { isGapEvidence } from "@/server/scoring";
+import { isPositiveObservation } from "@/server/scoring";
 import {
   DraftThreatSchema,
   type DraftThreat,
@@ -525,9 +525,10 @@ export function compareThreats(a: DraftThreat, b: DraftThreat): number {
 }
 
 /**
- * Whether a threat cites at least one positive observation, meaning evidence that is not
- * a control gap (the same test scoring uses for `basis`). Citing an id that is not in
- * `evidence` counts as no support at all.
+ * Whether a threat cites at least one positive observation: not a control gap, an
+ * inference or an assumption -- scoring's own test for `basis`, imported rather than
+ * restated so the two cannot drift. Citing an id that is not in `evidence` counts as no
+ * support at all.
  */
 function isEvidenceBacked(
   t: DraftThreat,
@@ -535,7 +536,7 @@ function isEvidenceBacked(
 ): boolean {
   return t.evidenceIds.some((id) => {
     const e = evidenceById.get(id);
-    return e !== undefined && !isGapEvidence(e);
+    return e !== undefined && isPositiveObservation(e);
   });
 }
 
