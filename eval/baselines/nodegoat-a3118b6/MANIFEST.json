@@ -1,0 +1,27 @@
+{
+  "name": "nodegoat-a3118b6",
+  "purpose": "NodeGoat run at AttackCanvas a3118b6 (session-cookie facts in the threat batch, threats.v2 prompt; includes b956a3f same-line evidence rule). Raw result snapshot; labels in eval/labels/nodegoat-a3118b6.csv.",
+  "repo": {
+    "url": "https://github.com/OWASP/NodeGoat/tree/c5cb68a7084e4ae7dcc60e6a98768720a81841e8",
+    "commit": "c5cb68a7084e4ae7dcc60e6a98768720a81841e8"
+  },
+  "attackCanvasRevision": "a3118b623c1999661b4095dc6fa57eea07be88f3",
+  "modelProfile": "demo",
+  "analysisLevel": 2,
+  "questions": "all skipped",
+  "timeoutMs": 2400000,
+  "startedAt": "2026-09-25T21:20:44Z",
+  "ranAt": "2026-09-25T21:40:17.921Z",
+  "elapsedSeconds": 1174,
+  "cost": {
+    "calls": 25,
+    "totalUsd": 4.066008,
+    "source": "pipeline usage ledger at list prices (src/server/ai/models.ts); not an invoice"
+  },
+  "threats": 136,
+  "files": {
+    "result.json": {
+      "sha256": "f2136d4c50ab01e66097b8da1a2702923e2ad948c89006b05ae79a92c98655b9"
+    }
+  }
+}

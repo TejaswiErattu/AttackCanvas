@@ -26,3 +26,7 @@ repos:
     # Same pinned commit; differs from nodegoat-7a0fb27 by f64cfa8 only.
     # Scored against eval/expected/nodegoat-f64cfa8.yaml, a byte-identical copy of the draft key.
     url: "https://github.com/OWASP/NodeGoat/tree/c5cb68a7084e4ae7dcc60e6a98768720a81841e8"
+  - name: nodegoat-a3118b6 # OWASP/NodeGoat again, at AttackCanvas a3118b6 (session-cookie facts + threats.v2 prompt)
+    # Same pinned commit; differs from nodegoat-f64cfa8 by b956a3f (same-line evidence rule) and a3118b6.
+    # Scored against eval/expected/nodegoat-a3118b6.yaml, a byte-identical copy of the draft key.
+    url: "https://github.com/OWASP/NodeGoat/tree/c5cb68a7084e4ae7dcc60e6a98768720a81841e8"
