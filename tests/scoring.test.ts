@@ -39,12 +39,19 @@ function gap(certainty: number, id = `gap-${++n}`): {
     kind: "authz_missing",
     control: "ownership check",
     certainty,
+    cwe: ["CWE-639"],
   } as ControlGap;
   return { evidence, entry: [evidence.id, g] };
 }
 
-function score(evidence: Evidence[], gaps: [string, ControlGap][] = [], assumptions: string[] = []) {
-  return confidenceOf(evidence, new Map(gaps), assumptions);
+/** `cwe` defaults to the gap helper's own CWE, so the floor is in scope unless a test says not. */
+function score(
+  evidence: Evidence[],
+  gaps: [string, ControlGap][] = [],
+  assumptions: string[] = [],
+  cwe: string[] = ["CWE-639"],
+) {
+  return confidenceOf(evidence, new Map(gaps), assumptions, cwe);
 }
 
 const baseDraft: DraftThreat = {

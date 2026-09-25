@@ -42,9 +42,13 @@ const GUARD_CALLS = [
  * matching the word "auth" inside an unrelated identifier. */
 const AUTH_CALL = /\bauth\s*\(/;
 
-/** Names that read as a guard even when we cannot see the implementation. */
+/**
+ * Names that read as a guard even when we cannot see the implementation. `logged_?in`
+ * covers isLoggedIn / ensureLoggedIn / loggedInMiddleware (the Express idiom NodeGoat
+ * uses); it never matches a login *handler* such as handleLoginRequest.
+ */
 export const GUARD_NAME =
-  /auth|protect|require(?:User|Login|Role)|isAdmin|verify(?:Token|Jwt)/i;
+  /auth|protect|require(?:User|Login|Role)|isAdmin|verify(?:Token|Jwt)|logged_?in/i;
 
 /** `authLimiter`, `loginRateLimiter`: a rate limiter names what it slows, not a check. */
 const LIMITER_NAME = /limit/i;
@@ -191,6 +195,14 @@ export function authForRoute(
   const signals = guardSignals(combined);
   const namedGuards = route.middleware.filter(isGuardName);
   for (const name of namedGuards) signals.push(name);
+  // `const check = sessionHandler.isLoggedInMiddleware;` then `app.post("/x", check, h)`:
+  // the alias name says nothing, the member it points at does.
+  if (file) {
+    for (const name of route.middleware) {
+      const target = aliasTarget(file.content, name);
+      if (target !== undefined && isGuardName(target)) signals.push(`${name} = ${target}`);
+    }
+  }
   const wrapper = file ? exportWrapperGuard(file, route) : undefined;
   if (wrapper) signals.push(wrapper);
 
@@ -225,9 +237,26 @@ function hasOpaqueMiddleware(file: DetectorInput, route: Route): boolean {
 
   const imports = importsIn(file.content);
   return route.middleware.some((name) => {
+    if (isGuardName(name)) return false;
     const root = name.split(".")[0];
-    return imports.has(root) && !isGuardName(name);
+    // A member alias (`const check = handler.someMiddleware;`) is not locally defined:
+    // its body lives wherever `handler` came from, so it is as opaque as an import.
+    return imports.has(root) || aliasTarget(file.content, name) !== undefined;
   });
+}
+
+/**
+ * `sessionHandler.isLoggedInMiddleware` for `const isLoggedIn = sessionHandler.isLoggedInMiddleware;`.
+ * Only a plain member-expression alias counts (at least one dot, nothing else on the
+ * right-hand side), read from comment-masked text so a commented-out alias is ignored.
+ */
+export function aliasTarget(content: string, name: string): string | undefined {
+  if (!/^[A-Za-z_$][\w$]*$/.test(name)) return undefined;
+  const pattern = new RegExp(
+    `\\b(?:const|let|var)\\s+${name.replace(/\$/g, "\\$")}\\s*=\\s*([A-Za-z_$][\\w$]*(?:\\s*\\.\\s*[A-Za-z_$][\\w$]*)+)\\s*;`,
+  );
+  const match = pattern.exec(maskComments(content));
+  return match ? match[1].replace(/\s+/g, "") : undefined;
 }
 
 /** Auth facts for every route, in route order. */

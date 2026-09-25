@@ -11,6 +11,7 @@ import {
   THREATS_PROMPT_VERSION,
   assertBatchClean,
   buildThreatBatch,
+  servesBrowserRequests,
   strideForComponent,
   strideForFlow,
 } from "@/server/analysis/threatPrompt";
@@ -742,12 +743,12 @@ describe("file excerpts", () => {
 // The prompt file
 // ---------------------------------------------------------------------------
 
-describe("prompts/threats.v1.md", () => {
+describe("prompts/threats.v2.md", () => {
   const prompt = loadPrompt(THREATS_PROMPT_NAME, THREATS_PROMPT_VERSION);
 
   it("loads under the id the result records", () => {
-    expect(prompt.id).toBe("threats.v1");
-    expect(prompt.path).toBe("prompts/threats.v1.md");
+    expect(prompt.id).toBe("threats.v2");
+    expect(prompt.path).toBe("prompts/threats.v2.md");
   });
 
   it("has both passes and permits silence", () => {
@@ -1121,8 +1122,127 @@ describe("prompts/threats.v1.md", () => {
   });
 
   it("is the file on disk, verbatim, behind the shared security preamble", () => {
-    const file = readFileSync("prompts/threats.v1.md", "utf8");
+    const file = readFileSync("prompts/threats.v2.md", "utf8");
     expect(prompt.body).toBe(file);
     expect(prompt.text).toBe(`${SECURITY_PREAMBLE}${file}`);
+  });
+});
+
+describe("gap rendering: route scope", () => {
+  it("names the route a route-scoped gap is about and limits where it may be cited", () => {
+    const batch = buildThreatBatch({
+      architecture: architecture(),
+      gaps: [gap("gap-1", { summary: "GET /learn reads request input and its file imports no validation library" })],
+      elementIds: ["orders-api"],
+      files: FILES,
+    });
+    const block = blockFor(batch.text, "orders-api");
+    expect(block).toContain("finding: GET /learn reads request input");
+    expect(block).toContain("scope: this one route only; cite ev-gap-1 only for a threat about that route");
+  });
+
+  it("adds no scope line for a repository-wide gap", () => {
+    const batch = buildThreatBatch({
+      architecture: architecture(),
+      gaps: [gap("gap-1", { scope: "repository" })],
+      elementIds: ["orders-api"],
+      files: FILES,
+    });
+    expect(blockFor(batch.text, "orders-api")).not.toContain("scope: this one route only");
+  });
+});
+
+describe("extra handler, DAO and startup windows", () => {
+  const filler = (n: number, width = 10) => Array.from({ length: n }, (_, i) => `// ${"x".repeat(width)} ${i}`);
+  const src = (path: string, lines: string[]): LoadedFile => ({ path, content: lines.join("\n"), tier: "high", reason: "source" });
+  const ROUTE = src("app/routes/allocations.js", [
+    'const AllocationsDAO = require("../data/allocations-dao").AllocationsDAO;',
+    "function AllocationsHandler(db) {",
+    "  const allocationsDAO = new AllocationsDAO(db);",
+    "  this.displayAllocations = (req, res) => {",
+    "    allocationsDAO.getByUserIdAndThreshold(req.params.userId, req.query.threshold);",
+    "  };",
+    "}",
+  ]);
+  const DAO = src("app/data/allocations-dao.js", [
+    "function AllocationsDAO(db) {",
+    ...filler(70),
+    "  this.getByUserIdAndThreshold = (userId, threshold) => ({ $where: `this.stocks > '${threshold}'` });",
+    "}",
+  ]);
+  const archWith = () =>
+    architecture({
+      components: [component("allocations", "api", { files: ["app/routes/allocations.js"] })],
+      dataFlows: [],
+      gapBindings: new Map(),
+      componentEvidence: new Map([["allocations", []]]),
+      flowEvidence: new Map(),
+    });
+
+  it("shows a DAO method one call from the element's handler, beyond the 60-line default", () => {
+    const batch = buildThreatBatch({ architecture: archWith(), gaps: [], elementIds: ["allocations"], files: [ROUTE, DAO] });
+    expect(batch.text).toContain("$where: `this.stocks > '${threshold}'`");
+    expect(batch.includedFiles).toEqual(["app/routes/allocations.js", "app/data/allocations-dao.js"]);
+    expect(batch.extraWindows.map((w) => w.kind)).toEqual(["handler", "dao"]);
+  });
+
+  it("skips a window that would exceed EXTRA_CONTEXT_CHARS", () => {
+    // A 200-line startup file of ~150-char lines is ~30k chars, over the 21k extra budget.
+    const server = src("server.js", ['const app = express();', ...filler(198, 140), "app.listen(1);"]);
+    const batch = buildThreatBatch({ architecture: archWith(), gaps: [], elementIds: ["allocations"], files: [ROUTE, DAO, server] });
+    expect(batch.extraWindows.map((w) => w.kind)).toEqual(["handler", "dao"]);
+    expect(batch.includedFiles).not.toContain("server.js");
+  });
+});
+
+describe("startup file only for batches that serve browser requests", () => {
+  const src = (path: string, content: string): LoadedFile => ({ path, content, tier: "high", reason: "source" });
+  const FILES = [
+    src("app/routes/memos.js", "function MemosHandler(db) {\n  this.addMemos = (req, res) => { res.end(); };\n}"),
+    src("app/data/memos-dao.js", "function MemosDAO(db) {\n  this.insert = (memo) => db.insert(memo);\n}"),
+    src("server.js", 'const app = express();\n// app.use(csrf());\nhttp.createServer(app).listen(4000);'),
+  ];
+  const arch = () =>
+    architecture({
+      components: [
+        component("browser", "actor", { files: [] }),
+        component("memos", "api", { files: ["app/routes/memos.js"] }),
+        component("db", "database", { files: ["app/data/memos-dao.js"] }),
+      ],
+      dataFlows: [
+        flow("memo-post", { sourceId: "browser", targetId: "memos" }),
+        flow("memo-db", { sourceId: "memos", targetId: "db" }),
+      ],
+      gapBindings: new Map(),
+      componentEvidence: new Map([["browser", []], ["memos", []], ["db", []]]),
+      flowEvidence: new Map([["memo-post", []], ["memo-db", []]]),
+    });
+  const batchFor = (ids: string[]) => buildThreatBatch({ architecture: arch(), gaps: [], elementIds: ids, files: FILES });
+  const hasStartup = (ids: string[]) => batchFor(ids).extraWindows.some((w) => w.kind === "startup");
+
+  it("includes it for a component that defines request handlers", () => {
+    expect(hasStartup(["memos"])).toBe(true);
+    expect(batchFor(["memos"]).text).toContain("// app.use(csrf());");
+  });
+
+  it("includes it for a browser-to-handler flow", () => {
+    expect(hasStartup(["memo-post"])).toBe(true);
+  });
+
+  it("leaves it out for a database component and a handler-to-database flow", () => {
+    expect(hasStartup(["db"])).toBe(false);
+    expect(hasStartup(["memo-db"])).toBe(false);
+    expect(batchFor(["db"]).includedFiles).not.toContain("server.js");
+  });
+
+  it("includes it when any element in a mixed batch qualifies", () => {
+    expect(hasStartup(["db", "memo-post"])).toBe(true);
+  });
+
+  it("decides per element with servesBrowserRequests", () => {
+    const loaded = new Map(FILES.map((f) => [f.path, f.content.split("\n")]));
+    const a = arch();
+    expect(servesBrowserRequests({ kind: "data_flow", id: "memo-post", files: [] }, a, loaded)).toBe(true);
+    expect(servesBrowserRequests({ kind: "data_flow", id: "memo-db", files: ["app/routes/memos.js"] }, a, loaded)).toBe(false);
   });
 });

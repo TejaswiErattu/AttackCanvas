@@ -1,3 +1,4 @@
+import type { SessionCookie } from "@/server/detect/sessionCookies";
 import type { Evidence, Owasp2025, Stride } from "@/shared/schema";
 
 /**
@@ -164,6 +165,14 @@ export type ControlGap = {
   file: string;
   line: number;
   routeId?: string;
+  /**
+   * What was found, naming the route or file it is about, e.g. "GET /learn reads request
+   * input and its file imports no validation library". The same text as the gap's
+   * evidence summary. Optional only so hand-built gaps in tests need not carry one.
+   */
+  summary?: string;
+  /** The route's normalized path ("/learn") when routeId is set; lets a citation be checked. */
+  routePath?: string;
   /** Detector facts that established the expectation. */
   basisFacts: string[];
   /** 0..1, how sure the control is truly absent. */
@@ -199,6 +208,8 @@ export type DetectorResult = {
   envNames: EnvName[];
   deployment: Deployment[];
   tokens: TokenCheck[];
+  /** Session cookies with effective attributes (sessionCookies.ts). Context, not evidence. */
+  sessionCookies: SessionCookie[];
   gaps: ControlGap[];
   evidence: Evidence[];
 };

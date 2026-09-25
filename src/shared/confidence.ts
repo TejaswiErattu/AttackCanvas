@@ -9,8 +9,11 @@ import type { Evidence } from "./schema";
  * exact and never a float accident. The gap floor's 0.80 certainty sum is too.
  */
 
-/** The two fields of a control gap the arithmetic reads; a server ControlGap satisfies it. */
-export type GapCertainty = { control: string; certainty: number };
+/**
+ * The fields of a control gap the arithmetic reads; a server ControlGap satisfies it.
+ * `cwe` is the weaknesses the gap asserts, which bound what the gap floor may vouch for.
+ */
+export type GapCertainty = { control: string; certainty: number; cwe?: readonly string[] };
 
 /** Confidence a gap-only threat is lifted to when the gaps are near-certain. */
 export const GAP_FLOOR = 0.4;
@@ -82,13 +85,62 @@ function certaintyOf(gap: GapCertainty | undefined): number | undefined {
   return Math.min(1, Math.max(0, c));
 }
 
+/** Points a non-gap item would earn on its own, used to pick one item per shared location. */
+function pointsOf(e: Evidence): number {
+  switch (categoryOf(e)) {
+    case "code":
+      return CODE;
+    case "semgrep":
+      return SEMGREP;
+    case "osv":
+      return OSV;
+    case "developer":
+      return DEVELOPER;
+    case "inference":
+      return INFERENCE_ONLY;
+    default:
+      return 0;
+  }
+}
+
+/**
+ * One item per file:line (CLAUDE.md rule 2): items pointing to the same file and line are
+ * one source, so a dependency declaration and an advisory on the same package.json line
+ * are not two independent confirmations. The highest-scoring item is kept (the first on a
+ * tie). Items without both a file and a line are never merged, and neither are control
+ * gaps: a gap asserts that a control is missing, a different claim from a positive
+ * observation at the same line (an IDOR gap and its route both point at the route line).
+ */
+function onePerLocation(evidence: readonly Evidence[]): Evidence[] {
+  const kept = new Map<string, Evidence>();
+  const unlocated: Evidence[] = [];
+  for (const e of evidence) {
+    if (e.filePath === undefined || e.lineStart === undefined || isGapEvidence(e)) {
+      unlocated.push(e);
+      continue;
+    }
+    const key = `${e.filePath}:${e.lineStart}`;
+    const current = kept.get(key);
+    if (current === undefined || pointsOf(e) > pointsOf(current)) kept.set(key, e);
+  }
+  const keep = new Set([...unlocated, ...kept.values()]);
+  return evidence.filter((e) => keep.has(e));
+}
+
+/**
+ * A threat's confidence and its UI breakdown (CLAUDE.md rule 2). `claimedCwe` is the
+ * threat's own CWE list: the gap floor applies only when every CWE it claims is one the
+ * cited gaps assert, so a gap vouches for the missing control and nothing built on it.
+ * Evidence sharing a file and line counts once (onePerLocation).
+ */
 export function confidenceOf(
   evidence: readonly Evidence[],
   gaps: ReadonlyMap<string, GapCertainty>,
   assumptions: readonly string[],
+  claimedCwe: readonly string[],
 ): { value: number; breakdown: string[] } {
   const byCategory = new Map<Category, Evidence[]>();
-  for (const e of evidence) {
+  for (const e of onePerLocation(evidence)) {
     const category = categoryOf(e);
     if (category === undefined) continue;
     byCategory.set(category, [...(byCategory.get(category) ?? []), e]);
@@ -147,8 +199,20 @@ export function confidenceOf(
   const gapOnly = contributing.length === 1 && contributing[0] === "gap";
   const gapCertaintySum = valid.reduce((sum, g) => sum + Math.round(g.certainty * 1000), 0);
   if (gapOnly && gapCertaintySum >= GAP_FLOOR_CERTAINTY && value < GAP_FLOOR * 1000) {
-    value = GAP_FLOOR * 1000;
-    breakdown.push(`floor ${GAP_FLOOR.toFixed(2)} applied: gap-only with high certainty`);
+    const asserted = new Set(valid.flatMap((g) => g.gap.cwe ?? []));
+    const claimed = [...new Set(claimedCwe)];
+    const beyond = claimed.filter((cwe) => !asserted.has(cwe));
+    if (claimed.length > 0 && beyond.length === 0) {
+      value = GAP_FLOOR * 1000;
+      breakdown.push(`floor ${GAP_FLOOR.toFixed(2)} applied: gap-only with high certainty`);
+    } else {
+      // With no CWE the threat's scope cannot be checked against the gap's, so no floor.
+      breakdown.push(
+        claimed.length === 0
+          ? `floor ${GAP_FLOOR.toFixed(2)} not applied: the threat claims no CWE`
+          : `floor ${GAP_FLOOR.toFixed(2)} not applied: the threat also claims ${beyond.join(", ")}, which the cited gaps do not assert`,
+      );
+    }
   }
 
   value = Math.min(1000, Math.max(0, value));
@@ -177,6 +241,16 @@ const QUALITATIVE: Record<Category, string> = {
   developer: "Confirmed by a developer answer",
   inference: "Rests on an inference, which counts only when nothing else supports the threat",
 };
+/**
+ * The gap floor, qualitatively: a gap-only threat stored at exactly the floor was raised to
+ * it; one below it was not, because its gaps were not near-certain or it claims a weakness
+ * beyond them. The model does not carry gap certainty or gap CWEs, so which one is unknown.
+ */
+const FLOOR_APPLIED =
+  "Raised to the 40% minimum for a near-certain missing control: every weakness it claims is one the missing-control finding asserts";
+const FLOOR_NOT_APPLIED =
+  "Not raised to the 40% minimum for a missing control: that needs near-certain missing-control findings and no claimed weakness beyond theirs";
+
 const QUALITATIVE_ORDER: readonly Category[] = [
   "code",
   "gap",
@@ -201,16 +275,28 @@ export function explainConfidence(
   assumptions: readonly string[],
   confidence: number,
 ): ConfidenceExplanation {
-  const { value, breakdown } = confidenceOf(cited, new Map(), assumptions);
+  // The model carries neither gap certainty nor gap CWEs, so the map is empty and this
+  // recomputation is used only when no gap is cited (the floor then cannot apply).
+  const { value, breakdown } = confidenceOf(cited, new Map(), assumptions, []);
   if (!cited.some(isGapEvidence) && Math.round(value * 1000) === Math.round(confidence * 1000)) {
     return { exact: true, lines: breakdown };
   }
   const present = new Set(cited.map(categoryOf));
+  const gapOnly = [...present].every((c) => c === "gap" || c === "inference" || c === undefined);
+  const floorLine =
+    present.has("gap") && gapOnly
+      ? Math.round(confidence * 1000) === GAP_FLOOR * 1000
+        ? FLOOR_APPLIED
+        : Math.round(confidence * 1000) < GAP_FLOOR * 1000
+          ? FLOOR_NOT_APPLIED
+          : undefined
+      : undefined;
   return {
     exact: false,
     lines: [
       ...QUALITATIVE_ORDER.filter((c) => present.has(c)).map((c) => QUALITATIVE[c]),
       ...assumptions.map((a) => `Lowered by an unconfirmed assumption: ${a}`),
+      ...(floorLine ? [floorLine] : []),
     ],
   };
 }

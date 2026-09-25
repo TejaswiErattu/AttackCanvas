@@ -651,7 +651,7 @@ describe("schema and deadline sent by the engine", () => {
     const h = harness(() => ({ threats: [] }));
     await run(h, arch(["svc-01"]));
     const system = h.calls[0].body.system as { text: string }[];
-    const file = readFileSync("prompts/threats.v1.md", "utf8");
+    const file = readFileSync("prompts/threats.v2.md", "utf8");
     expect(system[0].text).toBe(`${SECURITY_PREAMBLE}${file}`);
   });
 
@@ -1016,6 +1016,65 @@ describe("reference validation", () => {
     ).toEqual([]);
   });
 
+  describe("route-scoped gap citations", () => {
+    const withLearnGap = () => {
+      const a = arch(["alpha"], [], "alpha");
+      a.gaps[0] = { ...a.gaps[0], kind: "input_validation_missing", routePath: "/learn", summary: "GET /learn reads request input" };
+      return a;
+    };
+    const runWith = (h: Harness, a: ReturnType<typeof withLearnGap>) =>
+      generateThreats({
+        architecture: a.architecture,
+        gaps: a.gaps,
+        routePaths: ["/learn", "/research"],
+        files: files(["alpha"]),
+        analysisId: "test-analysis",
+        deps: h.deps,
+      });
+    const base = { componentIds: ["alpha"], assumptions: [], impact: 4, likelihood: 3 };
+
+    it("keeps a same-route citation", async () => {
+      const h = harness(() => ({
+        threats: [threat({ ...base, title: "Open redirect on GET /learn", attackScenario: "url", evidenceIds: ["ev-alpha", "ev-gap-1"] })],
+      }));
+      const result = await runWith(h, withLearnGap());
+      expect(result.threats[0].evidenceIds).toEqual(["ev-alpha", "ev-gap-1"]);
+      expect(result.limitations).toEqual([]);
+    });
+
+    it("removes a cross-route citation, records why, and keeps the threat on its other evidence", async () => {
+      const h = harness(() => ({
+        threats: [threat({ ...base, title: "SSRF on GET /research", attackScenario: "fetch", evidenceIds: ["ev-alpha", "ev-gap-1"] })],
+      }));
+      const result = await runWith(h, withLearnGap());
+      expect(result.threats[0].evidenceIds).toEqual(["ev-alpha"]);
+      expect(result.evidence.map((e) => e.id)).toEqual(["ev-alpha"]);
+      expect(result.limitations).toEqual([
+        'Removed citation ev-gap-1 from threat "SSRF on GET /research" in batch 1: the gap is about /learn, the threat names /research.',
+      ]);
+    });
+
+    it("drops the threat under the existing rule when the wrong citation was its only support", async () => {
+      const h = harness(() => ({
+        threats: [threat({ ...base, title: "SSRF on GET /research", attackScenario: "fetch", evidenceIds: ["ev-gap-1"] })],
+      }));
+      const result = await runWith(h, withLearnGap());
+      expect(result.threats).toEqual([]);
+      expect(result.limitations).toEqual([
+        'Dropped threat "SSRF on GET /research" from batch 1: cites no evidence and states no assumption.',
+        'Removed citation ev-gap-1 from threat "SSRF on GET /research" in batch 1: the gap is about /learn, the threat names /research.',
+      ]);
+    });
+
+    it("keeps the citation when the threat names no route", async () => {
+      const h = harness(() => ({
+        threats: [threat({ ...base, title: "Unvalidated input", attackScenario: "no validation", evidenceIds: ["ev-gap-1"] })],
+      }));
+      const result = await runWith(h, withLearnGap());
+      expect(result.threats[0].evidenceIds).toEqual(["ev-gap-1"]);
+    });
+  });
+
   it("drops a threat that borrows a co-batched element's evidence, so it cannot read as evidence-backed", async () => {
     // alpha and beta have no flows, so first-fit packs them into ONE batch. The model is
     // shown ev-alpha only under alpha, then cites it for a threat about beta alone.
@@ -1349,6 +1408,28 @@ describe("dedupe", () => {
       const [merged, ...rest] = dedupeThreats(input, EV);
       expect(rest).toEqual([]);
       expect(merged.title).toContain("Zzz driven");
+      expect(merged.mitigation.summary).toBe("Evidence fix");
+    }
+  });
+
+  it("does not treat an inference as evidence when picking the winner (same rule as scoring's basis)", () => {
+    const withInference = [...EV, ev("ev-inf", { kind: "inference" })];
+    const inferred = threat({
+      title: "Aaa driven wording zq1 zq2 zq3 zq4",
+      attackScenario: "zq5",
+      evidenceIds: ["ev-inf"],
+      mitigation: { summary: "Inferred fix", steps: ["inferred step"] },
+    });
+    const backed = threat({
+      title: "Zzz driven wording zq1 zq2 zq3 zq4",
+      attackScenario: "zq5",
+      evidenceIds: ["ev-code"],
+      mitigation: { summary: "Evidence fix", steps: ["evidence step"] },
+    });
+    // "Aaa" sorts first, so before the fix the inference-only threat won the tie.
+    for (const input of [[inferred, backed], [backed, inferred]]) {
+      const [merged, ...rest] = dedupeThreats(input, withInference);
+      expect(rest).toEqual([]);
       expect(merged.mitigation.summary).toBe("Evidence fix");
     }
   });
@@ -1718,7 +1799,7 @@ describe("model failures", () => {
     const result = await run(h, five);
     expect(result.usage).toHaveLength(3);
     expect(result.usage.every((u) => u.stage === "stride")).toBe(true);
-    expect(result.promptId).toBe("threats.v1");
+    expect(result.promptId).toBe("threats.v2");
   });
 });
 
@@ -1749,7 +1830,7 @@ describe("no live network", () => {
     expect(h.calls[0].body.messages[0].content as string).toContain("[REDACTED:generic_secret]");
     // The trusted system prompt is exactly the prompt file, untouched.
     const system = h.calls[0].body.system as { text: string }[];
-    const file = readFileSync("prompts/threats.v1.md", "utf8");
+    const file = readFileSync("prompts/threats.v2.md", "utf8");
     expect(system[0].text).toBe(`${SECURITY_PREAMBLE}${file}`);
   });
 

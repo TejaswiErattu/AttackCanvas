@@ -1,0 +1,42 @@
+{
+  "name": "nodegoat-7f7211d",
+  "purpose": "NodeGoat evaluation baseline at AttackCanvas c8dd73f (7f7211d targeted Semgrep rules and handler/DAO/startup windows, plus the metadata-only failure diagnostic). Read-only baseline with final human labels; do not overwrite or relabel.",
+  "repo": {
+    "url": "https://github.com/OWASP/NodeGoat/tree/c5cb68a7084e4ae7dcc60e6a98768720a81841e8",
+    "commit": "c5cb68a7084e4ae7dcc60e6a98768720a81841e8"
+  },
+  "attackCanvasRevision": "c8dd73fb071d3e4996e294b03923e73884501b31",
+  "modelProfile": "demo",
+  "analysisLevel": 2,
+  "questions": "all skipped",
+  "timeoutMs": 2400000,
+  "startedAt": "2026-09-25T18:41:42Z",
+  "ranAt": "2026-09-25T18:59:03.896Z",
+  "elapsedSeconds": 1042,
+  "cost": {
+    "calls": 24,
+    "totalUsd": 3.5583604999999996,
+    "source": "pipeline usage ledger at list prices (src/server/ai/models.ts); not an invoice"
+  },
+  "threats": 118,
+  "labels": "final human labels for all 118 rows (matchesExpected, supported, evidenceCorrect, notes)",
+  "answerKey": "eval/expected/nodegoat-7f7211d.yaml (byte-identical copy of the draft key)",
+  "priorAttempts": "Three earlier attempts at this configuration failed with no result: TIMEOUT at 1200s (7f7211d, $3.96), AI_FAILURE (7f7211d, $1.58), HTTP 400 at architecture (c8dd73f, $0; credits exhausted per Console).",
+  "files": {
+    "result.json": {
+      "sha256": "5b7f818d730d2b3d7a9cc1c2fab86aeaf2a411c1d6debbeffed1752cc66682ed"
+    },
+    "labels.csv": {
+      "sha256": "35265552b62bfa29c9be5e67f169ffecc4c495a024f9034c7bd489a482e02586"
+    }
+  },
+  "baselineLabel": "c8dd73f",
+  "labelSheetLastModifiedAt": "2026-09-25T19:13:52Z",
+  "metrics": {
+    "recallAll": "16/19",
+    "recallVisible": "7/19",
+    "unsupported": "28/118",
+    "evidenceAccuracy": "97/117",
+    "visibleRows": 16
+  }
+}

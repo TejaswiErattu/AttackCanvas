@@ -67,10 +67,10 @@ const CASES: Case[] = [
   {
     kind: "csrf_missing",
     absent: expressRepo(`app.post("/checkout", ${HANDLER});`, NEXT_DEP),
-    present: expressRepo(`app.post("/checkout", ${HANDLER});`, {
-      ...NEXT_DEP,
-      csurf: "^1.11.0",
-    }),
+    present: expressRepo(
+      `const csrf = require("csurf");\napp.use(csrf());\napp.post("/checkout", ${HANDLER});`,
+      { ...NEXT_DEP, csurf: "^1.11.0" },
+    ),
   },
   {
     kind: "security_headers_missing",
@@ -819,5 +819,42 @@ describe("isScannable", () => {
     ["README.md", false],
   ])("treats %s as scannable=%s", (path, expected) => {
     expect(isScannable(path)).toBe(expected);
+  });
+});
+
+describe("detectGaps: NodeGoat-style routes", () => {
+  const files: DetectorInput[] = [
+    {
+      path: "app/routes/index.js",
+      content: [
+        'const express = require("express");',
+        'const SessionHandler = require("./session");',
+        "const index = (app, db) => {",
+        "    const sessionHandler = new SessionHandler(db);",
+        "    const isLoggedIn = sessionHandler.isLoggedInMiddleware;",
+        '    app.post("/profile", isLoggedIn, sessionHandler.a);',
+        '    app.post("/contributions", isLoggedIn, sessionHandler.b);',
+        '    app.post("/benefits", isLoggedIn, sessionHandler.c);',
+        '    app.post("/memos", isLoggedIn, sessionHandler.d);',
+        '    app.post("/unguarded", sessionHandler.e);',
+        '    app.get("/learn", isLoggedIn, (req, res) => res.redirect(req.query.url));',
+        "};",
+        "module.exports = index;",
+      ].join("\n"),
+    },
+  ];
+  const gaps = gapsOf(files);
+
+  it("reports no authn_missing for routes behind isLoggedIn, only for the unguarded one", () => {
+    const authn = gaps.filter((g) => g.kind === "authn_missing");
+    expect(authn.map((g) => g.summary)).toEqual([
+      "POST /unguarded changes state with no authentication middleware or session check",
+    ]);
+  });
+
+  it("carries a route-naming summary on each gap for the threat prompt", () => {
+    const input = gaps.find((g) => g.kind === "input_validation_missing");
+    expect(input?.scope).toBe("route");
+    expect(input?.summary).toMatch(/^GET \/learn reads request input/);
   });
 });

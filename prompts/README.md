@@ -17,4 +17,5 @@ an unknown, the threats prompt emits a threat.
 | File                  | Used by                                                          |
 | --------------------- | ---------------------------------------------------------------- |
 | `architecture.v1.md`  | `inferArchitecture` (`src/server/analysis/architecture.ts`)       |
-| `threats.v1.md`       | the threat engine, over batches from `src/server/analysis/threatPrompt.ts` |
+| `threats.v2.md`       | the threat engine, over batches from `src/server/analysis/threatPrompt.ts` |
+| `threats.v1.md`       | earlier threat prompt, kept so results recorded as `threats.v1` stay reproducible |

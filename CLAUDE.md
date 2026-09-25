@@ -20,8 +20,15 @@ Rules:
    - confidence points: code evidence +0.35, control gap +0.30 x certainty,
      semgrep +0.25, osv +0.30, developer answer +0.30, second independent
      source +0.10, inference only +0.20, unconfirmed assumption -0.15;
-     clamp 0..1. Gap floor: if every supporting evidence item is a control
-     gap and their combined certainty is >= 0.8, confidence is at least 0.40.
+     clamp 0..1. Evidence items pointing to the same file and line count as
+     one source: only the highest-scoring of them counts, so they earn no
+     second-source bonus. Items without a file and line are not merged, and
+     neither are control gaps (a missing control is a different claim from a
+     positive observation at the same line). Gap floor: if every supporting
+     evidence item is a control gap and their combined certainty is >= 0.8,
+     confidence is at least 0.40,
+     but only when every CWE claimed by the threat is among the CWEs asserted
+     by its cited control gaps (a threat with no CWE gets no floor).
      Inference and assumption items are not supporting evidence: an
      inference is a conclusion, not direct support, so it neither blocks the
      floor nor counts toward it.

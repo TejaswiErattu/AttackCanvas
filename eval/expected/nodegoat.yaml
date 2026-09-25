@@ -1,0 +1,115 @@
+# DRAFT: pending human review. NOT human-verified.
+#
+# Drafted by Claude (the same model family that AttackCanvas uses) from NodeGoat's own
+# README, tutorial pages (app/views/tutorial/*.html) and source code. AttackCanvas
+# findings were not consulted: no eval/results/nodegoat.json existed when this was written.
+#
+# Pinned to OWASP/NodeGoat@c5cb68a7084e4ae7dcc60e6a98768720a81841e8.
+# Inclusion rule: the vulnerable code path is live in the default checkout, and the
+# "Fix for ..." alternative is commented out. Items marked `review: uncertain` need a
+# human decision on whether they belong in the answer key.
+#
+# score.ts reads only `id` and `description`; `source`, `owasp2013` and `review` are
+# notes for the reviewer and are ignored by the parser.
+status: draft
+# Guided evaluation: NodeGoat ships tutorial pages (app/views/tutorial/*.html) that
+# describe its own vulnerabilities, and all 13 of them reach the model's context. Recall
+# here measures detection with hints, not blind discovery.
+mode: guided
+# score.ts refuses a result whose threatModel.repo.ref differs from this.
+revision: c5cb68a7084e4ae7dcc60e6a98768720a81841e8
+expectedThreats:
+  - id: NG-SSJS-EVAL
+    description: Server-side JavaScript injection. The contributions handler passes the preTax, afterTax and roth request fields straight to eval(), so a request can run arbitrary code on the server.
+    owasp2013: A1
+    source: https://github.com/OWASP/NodeGoat/blob/c5cb68a7084e4ae7dcc60e6a98768720a81841e8/app/routes/contributions.js#L31-L34
+
+  - id: NG-NOSQL-WHERE
+    description: NoSQL injection. The allocations DAO interpolates the unsanitised `threshold` query parameter into a MongoDB $where JavaScript expression, allowing data exposure or DoS (e.g. while(true){}).
+    owasp2013: A1
+    source: https://github.com/OWASP/NodeGoat/blob/c5cb68a7084e4ae7dcc60e6a98768720a81841e8/app/data/allocations-dao.js#L57-L79
+
+  - id: NG-LOG-INJECTION
+    description: Log injection / log forging. The failed-login path writes the raw userName to console.log without stripping CR/LF.
+    owasp2013: A1
+    source: https://github.com/OWASP/NodeGoat/blob/c5cb68a7084e4ae7dcc60e6a98768720a81841e8/app/routes/session.js#L64-L66
+
+  - id: NG-PLAINTEXT-PASSWORDS
+    description: Passwords are stored in plaintext and compared with ===. The bcrypt hashing is commented out.
+    owasp2013: A2
+    source: https://github.com/OWASP/NodeGoat/blob/c5cb68a7084e4ae7dcc60e6a98768720a81841e8/app/data/user-dao.js#L20-L31
+
+  - id: NG-USER-ENUMERATION
+    description: The login form returns distinct "Invalid username" and "Invalid password" errors, which lets an attacker enumerate valid accounts.
+    owasp2013: A2
+    source: https://github.com/OWASP/NodeGoat/blob/c5cb68a7084e4ae7dcc60e6a98768720a81841e8/app/routes/session.js#L59-L101
+
+  - id: NG-WEAK-PASSWORD-POLICY
+    description: Signup accepts any password of 1 to 20 characters. The stronger password regex is commented out.
+    owasp2013: A2
+    source: https://github.com/OWASP/NodeGoat/blob/c5cb68a7084e4ae7dcc60e6a98768720a81841e8/app/routes/session.js#L140-L150
+
+  - id: NG-SESSION-FIXATION
+    description: The session id is not regenerated on login (no req.session.regenerate), so a pre-login session id stays valid after authentication.
+    owasp2013: A2
+    source: https://github.com/OWASP/NodeGoat/blob/c5cb68a7084e4ae7dcc60e6a98768720a81841e8/app/routes/session.js#L104-L117
+
+  - id: NG-INSECURE-SESSION-COOKIE
+    description: The session cookie has no httpOnly, no secure flag and no maxAge. The app uses the default connect.sid name and a hard-coded cookie secret from config/env/all.js.
+    owasp2013: A2/A3/A5
+    source: https://github.com/OWASP/NodeGoat/blob/c5cb68a7084e4ae7dcc60e6a98768720a81841e8/server.js#L72-L96 ; https://github.com/OWASP/NodeGoat/blob/c5cb68a7084e4ae7dcc60e6a98768720a81841e8/config/env/all.js
+
+  - id: NG-XSS-AUTOESCAPE-OFF
+    description: Reflected or stored XSS. Swig autoescape is disabled globally, so user-controlled values (e.g. profile firstName rendered into an input value and an href in profile.html) are emitted unescaped.
+    owasp2013: A3
+    source: https://github.com/OWASP/NodeGoat/blob/c5cb68a7084e4ae7dcc60e6a98768720a81841e8/server.js#L135-L142 ; https://github.com/OWASP/NodeGoat/blob/c5cb68a7084e4ae7dcc60e6a98768720a81841e8/app/views/profile.html#L41
+
+  - id: NG-IDOR-ALLOCATIONS
+    description: Insecure direct object reference. /allocations/:userId takes the user id from the URL instead of the session, so any logged-in user can read another user's allocations.
+    owasp2013: A4
+    source: https://github.com/OWASP/NodeGoat/blob/c5cb68a7084e4ae7dcc60e6a98768720a81841e8/app/routes/allocations.js#L10-L22 ; https://github.com/OWASP/NodeGoat/blob/c5cb68a7084e4ae7dcc60e6a98768720a81841e8/app/routes/index.js#L63
+
+  - id: NG-MISSING-SECURITY-HEADERS
+    description: Security misconfiguration. Helmet is not applied (no frameguard, CSP, HSTS, nosniff or no-cache) and x-powered-by is not disabled. All of it is commented out.
+    owasp2013: A5
+    source: https://github.com/OWASP/NodeGoat/blob/c5cb68a7084e4ae7dcc60e6a98768720a81841e8/server.js#L38-L63
+
+  - id: NG-PLAINTEXT-HTTP
+    description: The server listens over plain HTTP only. The HTTPS server is commented out, so credentials and session cookies travel in cleartext.
+    owasp2013: A6
+    source: https://github.com/OWASP/NodeGoat/blob/c5cb68a7084e4ae7dcc60e6a98768720a81841e8/server.js#L144-L156
+
+  - id: NG-UNENCRYPTED-PII
+    description: SSN and DOB from the profile are stored unencrypted in MongoDB. The AES encrypt and decrypt helpers are commented out.
+    owasp2013: A6
+    source: https://github.com/OWASP/NodeGoat/blob/c5cb68a7084e4ae7dcc60e6a98768720a81841e8/app/data/profile-dao.js#L15-L40
+
+  - id: NG-MISSING-FUNCTION-AUTHZ
+    description: Missing function-level access control. The admin-only /benefits GET and POST routes check only isLoggedIn, not isAdmin, so any user can view or change benefit start dates.
+    owasp2013: A7
+    source: https://github.com/OWASP/NodeGoat/blob/c5cb68a7084e4ae7dcc60e6a98768720a81841e8/app/routes/index.js#L55-L61
+
+  - id: NG-CSRF
+    description: No CSRF protection. The csurf middleware and token are commented out, so state-changing POSTs (profile, contributions, benefits, memos) can be forged.
+    owasp2013: A8
+    source: https://github.com/OWASP/NodeGoat/blob/c5cb68a7084e4ae7dcc60e6a98768720a81841e8/server.js#L98-L108
+
+  - id: NG-OPEN-REDIRECT
+    description: Unvalidated redirect. GET /learn redirects to req.query.url with no allow-list.
+    owasp2013: A10
+    source: https://github.com/OWASP/NodeGoat/blob/c5cb68a7084e4ae7dcc60e6a98768720a81841e8/app/routes/index.js#L69-L73
+
+  - id: NG-SSRF-RESEARCH
+    description: Server-side request forgery. /research fetches req.query.url + req.query.symbol server-side with needle and echoes the body back to the user.
+    owasp2013: SSRF (tutorial ssrf.html)
+    source: https://github.com/OWASP/NodeGoat/blob/c5cb68a7084e4ae7dcc60e6a98768720a81841e8/app/routes/research.js#L13-L30
+
+  - id: NG-REDOS-ROUTING
+    description: ReDoS. The bankRouting validation regex /([0-9]+)+\#/ has nested quantifiers and backtracks catastrophically on crafted input.
+    owasp2013: ReDoS (tutorial redos.html)
+    source: https://github.com/OWASP/NodeGoat/blob/c5cb68a7084e4ae7dcc60e6a98768720a81841e8/app/routes/profile.js#L52-L59
+
+  - id: NG-VULNERABLE-DEPS
+    description: Stored XSS in memos through a vulnerable dependency. marked 0.3.5 (package.json and package-lock.json) renders memos via marked(doc.memo), and sanitize:true does not protect it. A finding matches only if it names marked 0.3.5 (or <0.3.6/<0.3.7) and GHSA-vfvf-mqq8-rwqc (CVE-2016-10531, sanitize bypass via HTML entities, fixed 0.3.6) or GHSA-7px7-7xjx-hxm8 (CVE-2017-1000427, XSS via data URIs, fixed 0.3.7). A generic "outdated dependencies" or marked ReDoS finding does not match.
+    owasp2013: A9
+    source: https://github.com/OWASP/NodeGoat/blob/c5cb68a7084e4ae7dcc60e6a98768720a81841e8/package.json#L17 ; https://github.com/OWASP/NodeGoat/blob/c5cb68a7084e4ae7dcc60e6a98768720a81841e8/app/views/memos.html#L31 ; https://github.com/advisories/GHSA-vfvf-mqq8-rwqc ; https://github.com/advisories/GHSA-7px7-7xjx-hxm8

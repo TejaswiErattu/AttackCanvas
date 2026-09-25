@@ -37,8 +37,10 @@ import {
   type ThreatBatch,
 } from "@/server/analysis/threatPrompt";
 import type { ControlGap } from "@/server/detect/types";
+import type { SessionCookie } from "@/server/detect/sessionCookies";
 import type { LoadedFile } from "@/server/ingest/loader";
-import { isGapEvidence } from "@/server/scoring";
+import { isPositiveObservation } from "@/server/scoring";
+import { stripCrossRouteGapCitations, type RemovedCitation } from "@/server/analysis/routeScope";
 import {
   DraftThreatSchema,
   type DraftThreat,
@@ -111,7 +113,15 @@ export type ThreatEngineInput = {
   architecture: MergedArchitecture;
   /** The detector's gaps, the same list mergeArchitecture bound. */
   gaps: readonly ControlGap[];
+  /**
+   * Normalized paths of the detector's routes, used to tell which route a threat names
+   * (routeScope.ts). Optional: without it only the gaps' own routes are known, which is
+   * more conservative (fewer threats read as naming a different route).
+   */
+  routePaths?: readonly string[];
   files: readonly LoadedFile[];
+  /** Session cookies with effective attributes, shown to the model as context. */
+  sessionCookies?: readonly SessionCookie[];
   analysisId: string;
   /**
    * Run exactly these batches instead of batching the whole architecture. For a smoke
@@ -417,6 +427,25 @@ export function isPlaceholderAssumption(text: string): boolean {
   return words <= PLACEHOLDER_MAX_WORDS && /\bplaceholder\b/i.test(trimmed);
 }
 
+/** Route-scoped gaps shown in a batch: evidence id -> the route the gap is about. */
+function gapRouteByEvidenceId(batch: ThreatBatch): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const element of batch.elements) {
+    for (const gap of element.gaps) {
+      if (gap.routeScoped && gap.routePath !== undefined) out.set(gap.evidenceId, gap.routePath);
+    }
+  }
+  return out;
+}
+
+function describeRemovedCitation(threat: DraftThreat, index: number, r: RemovedCitation): string {
+  const title = oneLine(threat.title, LIMITATION_TITLE_CHARS);
+  return (
+    `Removed citation ${r.evidenceId} from threat "${title}" in batch ${index + 1}: ` +
+    `the gap is about ${r.gapRoute}, the threat names ${r.threatRoutes.join(", ")}.`
+  );
+}
+
 function describeDrop(threat: DraftThreat, index: number, issues: string[]): string {
   const title = oneLine(threat.title, LIMITATION_TITLE_CHARS);
   return `Dropped threat "${title}" from batch ${index + 1}: ${issues.join("; ")}.`;
@@ -525,9 +554,10 @@ export function compareThreats(a: DraftThreat, b: DraftThreat): number {
 }
 
 /**
- * Whether a threat cites at least one positive observation, meaning evidence that is not
- * a control gap (the same test scoring uses for `basis`). Citing an id that is not in
- * `evidence` counts as no support at all.
+ * Whether a threat cites at least one positive observation: not a control gap, an
+ * inference or an assumption -- scoring's own test for `basis`, imported rather than
+ * restated so the two cannot drift. Citing an id that is not in `evidence` counts as no
+ * support at all.
  */
 function isEvidenceBacked(
   t: DraftThreat,
@@ -535,7 +565,7 @@ function isEvidenceBacked(
 ): boolean {
   return t.evidenceIds.some((id) => {
     const e = evidenceById.get(id);
-    return e !== undefined && !isGapEvidence(e);
+    return e !== undefined && isPositiveObservation(e);
   });
 }
 
@@ -665,6 +695,31 @@ type BatchOutcome = {
   usage: CallUsage;
 };
 
+/** Which batch a thrown value came from, recorded by generateThreats for failure logs. */
+const failedBatches = new WeakMap<object, { number: number; of: number }>();
+
+/**
+ * The batch (1-based number, and the batch count) whose call threw `error`, when it came
+ * from a threat batch. Numbers only: element ids are model-written and are not returned.
+ */
+export function failedBatchOf(error: unknown): { number: number; of: number } | undefined {
+  return typeof error === "object" && error !== null ? failedBatches.get(error) : undefined;
+}
+
+/** `task`, recording which of `total` batches a rejection came from (first tag wins). */
+function tagBatchErrors<T, R>(
+  task: (item: T, index: number) => Promise<R>,
+  total: number,
+): (item: T, index: number) => Promise<R> {
+  return (item, index) =>
+    task(item, index).catch((error: unknown) => {
+      if (typeof error === "object" && error !== null && !failedBatches.has(error)) {
+        failedBatches.set(error, { number: index + 1, of: total });
+      }
+      throw error;
+    });
+}
+
 /**
  * Generates threats for a merged architecture.
  *
@@ -687,16 +742,21 @@ export async function generateThreats(
     input.promptDir,
   );
   const batches = (input.batches ?? batchElements(architecture)).map((b) => [...b]);
+  const knownPaths = new Set([
+    ...(input.routePaths ?? []),
+    ...input.gaps.flatMap((g) => (g.routePath === undefined ? [] : [g.routePath])),
+  ]);
 
   const outcomes = await runPool(
     batches,
     input.concurrency ?? THREATS_CONCURRENCY,
-    async (elementIds, index): Promise<BatchOutcome> => {
+    tagBatchErrors(async (elementIds, index): Promise<BatchOutcome> => {
       const batch = buildThreatBatch({
         architecture,
         gaps: input.gaps,
         elementIds,
         files: input.files,
+        sessionCookies: input.sessionCookies,
         budgetTokens: input.budgetTokens ?? THREATS_CONTEXT_TOKENS,
       });
 
@@ -722,9 +782,14 @@ export async function generateThreats(
       });
 
       const offered = offeredBy(batch);
+      const gapRoutes = gapRouteByEvidenceId(batch);
       const kept: DraftThreat[] = [];
       const limitations: string[] = [];
-      for (const threat of value.threats) {
+      for (const returned of value.threats) {
+        // Before reference validation, so a threat left with no support is dropped by the
+        // existing "cites no evidence and states no assumption" rule.
+        const { threat, removed } = stripCrossRouteGapCitations(returned, gapRoutes, knownPaths);
+        for (const r of removed) limitations.push(describeRemovedCitation(threat, index, r));
         const issues = referenceIssues(threat, architecture, offered);
         if (issues.length === 0) kept.push(threat);
         else limitations.push(describeDrop(threat, index, issues));
@@ -738,7 +803,7 @@ export async function generateThreats(
         limitations: limitations.sort(cmp),
         usage,
       };
-    },
+    }, batches.length),
     input.shouldContinue,
   ).catch((cause: unknown) => {
     // Some batches never ran: fail closed, never return a partial threat list.

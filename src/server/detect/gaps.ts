@@ -280,6 +280,131 @@ const hasPrefix = (
 const anySource = (ctx: Ctx, pattern: RegExp): boolean =>
   ctx.source.some((file) => pattern.test(ctx.code(file)));
 
+/** Whether `specifier` names one of `packages` (or a subpath) or starts with a prefix. */
+function namesPackage(
+  specifier: string,
+  packages: readonly string[],
+  prefixes: readonly string[],
+): boolean {
+  return (
+    packages.some((name) => specifier === name || specifier.startsWith(`${name}/`)) ||
+    prefixes.some((prefix) => specifier.startsWith(prefix))
+  );
+}
+
+/** Local names bound by an import or require clause: `a`, `{ a, b: c }`, `* as d`. */
+function boundNames(clause: string): string[] {
+  const names: string[] = [];
+  const braces = /\{([^}]*)\}/.exec(clause);
+  if (braces) {
+    for (const part of braces[1].split(",")) {
+      const local = part.trim().split(/\s*(?::|\bas\b)\s*/).at(-1)?.trim();
+      if (local && /^[A-Za-z_$][\w$]*$/.test(local)) names.push(local);
+    }
+  }
+  const outside = braces ? clause.replace(braces[0], " ") : clause;
+  for (const match of outside.matchAll(/(?:\*\s*as\s+)?([A-Za-z_$][\w$]*)/g)) {
+    if (match[1] !== "as") names.push(match[1]);
+  }
+  return names;
+}
+
+const IMPORT_FROM =
+  /\bimport\s+([^'"`;]*?)\s+from\s*(['"])([^'"\n]+)\2/g;
+const REQUIRE_DECLARATION =
+  /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*|\{[^}]*\})\s*=\s*require\s*\(\s*(['"])([^'"\n]+)\2\s*\)/g;
+const INLINE_REQUIRE = /\b(?:require|import)\s*\(\s*(['"])([^'"\n]+)\1\s*\)/g;
+
+/** Import and require declarations of any package: names there are bindings, not use. */
+function declarationSpans(text: string): [number, number][] {
+  return [IMPORT_FROM, REQUIRE_DECLARATION].flatMap((pattern) =>
+    [...text.matchAll(pattern)].map(
+      (match): [number, number] => [match.index, match.index + match[0].length],
+    ),
+  );
+}
+
+const within = (spans: readonly [number, number][], at: number): boolean =>
+  spans.some(([from, to]) => at >= from && at < to);
+
+/**
+ * How one file refers to `packages`: the names its import and require clauses bind, the
+ * spans of those clauses, and whether it also requires or imports one inline without
+ * binding it (`app.use(require("helmet")())`, `await import("csurf")`). Clauses are read
+ * from comment-masked text, so a commented-out require binds nothing.
+ */
+function packageRefs(
+  ctx: Ctx,
+  file: DetectorInput,
+  packages: readonly string[],
+  prefixes: readonly string[],
+): { names: string[]; spans: [number, number][]; inline: number[] } {
+  const text = ctx.uncommented(file);
+  const names: string[] = [];
+  const spans: [number, number][] = [];
+  for (const pattern of [IMPORT_FROM, REQUIRE_DECLARATION]) {
+    for (const match of text.matchAll(pattern)) {
+      if (!namesPackage(match[3], packages, prefixes)) continue;
+      names.push(...boundNames(match[1]));
+      spans.push([match.index, match.index + match[0].length]);
+    }
+  }
+  const inline = [...text.matchAll(INLINE_REQUIRE)]
+    .filter((match) => namesPackage(match[2], packages, prefixes) && !within(spans, match.index))
+    .map((match) => match.index + match[0].length);
+  return { names, spans, inline };
+}
+
+const escapeName = (name: string): string => name.replace(/\$/g, "\\$");
+
+/**
+ * Whether live code actually uses one of `packages`, not merely declares or imports it:
+ * a name bound by its import or require is referenced anywhere else in live code (called,
+ * passed to `.use()`, read as `helmet.hsts`, ...), or it is required inline. References
+ * are read from comment- and string-masked text, which keeps the same offsets as the
+ * comment-masked text the clauses come from, so comments, strings and unused imports
+ * never count.
+ */
+function usesPackage(
+  ctx: Ctx,
+  packages: readonly string[],
+  prefixes: readonly string[] = [],
+): boolean {
+  return ctx.source.some((file) => {
+    const { names, spans, inline } = packageRefs(ctx, file, packages, prefixes);
+    if (inline.length > 0) return true;
+    const code = ctx.code(file);
+    return names.some((name) =>
+      [...code.matchAll(new RegExp(`(?<![\\w$.])${escapeName(name)}(?![\\w$])`, "g"))].some(
+        (match) => !within(spans, match.index),
+      ),
+    );
+  });
+}
+
+/**
+ * Whether live code enables one of `features` of a multi-purpose package such as lusca:
+ * `lusca.csrf()` / `require("lusca").csrf()` or an options key, `lusca({ csrf: true })`.
+ * A call for another feature (`lusca.xframe()`) does not count.
+ */
+function usesPackageFeature(ctx: Ctx, pkg: string, features: readonly string[]): boolean {
+  const feature = features.join("|");
+  return ctx.source.some((file) => {
+    const { names, spans, inline } = packageRefs(ctx, file, [pkg], []);
+    const code = ctx.code(file);
+    const optionKey = new RegExp(`^\\s*\\(\\s*\\{[^}]*\\b(?:${feature})\\s*:`);
+    const member = new RegExp(`^\\s*\\.\\s*(?:${feature})\\s*\\(`);
+    const enables = (after: string) => member.test(after) || optionKey.test(after);
+    if (inline.some((end) => enables(code.slice(end)))) return true;
+    return names.some((name) =>
+      [...code.matchAll(new RegExp(`(?<![\\w$.])${escapeName(name)}(?![\\w$])`, "g"))].some(
+        (match) =>
+          !within(spans, match.index) && enables(code.slice(match.index + match[0].length)),
+      ),
+    );
+  });
+}
+
 /** Evidence kind: source files are code, everything else is configuration. */
 const kindFor = (path: string): EvidenceKind =>
   isScannable(path) ? "code" : "config";
@@ -546,10 +671,90 @@ const CSRF_DEPS = [
   "tiny-csrf",
   "next-csrf",
   "@fastify/csrf-protection",
-  "lusca",
 ];
 const COOKIE_USAGE =
   /\bres\s*\.\s*cookie\s*\(|\bcookies\s*\(\s*\)|\breq\s*\.\s*session\b/;
+
+/** Names that produce or expose a token rather than validate one: `req.csrfToken()`. */
+const CSRF_TOKEN_PRODUCER =
+  /^(?:get|generate|create|issue|make|new)?_?(?:csrf|xsrf)_?token$/i;
+
+/** A request token read (body, header or query) and a comparison or verification of it. */
+const READS_REQUEST_TOKEN =
+  /\breq(?:uest)?\s*\.\s*(?:body|headers|query|get\s*\(|header\s*\()/;
+const COMPARES =
+  /===|!==|==|!=|\bverify\w*\s*\(|\btimingSafeEqual\s*\(|\bcompare\w*\s*\(/;
+
+/**
+ * The body of the function or arrow bound to `name` in loaded source, when one is defined
+ * there: `function name(...) {...}`, `const name = (...) => {...}` or
+ * `const name = function (...) {...}`. Read from comment-masked text so header names in
+ * strings stay visible. Undefined when no definition is loaded.
+ */
+function definitionBody(ctx: Ctx, name: string): string | undefined {
+  const escaped = escapeName(name);
+  const head = new RegExp(
+    `(?:\\bfunction\\s+${escaped}\\s*\\(|\\b(?:const|let|var)\\s+${escaped}\\s*=\\s*(?:async\\s+)?(?:function\\b|\\(|[A-Za-z_$][\\w$]*\\s*=>))`,
+  );
+  for (const file of ctx.source) {
+    const text = ctx.uncommented(file);
+    const found = head.exec(text);
+    if (!found) continue;
+    const from = found.index + found[0].length;
+    // An arrow's body starts after its `=>`; an expression body runs to the line's end.
+    const arrow = /^[^{]*?=>\s*/.exec(text.slice(from));
+    if (arrow && !/\bfunction\b/.test(found[0])) {
+      const start = from + arrow[0].length;
+      if (text[start] !== "{") {
+        const end = text.indexOf("\n", start);
+        return text.slice(start, end === -1 ? undefined : end);
+      }
+    }
+    const open = text.indexOf("{", from);
+    if (open === -1) continue;
+    let depth = 0;
+    for (let at = open; at < text.length; at++) {
+      if (text[at] === "{") depth++;
+      else if (text[at] === "}" && --depth === 0) return text.slice(open, at + 1);
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Whether live code runs a CSRF check that is not a known package (those are
+ * usesPackage's): a csrf/xsrf-named function that is called (`verifyCsrf(req)`) or passed
+ * as middleware (`app.use(verifyCsrf)`, `app.post("/x", verifyCsrf, handler)`).
+ *
+ * Producing a token is not validating one, so `req.csrfToken()`, `getCsrfToken()`, a
+ * template's `_csrf` field and an object key (`{ csrftoken: x }`) never count. When the
+ * function is defined in loaded source it counts only if its body reads a token from the
+ * request and compares or verifies it. When its definition is not loaded, what it does
+ * cannot be established, and it counts: the detector reports absence only when sure.
+ */
+function checksCsrfToken(ctx: Ctx): boolean {
+  return ctx.source.some((file) => {
+    const code = ctx.code(file);
+    const spans = declarationSpans(ctx.uncommented(file));
+    for (const match of code.matchAll(/[\w$]*(?:csrf|xsrf)[\w$]*/gi)) {
+      const start = match.index;
+      const name = match[0];
+      if (start > 0 && /[\w$]/.test(code[start - 1])) continue;
+      if (within(spans, start) || CSRF_TOKEN_PRODUCER.test(name)) continue;
+      const before = code.slice(0, start).trimEnd();
+      const after = code.slice(start + name.length).trimStart();
+      const called = after.startsWith("(") && !/\bfunction$/.test(before);
+      const argument = /[(,]$/.test(before) && !after.startsWith(":");
+      if (!called && !argument) continue;
+      // A method on another object (`tokens.verifyCsrf(...)`) has no loaded body to read.
+      const body = before.endsWith(".") ? undefined : definitionBody(ctx, name);
+      if (body === undefined || (READS_REQUEST_TOKEN.test(body) && COMPARES.test(body))) {
+        return true;
+      }
+    }
+    return false;
+  });
+}
 
 function csrfMissing(ctx: Ctx): Finding[] {
   const usesCookies =
@@ -563,9 +768,10 @@ function csrfMissing(ctx: Ctx): Finding[] {
   );
   if (!route) return [];
 
-  if (hasAny(ctx.deps, CSRF_DEPS) || hasPrefix(ctx.deps, ["@edge-csrf/"]))
-    return [];
-  if (anySource(ctx, /\b(?:csrf|xsrf)/i)) return [];
+  // A declared or imported CSRF package is not protection until live code uses it.
+  if (usesPackage(ctx, CSRF_DEPS, ["@edge-csrf/"])) return [];
+  if (usesPackageFeature(ctx, "lusca", ["csrf"])) return [];
+  if (checksCsrfToken(ctx)) return [];
 
   // The value is inside a string, so this reads the comment-masked text.
   const sameSite = ctx.source.some((file) =>
@@ -597,9 +803,19 @@ const HEADER_DEPS = [
   "helmet",
   "koa-helmet",
   "@fastify/helmet",
-  "lusca",
   "next-secure-headers",
   "nuxt-security",
+];
+
+/** lusca's response-header middlewares; its csrf() is csrf_missing's, not this check's. */
+const LUSCA_HEADER_FEATURES = [
+  "csp",
+  "xframe",
+  "hsts",
+  "nosniff",
+  "xssProtection",
+  "referrerPolicy",
+  "p3p",
 ];
 
 const isHeaderConfig = (path: string): boolean =>
@@ -626,8 +842,12 @@ function securityHeadersMissing(ctx: Ctx): Finding[] {
     (framework) => framework.category === "web" && !framework.dev,
   );
   if (!web) return [];
-  if (hasAny(ctx.deps, HEADER_DEPS)) return [];
+  // A declared or imported header package is not protection until live code uses it.
+  if (usesPackage(ctx, HEADER_DEPS)) return [];
+  if (usesPackageFeature(ctx, "lusca", LUSCA_HEADER_FEATURES)) return [];
   if (anySource(ctx, /\bhelmet\s*\(/)) return [];
+  // Declared, but no source was loaded to show whether it is used: unknown, not missing.
+  if (hasAny(ctx.deps, [...HEADER_DEPS, "lusca"]) && ctx.source.length === 0) return [];
 
   const configs = ctx.files.filter((file) => isHeaderConfig(file.path));
   // Next with no next.config loaded means the headers config is unknown, not missing.
@@ -1383,6 +1603,7 @@ export function detectGaps(
   const ctx = buildContext(sorted, facts);
   const builder = new EvidenceBuilder();
   const gaps: ControlGap[] = [];
+  const routePathOf = new Map(ctx.routes.map((route) => [route.id, route.normalizedPath]));
 
   for (const [kind, check] of CHECKS) {
     const meta = META[kind];
@@ -1396,6 +1617,10 @@ export function detectGaps(
         file: finding.file,
         line: Math.max(1, Math.floor(finding.line)),
         ...(finding.routeId ? { routeId: finding.routeId } : {}),
+        ...(finding.routeId && routePathOf.has(finding.routeId)
+          ? { routePath: routePathOf.get(finding.routeId) }
+          : {}),
+        summary: finding.summary,
         basisFacts: finding.basisFacts,
         certainty: finding.certainty,
         owasp: [...meta.owasp],

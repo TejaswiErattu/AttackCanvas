@@ -1,0 +1,16 @@
+{
+  "purpose": "Pre-merge readiness check: one analysis through the normal app flow (production build, next start).",
+  "attackCanvasCommit": "a920c5d0c980c3c6b0f84b2c3284c6b1e3667319",
+  "repo": "https://github.com/OWASP/NodeGoat/tree/c5cb68a7084e4ae7dcc60e6a98768720a81841e8",
+  "analysisLevel": 2,
+  "modelProfile": "app default (ATTACKCANVAS_MODEL_PROFILE unset)",
+  "analysisId": "66a04be5-5b2a-4d87-a35c-008a33266813",
+  "answers": {
+    "question-1": "skipped",
+    "question-2": "skipped",
+    "question-3": "No, passwords are stored/compared in plaintext"
+  },
+  "file": "eval/readiness/2026-09-25-nodegoat-app-run.json",
+  "sha256": "14b9f3a4e8dca2d3da3654706857affd7da06cc04f69f7ca422db9056565c978",
+  "note": "GET /api/analyze/:id response (dashboard view model; hidden threats are summarised, not listed). Cost is not exposed by the API."
+}

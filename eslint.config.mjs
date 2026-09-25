@@ -17,6 +17,8 @@ const eslintConfig = defineConfig([
     // written -- CommonJS requires, no auth, planted prompt injection -- and linting it to
     // this project's standards would mean changing the thing under test.
     "tests/fixtures/**",
+    // Claude Code session worktrees: separate, possibly stale checkouts of this repo.
+    ".claude/worktrees/**",
   ]),
 ]);
 

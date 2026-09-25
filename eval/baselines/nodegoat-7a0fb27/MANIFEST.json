@@ -1,0 +1,28 @@
+{
+  "name": "nodegoat-7a0fb27",
+  "purpose": "NodeGoat run at AttackCanvas 7a0fb27 (live-use header and CSRF detectors). Raw result only; not labelled. Separate from the c8dd73f baseline (baselines/nodegoat-7f7211d).",
+  "repo": {
+    "url": "https://github.com/OWASP/NodeGoat/tree/c5cb68a7084e4ae7dcc60e6a98768720a81841e8",
+    "commit": "c5cb68a7084e4ae7dcc60e6a98768720a81841e8"
+  },
+  "attackCanvasRevision": "7a0fb27766ba9a92ba87015194bca95b9dc1f32d",
+  "modelProfile": "demo",
+  "analysisLevel": 2,
+  "questions": "all skipped",
+  "timeoutMs": 2400000,
+  "startedAt": "2026-09-25T19:25:40Z",
+  "ranAt": "2026-09-25T19:40:01.697Z",
+  "elapsedSeconds": 862,
+  "cost": {
+    "calls": 19,
+    "totalUsd": 3.377977,
+    "source": "pipeline usage ledger at list prices (src/server/ai/models.ts); not an invoice"
+  },
+  "threats": 98,
+  "labels": "none",
+  "files": {
+    "result.json": {
+      "sha256": "170abb1c5616538f184e04e57d84424e9b01f47a689472e1df4c2693003b35e3"
+    }
+  }
+}

@@ -13,7 +13,7 @@ const gap: Evidence = {
 describe("explainConfidence", () => {
   it("returns confidenceOf's own breakdown when nothing is uncertain", () => {
     const cited = [code, semgrep];
-    const { value, breakdown } = confidenceOf(cited, new Map(), ["assume"]);
+    const { value, breakdown } = confidenceOf(cited, new Map(), ["assume"], []);
     expect(explainConfidence(cited, ["assume"], value)).toEqual({ exact: true, lines: breakdown });
   });
 

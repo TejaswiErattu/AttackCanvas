@@ -103,11 +103,11 @@ import {
   inferArchitecture,
   mergeArchitecture,
 } from "@/server/analysis/architecture";
-import { generateThreats } from "@/server/analysis/threats";
+import { failedBatchOf, generateThreats } from "@/server/analysis/threats";
 import { assembleThreatModel } from "@/server/analysis/assemble";
 import { selectQuestions, type QuestionEffects } from "@/server/questions";
 import { applyAnswers, type DeveloperAnswer } from "@/server/analysis/answers";
-import { AiError, type ClaudeDeps, type RequestDiagnostic } from "@/server/ai/claude";
+import { AiError, type CallFailure, type ClaudeDeps, type RequestDiagnostic } from "@/server/ai/claude";
 import { usageLedger } from "@/server/ai/usage";
 import { log } from "@/server/log";
 import { isHidden } from "@/server/scoring";
@@ -566,6 +566,10 @@ export type FailureDiagnostic = {
   };
   /** A 4xx-rejected request's structure (roles, lengths, well-formedness), when there was one. */
   providerRequest?: RequestDiagnostic;
+  /** The failed provider request: stage, attempt counts, status and error type. Codes only. */
+  providerCall?: CallFailure;
+  /** The threat batch that failed, 1-based, and the batch count. */
+  batch?: { number: number; of: number };
   /** The last recorded model response's stop reason ("max_tokens", "refusal", ...). */
   stopReason?: string;
   /** Reasoning tokens the last recorded model response spent (a count, never text). */
@@ -630,19 +634,29 @@ export function failureDiagnostic(
       totalUsd: ledger.totalUsd,
     },
     ...(cause instanceof AiError && cause.request ? { providerRequest: cause.request } : {}),
+    ...(cause instanceof AiError && cause.call ? { providerCall: cause.call } : {}),
+    ...(failedBatchOf(cause) ? { batch: failedBatchOf(cause) } : {}),
     ...(lastCall?.stopReason !== undefined ? { stopReason: lastCall.stopReason } : {}),
     ...(lastCall !== undefined ? { thinkingTokens: lastCall.thinkingTokens } : {}),
   };
 }
 
 /**
- * Development only: one structured line explaining why a job failed, since the stored
- * state keeps only the code. log() refuses (throws) on anything secret-shaped; that is
- * swallowed here, because fail() must never throw -- losing a diagnostic line is fine,
- * losing the failed state is not.
+ * Set to "1" to log failure diagnostics outside development (the eval runner does). It
+ * enables only this metadata line: prompt dumps under .debug/ still need NODE_ENV=development.
+ */
+export const FAILURE_DIAGNOSTICS_ENV = "ATTACKCANVAS_FAILURE_DIAGNOSTICS";
+
+/**
+ * Development only, or when FAILURE_DIAGNOSTICS_ENV is "1": one structured line explaining
+ * why a job failed, since the stored state keeps only the code. log() refuses (throws) on
+ * anything secret-shaped; that is swallowed here, because fail() must never throw --
+ * losing a diagnostic line is fine, losing the failed state is not.
  */
 function logFailure(diagnostic: FailureDiagnostic): void {
-  if (process.env.NODE_ENV !== "development") return;
+  if (process.env.NODE_ENV !== "development" && process.env[FAILURE_DIAGNOSTICS_ENV] !== "1") {
+    return;
+  }
   try {
     log("error", "analysis failed", diagnostic);
   } catch {
@@ -811,7 +825,9 @@ async function runSteps(state: AnalysisState, deps: PipelineDeps): Promise<Analy
   const engine = await deps.generateThreats({
     architecture,
     gaps: detector.gaps,
+    routePaths: detector.routes.map((route) => route.normalizedPath),
     files: loaded.files,
+    sessionCookies: detector.sessionCookies,
     analysisId: state.id,
     deps: deps.ai,
     // Checked before every batch: no new provider request once the job is cancelled or

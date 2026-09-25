@@ -79,6 +79,7 @@ function makeFacts(input: FactsInput = {}): RepoFacts {
       datastores: input.datastores ?? [],
       envNames: [],
       tokens: [],
+    sessionCookies: [],
       deployment: input.deployment ?? [],
       gaps,
       evidence,

@@ -67,12 +67,16 @@ export function isHidden(confidence: number): boolean {
  * inference is a conclusion, not an observation, so it never makes a threat
  * evidence_backed, whatever its ruleId says.
  */
-function isPositive(e: Evidence): boolean {
+/**
+ * A positive observation (CLAUDE.md rule 2): not a control gap, not an inference, not an
+ * assumption. The one definition basisOf and the threat engine's dedupe both use.
+ */
+export function isPositiveObservation(e: Evidence): boolean {
   return !isGapEvidence(e) && e.kind !== "assumption" && e.kind !== "inference";
 }
 
 export function basisOf(evidence: readonly Evidence[]): Basis {
-  return evidence.some(isPositive) ? "evidence_backed" : "assumption_dependent";
+  return evidence.some(isPositiveObservation) ? "evidence_backed" : "assumption_dependent";
 }
 
 export function priorityOf(severity: Severity, confidence: number): Priority {
@@ -104,7 +108,7 @@ export function scoreThreat(
   gaps: ReadonlyMap<string, ControlGap>,
 ): ScoredThreat {
   const cited = evidence.filter((e) => draft.evidenceIds.includes(e.id));
-  const { value, breakdown } = confidenceOf(cited, gaps, draft.assumptions);
+  const { value, breakdown } = confidenceOf(cited, gaps, draft.assumptions, draft.cwe);
   const severity = severityOf(draft.impact, draft.likelihood);
   return {
     threat: {

@@ -1,0 +1,27 @@
+{
+  "name": "nodegoat-f64cfa8",
+  "purpose": "NodeGoat run at AttackCanvas f64cfa8 (CWE-scoped gap floor). Raw result snapshot; labels in eval/labels/nodegoat-f64cfa8.csv.",
+  "repo": {
+    "url": "https://github.com/OWASP/NodeGoat/tree/c5cb68a7084e4ae7dcc60e6a98768720a81841e8",
+    "commit": "c5cb68a7084e4ae7dcc60e6a98768720a81841e8"
+  },
+  "attackCanvasRevision": "f64cfa8c763bcdbcec5c724a0f2a8400fb0d5ae4",
+  "modelProfile": "demo",
+  "analysisLevel": 2,
+  "questions": "all skipped",
+  "timeoutMs": 2400000,
+  "startedAt": "2026-09-25T20:41:35Z",
+  "ranAt": "2026-09-25T20:55:03.615Z",
+  "elapsedSeconds": 809,
+  "cost": {
+    "calls": 18,
+    "totalUsd": 3.1629195,
+    "source": "pipeline usage ledger at list prices (src/server/ai/models.ts); not an invoice"
+  },
+  "threats": 89,
+  "files": {
+    "result.json": {
+      "sha256": "84106977c661fbb0d528874c00cc44017ed22ba7fe6629508056c26b2208da67"
+    }
+  }
+}
