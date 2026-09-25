@@ -22,3 +22,10 @@ dashboard adapter explains a confidence figure with the code that computed it.
 `explainConfidence` returns the exact breakdown when the model alone reproduces the stored
 confidence, and qualitative lines (`exact: false`) for gap-backed threats, whose points depend
 on a detector certainty the ThreatModel does not carry.
+
+Evidence sharing a file and line counts once (`onePerLocation` in `src/shared/confidence.ts`):
+the highest-scoring item at that location is kept, so a dependency declaration and an advisory
+on the same `package.json` line are one source, not two, and earn no second-source bonus.
+Items missing a file or a line are never merged, and neither are control gaps: a gap asserts a
+missing control, which is a different claim from a positive observation at the same line (an
+IDOR gap and its route both point at the route line).

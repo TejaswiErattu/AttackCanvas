@@ -80,7 +80,8 @@ const evidence: Evidence[] = [
     source: "semgrep",
     summary: "Semgrep flagged tainted SQL.",
     filePath: "src/server/db.ts",
-    lineStart: 42,
+    // Its own line: evidence sharing a file:line with e-raw-query would count once.
+    lineStart: 44,
     ruleId: "javascript.sql-injection",
   },
   {
@@ -358,7 +359,7 @@ describe("toDashboardViewModel", () => {
         kind: "scanner",
         kindLabel: "Scanner finding",
         summary: "Semgrep flagged tainted SQL.",
-        location: "src/server/db.ts:42",
+        location: "src/server/db.ts:44",
         snippet: null,
         sourceLabel: "Semgrep",
       },

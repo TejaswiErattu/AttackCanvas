@@ -85,10 +85,53 @@ function certaintyOf(gap: GapCertainty | undefined): number | undefined {
   return Math.min(1, Math.max(0, c));
 }
 
+/** Points a non-gap item would earn on its own, used to pick one item per shared location. */
+function pointsOf(e: Evidence): number {
+  switch (categoryOf(e)) {
+    case "code":
+      return CODE;
+    case "semgrep":
+      return SEMGREP;
+    case "osv":
+      return OSV;
+    case "developer":
+      return DEVELOPER;
+    case "inference":
+      return INFERENCE_ONLY;
+    default:
+      return 0;
+  }
+}
+
+/**
+ * One item per file:line (CLAUDE.md rule 2): items pointing to the same file and line are
+ * one source, so a dependency declaration and an advisory on the same package.json line
+ * are not two independent confirmations. The highest-scoring item is kept (the first on a
+ * tie). Items without both a file and a line are never merged, and neither are control
+ * gaps: a gap asserts that a control is missing, a different claim from a positive
+ * observation at the same line (an IDOR gap and its route both point at the route line).
+ */
+function onePerLocation(evidence: readonly Evidence[]): Evidence[] {
+  const kept = new Map<string, Evidence>();
+  const unlocated: Evidence[] = [];
+  for (const e of evidence) {
+    if (e.filePath === undefined || e.lineStart === undefined || isGapEvidence(e)) {
+      unlocated.push(e);
+      continue;
+    }
+    const key = `${e.filePath}:${e.lineStart}`;
+    const current = kept.get(key);
+    if (current === undefined || pointsOf(e) > pointsOf(current)) kept.set(key, e);
+  }
+  const keep = new Set([...unlocated, ...kept.values()]);
+  return evidence.filter((e) => keep.has(e));
+}
+
 /**
  * A threat's confidence and its UI breakdown (CLAUDE.md rule 2). `claimedCwe` is the
  * threat's own CWE list: the gap floor applies only when every CWE it claims is one the
  * cited gaps assert, so a gap vouches for the missing control and nothing built on it.
+ * Evidence sharing a file and line counts once (onePerLocation).
  */
 export function confidenceOf(
   evidence: readonly Evidence[],
@@ -97,7 +140,7 @@ export function confidenceOf(
   claimedCwe: readonly string[],
 ): { value: number; breakdown: string[] } {
   const byCategory = new Map<Category, Evidence[]>();
-  for (const e of evidence) {
+  for (const e of onePerLocation(evidence)) {
     const category = categoryOf(e);
     if (category === undefined) continue;
     byCategory.set(category, [...(byCategory.get(category) ?? []), e]);
