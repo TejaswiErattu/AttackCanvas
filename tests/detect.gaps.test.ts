@@ -1026,3 +1026,44 @@ describe("adversarial: csrf_missing", () => {
     expect(kindsOf(repo)).not.toContain("csrf_missing");
   });
 });
+
+describe("adversarial: security_headers_missing", () => {
+  const web = expressRepo(`app.get("/x", ${HANDLER});`);
+
+  it.each([
+    ["nginx add_header", "nginx.conf", `server {\n  add_header Content-Security-Policy "default-src 'self'";\n}\n`],
+    ["Caddyfile header", "Caddyfile", `example.com {\n  header Strict-Transport-Security "max-age=31536000"\n}\n`],
+    ["firebase.json hosting headers", "firebase.json", `{ "hosting": { "headers": [ { "source": "**", "headers": [ { "key": "X-Frame-Options", "value": "DENY" } ] } ] } }`],
+  ])("5a: %s sets the headers", (_name, path, content) => {
+    expect(kindsOf([...web, file(path, content)])).not.toContain("security_headers_missing");
+  });
+
+  it("5a: a commented-out nginx header does not count", () => {
+    const repo = [...web, file("nginx.conf", `server {\n  # add_header Content-Security-Policy "default-src 'self'";\n}\n`)];
+    expect(kindsOf(repo)).toContain("security_headers_missing");
+  });
+
+  it("5b: hono's secureHeaders() middleware is header middleware", () => {
+    const repo = [
+      manifest({ hono: "^4.0.0" }),
+      LOCKFILE,
+      file(
+        "src/index.ts",
+        `import { Hono } from "hono";\nimport { secureHeaders } from "hono/secure-headers";\nconst app = new Hono();\napp.use(secureHeaders());\nexport default app;\n`,
+      ),
+    ];
+    expect(kindsOf(repo)).not.toContain("security_headers_missing");
+  });
+
+  it("5c: a CSP meta tag in a server template counts", () => {
+    const repo = [
+      ...expressRepo(`app.set("view engine", "ejs");\napp.get("/", (req, res) => res.render("index"));`),
+      file("views/index.ejs", `<html><head><meta http-equiv="Content-Security-Policy" content="default-src 'self'"></head></html>`),
+    ];
+    expect(kindsOf(repo)).not.toContain("security_headers_missing");
+  });
+
+  it("still reports a web app with none of these", () => {
+    expect(kindsOf(web)).toContain("security_headers_missing");
+  });
+});

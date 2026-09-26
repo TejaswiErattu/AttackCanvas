@@ -934,7 +934,18 @@ const HEADER_DEPS = [
   "@fastify/helmet",
   "next-secure-headers",
   "nuxt-security",
+  "secure-headers",
+  "express-secure-headers",
 ];
+
+/** Header middleware imported by subpath: `import { secureHeaders } from "hono/secure-headers"`. */
+const HEADER_SUBPATHS = ["hono/secure-headers"];
+
+/** Server templates and static pages, where a CSP can live in a `<meta http-equiv>`. */
+const TEMPLATE_FILE = /\.(?:html?|ejs|pug|jade|hbs|handlebars|njk|liquid|mustache|twig)$/i;
+
+/** Response headers a proxy, host or CDN sets from its own configuration. */
+const SECURITY_HEADER_NAMED = /Content-Security-Policy|X-Frame-Options|Strict-Transport-Security/i;
 
 /** lusca's response-header middlewares; its csrf() is csrf_missing's, not this check's. */
 const LUSCA_HEADER_FEATURES = [
@@ -948,7 +959,7 @@ const LUSCA_HEADER_FEATURES = [
 ];
 
 const isHeaderConfig = (path: string): boolean =>
-  /^(?:next\.config\.|vercel\.json$|netlify\.toml$|_headers$)/.test(
+  /^(?:next\.config\.|vercel\.json$|netlify\.toml$|_headers$|firebase\.json$)/.test(
     basename(path),
   );
 
@@ -962,7 +973,7 @@ const isHeaderConfig = (path: string): boolean =>
 function declaresHeaders(file: DetectorInput): boolean {
   const name = basename(file.path);
   if (name === "_headers") return file.content.trim() !== "";
-  if (name === "vercel.json") return /"headers"\s*:/.test(file.content);
+  if (name === "vercel.json" || name === "firebase.json") return /"headers"\s*:/.test(file.content);
   return /\bheaders\b/.test(maskCode(file.content));
 }
 
@@ -972,9 +983,9 @@ function securityHeadersMissing(ctx: Ctx): Finding[] {
   );
   if (!web) return [];
   // A declared or imported header package is not protection until live code uses it.
-  if (usesPackage(ctx, HEADER_DEPS)) return [];
+  if (usesPackage(ctx, [...HEADER_DEPS, ...HEADER_SUBPATHS])) return [];
   if (usesPackageFeature(ctx, "lusca", LUSCA_HEADER_FEATURES)) return [];
-  if (anySource(ctx, /\bhelmet\s*\(/)) return [];
+  if (anySource(ctx, /\bhelmet\s*\(|\bsecureHeaders\s*\(/)) return [];
   // Declared, but no source was loaded to show whether it is used: unknown, not missing.
   if (hasAny(ctx.deps, [...HEADER_DEPS, "lusca"]) && ctx.source.length === 0) return [];
 
@@ -987,9 +998,20 @@ function securityHeadersMissing(ctx: Ctx): Finding[] {
     return [];
   if (configs.some(declaresHeaders)) return [];
 
-  const named = /Content-Security-Policy|X-Frame-Options/i;
   const scanned = [...ctx.source, ...configs];
-  if (scanned.some((file) => named.test(ctx.uncommented(file)))) return [];
+  if (scanned.some((file) => SECURITY_HEADER_NAMED.test(ctx.uncommented(file)))) return [];
+  // A proxy or host sets headers from its own config; a template can carry a CSP meta tag.
+  // Config comments are `#` to end of line (nginx, Caddy, YAML, TOML), so the YAML masker applies.
+  if (
+    ctx.files.some(
+      (file) =>
+        CONFIG_FILE.test(file.path) &&
+        !isManifest(file.path) &&
+        SECURITY_HEADER_NAMED.test(maskYamlComments(file.content)),
+    )
+  )
+    return [];
+  if (ctx.files.some((file) => TEMPLATE_FILE.test(file.path) && hasCspMeta(file.content))) return [];
 
   return [
     {
