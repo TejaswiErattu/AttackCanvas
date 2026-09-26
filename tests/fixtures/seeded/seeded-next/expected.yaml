@@ -1,0 +1,75 @@
+# Labels for seeded-next. Written by hand before the bench was first run.
+# See tests/fixtures/seeded/README.md for the matching rules.
+repo: seeded-next
+issues:
+  - id: n-export-unauth
+    class: Order export API needs no authentication
+    owasp: A01:2025
+    file: app/api/exports/route.ts
+    line: 11
+    gapKind: authn_missing
+  - id: n-cors-wildcard
+    class: Profile API allows any origin
+    owasp: A02:2025
+    file: app/api/profile/route.ts
+    line: 6
+    gapKind: cors_permissive
+  - id: n-jwt-none
+    class: JWT verification accepts the none algorithm
+    owasp: A04:2025
+    file: lib/tokens.ts
+    line: 15
+    ruleId: attackcanvas-jwt-verify-none
+  - id: n-sql-concat
+    class: SQL ORDER BY built from a query parameter
+    owasp: A05:2025
+    file: app/api/search/route.ts
+    line: 8
+    gapKind: input_validation_missing
+    ruleId: attackcanvas-sql-string-concat
+  - id: n-token-storage
+    class: Access token kept in localStorage
+    owasp: A07:2025
+    file: app/login/page.tsx
+    line: 20
+    gapKind: client_secret_storage
+  - id: n-jwt-literal
+    class: JWT signing key hard-coded in source
+    owasp: A07:2025
+    file: lib/tokens.ts
+    line: 9
+    ruleId: attackcanvas-hardcoded-jwt-secret
+controls:
+  - id: n-ctl-with-auth-barrel
+    gapKind: authn_missing
+    file: app/api/orders/route.ts
+    how: POST is wrapped in withAuth, imported through the lib/auth/index.ts barrel
+    type: barrel-imported guard
+  - id: n-ctl-with-role
+    gapKind: authz_missing
+    file: app/api/admin/users/[id]/route.ts
+    how: DELETE is wrapped in withRole("admin", ...), which rejects any other role
+    type: barrel-imported guard
+    review: "1c"
+  - id: n-ctl-middleware-headers
+    gapKind: security_headers_missing
+    file: middleware.ts
+    how: middleware.ts sets CSP, X-Frame-Options, HSTS and nosniff on every response (matcher /:path*)
+    type: app-level middleware
+    review: "5a"
+  - id: n-ctl-next-errors
+    gapKind: error_handling_gap
+    file: app/api/orders/route.ts
+    how: an App Router route handler that throws is turned into a 500 by Next itself
+    type: framework default
+  - id: n-ctl-zod-barrel
+    gapKind: input_validation_missing
+    file: app/api/orders/route.ts
+    how: the body is parsed with OrderInput, a zod schema re-exported from @/lib/validation
+    type: barrel-imported guard
+    review: "6a"
+  - id: n-ctl-login-limiter
+    gapKind: rate_limit_missing
+    file: app/api/auth/login/route.ts
+    how: login calls loginLimiter.limit(ip), an @upstash/ratelimit sliding window defined in lib/rate-limit.ts
+    type: barrel-imported guard
