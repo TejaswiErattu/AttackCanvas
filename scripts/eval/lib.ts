@@ -894,10 +894,16 @@ export type LabelerComparison = {
   n: number;
   /** supported (y/n): the label the unsupported rate and the sample are built on. */
   supported: Agreement;
-  /** Whether the row matches any expected item, or none. */
-  matchesAny: Agreement;
-  /** Exact match of the whole matchesExpected set; simple agreement only. */
-  matchesExact: Agreement;
+  /**
+   * False when the second sheet's matchesExpected column is entirely blank, meaning that
+   * dimension was not labelled (the labeller never saw the answer key). matchesAny and
+   * matchesExact are then null: a blank must not be read as "matches nothing".
+   */
+  matchesLabelled: boolean;
+  /** Whether the row matches any expected item, or none; null when not labelled. */
+  matchesAny: Agreement | null;
+  /** Exact match of the whole matchesExpected set; simple agreement only; null when not labelled. */
+  matchesExact: Agreement | null;
   /** Exact match of the evidenceCorrect cell (correct/total); simple agreement only. */
   evidence: Agreement;
   /** Threat ids whose supported label differs, for adjudication. */
@@ -912,8 +918,62 @@ export function secondSheetProblems(primary: readonly LabeledThreat[], second: r
   return problems;
 }
 
-/** Compares a second person's labels with the primary ones, on the threats both labelled. */
-export function compareLabelers(primary: readonly LabeledThreat[], second: readonly LabeledThreat[]): LabelerComparison {
+/** A second labeller's cell meaning "this threat matches no expected item", as opposed to a blank. */
+export const NO_MATCH_MARKER = "none";
+
+export type SecondSheet = {
+  labels: LabeledThreat[];
+  /** False when matchesExpected is blank on every row: not labelled, not "matches nothing". */
+  matchesLabelled: boolean;
+};
+
+/**
+ * Reads a second labeller's sheet. It is parseLabels with one difference in how the
+ * matchesExpected column is read, because a second labeller may never have opened the answer
+ * key and a blank cell must not silently mean "matches nothing":
+ *  - blank on every row: that dimension was not labelled (matchesLabelled false);
+ *  - filled on every row: labelled, and "none" marks a row that matches no expected item;
+ *  - filled on some rows and blank on others: refused, listing the blank rows.
+ * Every other column, and every other problem, is handled exactly as parseLabels does. The
+ * primary sheet is unaffected: there a blank cell still means "matches nothing".
+ */
+export function parseSecondLabels(csvText: string, expectedIds: ReadonlySet<string>): SecondSheet {
+  const rows = parseCsv(csvText);
+  const header = rows[0]?.map((h) => h.trim()) ?? [];
+  const idCol = header.indexOf("threatId");
+  const matchCol = header.indexOf("matchesExpected");
+  if (rows.length < 2 || idCol === -1 || matchCol === -1) {
+    // Missing columns and an empty sheet get parseLabels' own message.
+    return { labels: parseLabels(csvText, expectedIds), matchesLabelled: true };
+  }
+  const isBlank = (row: string[]) => (row[matchCol] ?? "").trim() === "";
+  const data = rows.slice(1);
+  const blank = data.filter(isBlank);
+  const matchesLabelled = blank.length < data.length;
+
+  if (matchesLabelled && blank.length > 0) {
+    const ids = blank.map((row) => (row[idCol] ?? "").trim() || "no threatId");
+    throw new Error(
+      `second sheet is not fully labeled: matchesExpected is filled on ${data.length - blank.length} of ${data.length} rows and blank on ${ids.join(", ")}. ` +
+        `Fill every row (write "${NO_MATCH_MARKER}" for a threat that matches no expected item) or leave the whole column blank.`,
+    );
+  }
+  if (!matchesLabelled) return { labels: parseLabels(csvText, expectedIds), matchesLabelled: false };
+
+  const explicit = data.map((row) => row.map((cell, i) => (i === matchCol && cell.trim().toLowerCase() === NO_MATCH_MARKER ? "" : cell)));
+  return { labels: parseLabels(toCsv([rows[0], ...explicit]), expectedIds), matchesLabelled: true };
+}
+
+/**
+ * Compares a second person's labels with the primary ones, on the threats both labelled.
+ * With `matchesLabelled` false the match dimensions are left out (null), not scored as
+ * agreement or disagreement; supported and evidenceCorrect are compared as usual.
+ */
+export function compareLabelers(
+  primary: readonly LabeledThreat[],
+  second: readonly LabeledThreat[],
+  { matchesLabelled = true }: { matchesLabelled?: boolean } = {},
+): LabelerComparison {
   const byId = new Map(primary.map((l) => [l.threatId, l]));
   const pairs = second.flatMap((s) => {
     const p = byId.get(s.threatId);
@@ -925,8 +985,11 @@ export function compareLabelers(primary: readonly LabeledThreat[], second: reado
   return {
     n: pairs.length,
     supported: agreementOf(pairs.map(({ p, s }) => [yn(p), yn(s)])),
-    matchesAny: agreementOf(pairs.map(({ p, s }) => [p.matches.length > 0 ? "match" : "none", s.matches.length > 0 ? "match" : "none"])),
-    matchesExact: { ...agreementOf(pairs.map(({ p, s }) => [set(p), set(s)])), kappa: null },
+    matchesLabelled,
+    matchesAny: matchesLabelled
+      ? agreementOf(pairs.map(({ p, s }) => [p.matches.length > 0 ? "match" : "none", s.matches.length > 0 ? "match" : "none"]))
+      : null,
+    matchesExact: matchesLabelled ? { ...agreementOf(pairs.map(({ p, s }) => [set(p), set(s)])), kappa: null } : null,
     evidence: { ...agreementOf(pairs.map(({ p, s }) => [cell(p), cell(s)])), kappa: null },
     supportedDisagreements: pairs.filter(({ p, s }) => p.supported !== s.supported).map(({ p }) => p.threatId),
   };
@@ -1096,11 +1159,15 @@ export function renderExtras(repo: string, extras: RepoExtras | undefined): stri
     out.push(
       `## Second labeler agreement: ${repo}`,
       "",
-      `A second person labelled ${l.n} threats from the primary sheet without seeing its labels. Agreement is the share of threats with the same label.`,
+      `A second labeller labelled ${l.n} threats from the primary sheet without seeing its labels. Agreement is the share of threats with the same label.`,
       "",
       agreementLine("supported (y/n)", l.supported, true),
-      agreementLine("matches any expected item (yes/no)", l.matchesAny, true),
-      agreementLine("matchesExpected, exact set", l.matchesExact, false),
+      ...(l.matchesAny && l.matchesExact
+        ? [
+            agreementLine("matches any expected item (yes/no)", l.matchesAny, true),
+            agreementLine("matchesExpected, exact set", l.matchesExact, false),
+          ]
+        : ["- **matchesExpected**: not labelled by the second labeller (the column is blank on every row, not \"matches nothing\"); match agreement and kappa are omitted"]),
       agreementLine("evidenceCorrect, exact cell", l.evidence, false),
       `- **Supported disagreements**: ${l.supportedDisagreements.join(", ") || "none"}`,
       "",

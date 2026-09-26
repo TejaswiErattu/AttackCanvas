@@ -18,7 +18,10 @@
  *                                  refused once partially filled or out of step with the result.
  *   eval/labels/<repo>.second.csv  (sampleSecond.ts) agreement and Cohen's kappa with the
  *                                  primary labels. Read only with --second (opt-in), and then
- *                                  refused if not fully labelled. Without --second it is ignored.
+ *                                  refused if supported or evidenceCorrect is not fully labelled.
+ *                                  Without --second it is ignored. A matchesExpected column that is
+ *                                  blank on every row is reported as "not labelled" (no match
+ *                                  agreement or kappa); a partly filled one is refused.
  * Any other --flag is rejected.
  * Pure arithmetic on your labels; no model is called.
  */
@@ -36,6 +39,7 @@ import {
   gapSheetStarted,
   parseGapLabels,
   parseLabels,
+  parseSecondLabels,
   parseYamlWith,
   recallByClass,
   renderEvaluationReport,
@@ -106,17 +110,17 @@ function main(): void {
         throw new Error(`--second given but eval/labels/${repo.name}.second.csv does not exist`);
       }
       if (withSecond) {
-        let secondLabels: ReturnType<typeof parseLabels>;
+        let second: ReturnType<typeof parseSecondLabels>;
         try {
-          secondLabels = parseLabels(readFileSync(paths.second, "utf8"), new Set(expected.expectedThreats.map((t) => t.id)));
+          second = parseSecondLabels(readFileSync(paths.second, "utf8"), new Set(expected.expectedThreats.map((t) => t.id)));
         } catch (error) {
           throw new Error(`second sheet eval/labels/${repo.name}.second.csv: ${error instanceof Error ? error.message : "unreadable"}`);
         }
-        const problems = secondSheetProblems(labels, secondLabels);
+        const problems = secondSheetProblems(labels, second.labels);
         if (problems.length > 0) {
           throw new Error(`second sheet does not match eval/labels/${repo.name}.csv:\n  ${problems.join("\n  ")}`);
         }
-        repoExtras.labelers = compareLabelers(labels, secondLabels);
+        repoExtras.labelers = compareLabelers(labels, second.labels, { matchesLabelled: second.matchesLabelled });
       }
 
       metrics.push(repoMetrics);
@@ -154,7 +158,8 @@ function main(): void {
     const labelers = extras[m.repo]?.labelers;
     if (labelers) {
       console.log(
-        `${m.repo}: second labeler agrees on ${labelers.supported.agreed}/${labelers.n} supported labels, kappa ${labelers.supported.kappa === null ? "n/a" : labelers.supported.kappa.toFixed(2)}`,
+        `${m.repo}: second labeler agrees on ${labelers.supported.agreed}/${labelers.n} supported labels, kappa ${labelers.supported.kappa === null ? "n/a" : labelers.supported.kappa.toFixed(2)}` +
+          `${labelers.matchesLabelled ? "" : "; matchesExpected not labelled, match agreement omitted"}`,
       );
     }
   }

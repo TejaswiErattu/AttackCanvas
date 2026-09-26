@@ -28,6 +28,7 @@ import {
   parseCsv,
   parseGapLabels,
   parseLabels,
+  parseSecondLabels,
   parseYamlWith,
   recallByClass,
   recalledIds,
@@ -520,5 +521,108 @@ describe("gapSheetStarted", () => {
 
   it("ignores notes: a note without a label does not start the sheet", () => {
     expect(gapSheetStarted(`${header}\nt1,A,authz_missing,f,0.4,y,,thinking about it\n`)).toBe(false);
+  });
+});
+
+describe("second sheet: matchesExpected not labelled", () => {
+  const ids = new Set(["E1", "E2"]);
+  // The columns of the real second sheet: the primary's, then the second labeller's own.
+  const second = (...rows: string[]) => `${LABEL_COLUMNS.join(",")},label,reason\n${rows.join("\n")}\n`;
+  const blankMatches = second(
+    "t1,A,c,S,High,0.8,loc,,y,1/1,n1,confirmed_useful,r1",
+    "t2,B,c,S,High,0.8,loc,,n,0/0,n2,confirmed_wrong,r2",
+    "t3,C,c,S,High,0.8,loc,,y,0/0,n3,confirmed_useful,r3",
+  );
+
+  it("reports an entirely blank column as not labelled, and still reads supported and evidence", () => {
+    const sheet = parseSecondLabels(blankMatches, ids);
+    expect(sheet.matchesLabelled).toBe(false);
+    expect(sheet.labels.map((l) => [l.threatId, l.supported, l.evidenceCorrect, l.evidenceTotal])).toEqual([
+      ["t1", true, 1, 1],
+      ["t2", false, 0, 0],
+      ["t3", true, 0, 0],
+    ]);
+  });
+
+  it("omits match agreement and kappa but keeps supported and evidence agreement", () => {
+    const primary = [label("t1", ["E1"], true), label("t2", [], false, 0, 0), label("t3", ["E2"], true, 0, 0)];
+    const s = parseSecondLabels(blankMatches, ids);
+    const c = compareLabelers(primary, s.labels, { matchesLabelled: s.matchesLabelled });
+    expect(c.matchesLabelled).toBe(false);
+    expect(c.matchesAny).toBeNull();
+    expect(c.matchesExact).toBeNull();
+    expect(c.supported).toMatchObject({ n: 3, agreed: 3, agreement: 1 });
+    expect(c.evidence).toMatchObject({ n: 3, agreed: 3 });
+  });
+
+  it("does not score a blank as 'matches nothing': a primary match would otherwise read as disagreement", () => {
+    const primary = [label("t1", ["E1"], true), label("t2", ["E2"], false), label("t3", ["E1"], true, 0, 0)];
+    const s = parseSecondLabels(blankMatches, ids);
+    const blindly = compareLabelers(primary, s.labels); // the old behaviour, matchesLabelled defaults to true
+    expect(blindly.matchesAny).toMatchObject({ agreed: 0, n: 3 });
+    const honest = compareLabelers(primary, s.labels, { matchesLabelled: false });
+    expect(honest.matchesAny).toBeNull();
+  });
+
+  it("rejects a partly filled column instead of treating the blank rows as matching nothing", () => {
+    const partial = second(
+      "t1,A,c,S,High,0.8,loc,E1,y,1/1,,,",
+      "t2,B,c,S,High,0.8,loc,,n,0/0,,,",
+      "t3,C,c,S,High,0.8,loc,,y,0/0,,,",
+    );
+    const run = () => parseSecondLabels(partial, ids);
+    expect(run).toThrow(/filled on 1 of 3 rows and blank on t2, t3/);
+    expect(run).toThrow(/write "none" for a threat that matches no expected item/);
+  });
+
+  it("accepts a fully filled column, where none marks a row that matches nothing", () => {
+    const filled = second(
+      "t1,A,c,S,High,0.8,loc,E1;E2,y,1/1,,,",
+      "t2,B,c,S,High,0.8,loc,none,n,0/0,,,",
+      "t3,C,c,S,High,0.8,loc,NONE,y,0/0,,,",
+    );
+    const s = parseSecondLabels(filled, ids);
+    expect(s.matchesLabelled).toBe(true);
+    expect(s.labels.map((l) => l.matches)).toEqual([["E1", "E2"], [], []]);
+    const primary = [label("t1", ["E1", "E2"], true), label("t2", [], false), label("t3", ["E1"], true, 0, 0)];
+    const c = compareLabelers(primary, s.labels);
+    expect(c.matchesAny).toMatchObject({ agreed: 2, n: 3 });
+    expect(c.matchesExact).toMatchObject({ agreed: 2, n: 3, kappa: null });
+  });
+
+  it("still rejects an unknown id in a filled column", () => {
+    const bad = second("t1,A,c,S,High,0.8,loc,E9,y,1/1,,,");
+    expect(() => parseSecondLabels(bad, ids)).toThrow(/unknown id\(s\) E9/);
+  });
+
+  it("does not loosen the rest of the sheet: a blank supported or evidenceCorrect is still refused", () => {
+    const halfDone = second("t1,A,c,S,High,0.8,loc,,,,,,", "t2,B,c,S,High,0.8,loc,,y,1/1,,,");
+    const run = () => parseSecondLabels(halfDone, ids);
+    expect(run).toThrow(/supported must be y or n/);
+    expect(run).toThrow(/evidenceCorrect must look like 2\/3/);
+  });
+
+  it("gives an empty or column-less sheet parseLabels' own message", () => {
+    expect(() => parseSecondLabels("", ids)).toThrow(/label sheet is empty/);
+    expect(() => parseSecondLabels("threatId,title\nt1,A", ids)).toThrow(/missing column/);
+  });
+
+  it("leaves the primary sheet's rule alone: a blank matchesExpected there still means matches nothing", () => {
+    const primaryText = `${LABEL_COLUMNS.join(",")}\nt1,A,c,S,High,0.8,loc,E1,y,1/1,\nt2,B,c,S,High,0.8,loc,,y,0/0,\n`;
+    expect(parseLabels(primaryText, ids).map((l) => l.matches)).toEqual([["E1"], []]);
+  });
+
+  it("tells the report so, and says nothing about match agreement", () => {
+    const expected = ExpectedFileSchema.parse({ expectedThreats: [{ id: "E1", description: "x", owasp2013: "A1" }] });
+    const primary = [label("t1", ["E1"], true), label("t2", [], false, 0, 0)];
+    const s = parseSecondLabels(second("t1,A,c,S,High,0.8,loc,,y,1/1,,,", "t2,B,c,S,High,0.8,loc,,n,0/0,,,"), ids);
+    const labelers = compareLabelers(primary, s.labels, { matchesLabelled: false });
+    const m = computeRepoMetrics("r", primary, expected, { totalUsd: 0, calls: 0 });
+    const md = renderEvaluationReport([m], "2026-09-25", ["demo"], { r: { labelers } });
+    expect(md).toContain("**supported (y/n)**: 2/2 agree (100.0%)");
+    expect(md).toContain("**evidenceCorrect, exact cell**: 2/2 agree");
+    expect(md).toContain("**matchesExpected**: not labelled by the second labeller");
+    expect(md).not.toContain("matches any expected item");
+    expect(md).not.toContain("exact set");
   });
 });
