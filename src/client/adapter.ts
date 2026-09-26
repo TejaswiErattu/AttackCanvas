@@ -162,7 +162,7 @@ function confidenceReasonsFor(threat: Threat, cited: readonly Evidence[]): strin
   const total = `Confidence ${Math.round(threat.confidence * 100)}% (${threat.confidenceLabel})`;
   return exact
     ? [...lines, total]
-    : [...lines, `${total}. These reasons explain the figure; they are not separate scores that add up to it.`];
+    : [...lines, `${total}. These are reasons, not scores that add up to it.`];
 }
 
 function toEvidenceItem(evidence: Evidence): EvidenceItem {

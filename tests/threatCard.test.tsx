@@ -131,8 +131,8 @@ describe("ThreatCard confidence reasons", () => {
 
   it("shows qualitative gap wording untouched, adding no numbers or totals of its own", () => {
     const lines = [
-      "Supported by a finding that a security control is missing; it counts for more the surer the code analysis is that the control is absent",
-      "Confidence 40% (medium). These reasons explain the figure; they are not separate scores that add up to it.",
+      "Based on a security control the code checks could not find. This is a prediction, not a confirmed flaw",
+      "Confidence 40% (medium). These are reasons, not scores that add up to it.",
     ];
     renderCard({ confidenceReasons: lines }, true);
 

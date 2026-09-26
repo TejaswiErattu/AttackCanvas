@@ -910,11 +910,22 @@ describe("confidenceReasons", () => {
 
   it("is qualitative, with no point values, when a missing control backs the threat", () => {
     const lines = reasonsFor({ evidenceIds: ["e-gap"], confidence: 0.4, confidenceLabel: "medium" });
-    expect(lines[0]).toContain("a security control is missing");
+    expect(lines[0]).toContain("a security control the code checks could not find");
     expect(lines.join("\n")).not.toMatch(/[+-]\d\.\d\d/);
     expect(lines.at(-1)).toBe(
-      "Confidence 40% (medium). These reasons explain the figure; they are not separate scores that add up to it.",
+      "Confidence 40% (medium). These are reasons, not scores that add up to it.",
     );
+  });
+
+  it("explains a missing-control finding in plain words and keeps every uncertainty", () => {
+    const lines = reasonsFor({ evidenceIds: ["e-gap"], confidence: 0.4, confidenceLabel: "medium", assumptions: ["The victim has an active session."] });
+    const text = lines.join("\n");
+    // Plain wording: no talk of how much the analysis "counts", no "surer".
+    expect(text).not.toMatch(/counts for more|surer|missing-control finding|figure/);
+    // The uncertainty is still there, in three places.
+    expect(lines[0]).toContain("prediction, not a confirmed flaw");
+    expect(lines).toContain("Lowered by an unconfirmed assumption: The victim has an active session.");
+    expect(lines.at(-1)).toContain("reasons, not scores that add up");
   });
 
   it("stays qualitative when gap evidence sits beside other evidence", () => {
@@ -926,7 +937,7 @@ describe("confidenceReasons", () => {
   it("falls back to qualitative when the stored confidence is not what the evidence gives", () => {
     const lines = reasonsFor({ evidenceIds: ["e-raw-query"], confidence: 0.9, confidenceLabel: "high" });
     expect(lines.join("\n")).not.toMatch(/[+-]\d\.\d\d/);
-    expect(lines.at(-1)).toContain("not separate scores that add up");
+    expect(lines.at(-1)).toContain("not scores that add up");
   });
 
   it("does not count an inference beside other evidence", () => {
