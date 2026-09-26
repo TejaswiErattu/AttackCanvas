@@ -23,6 +23,7 @@ vi.mock("@/server/analysis/pipeline", () => ({
 vi.mock("@/server/analysis/demo", () => ({
   seedDemoAnalysis: vi.fn(),
 }));
+vi.mock("@/server/log", () => ({ log: vi.fn() }));
 
 import { POST } from "@/app/api/analyze/route";
 import {
@@ -33,6 +34,7 @@ import {
   runAnalysis,
 } from "@/server/analysis/pipeline";
 import { seedDemoAnalysis } from "@/server/analysis/demo";
+import { resetAllowlistWarning } from "@/server/http/ownerAllowlist";
 
 const VALID_URL = "https://github.com/acme/canary";
 
@@ -46,6 +48,7 @@ function postRequest(body: unknown, ip = "9.9.9.9"): NextRequest {
 
 const originalGolden = process.env.GOLDEN_REPO_URL;
 const originalFallback = process.env.DEMO_FALLBACK;
+const originalOwners = process.env.ATTACKCANVAS_ALLOWED_OWNERS;
 
 beforeEach(() => {
   resetRateLimiter();
@@ -57,9 +60,13 @@ beforeEach(() => {
   vi.mocked(seedDemoAnalysis).mockReset();
   delete process.env.GOLDEN_REPO_URL;
   delete process.env.DEMO_FALLBACK;
+  delete process.env.ATTACKCANVAS_ALLOWED_OWNERS;
+  resetAllowlistWarning();
 });
 
 afterEach(() => {
+  if (originalOwners === undefined) delete process.env.ATTACKCANVAS_ALLOWED_OWNERS;
+  else process.env.ATTACKCANVAS_ALLOWED_OWNERS = originalOwners;
   if (originalGolden === undefined) delete process.env.GOLDEN_REPO_URL;
   else process.env.GOLDEN_REPO_URL = originalGolden;
   if (originalFallback === undefined) delete process.env.DEMO_FALLBACK;
@@ -447,5 +454,114 @@ describe("POST /api/analyze", () => {
     });
     expect(runAnalysis).toHaveBeenCalledWith("real-1");
     expect(seedDemoAnalysis).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The optional owner allowlist (ATTACKCANVAS_ALLOWED_OWNERS)
+// ---------------------------------------------------------------------------
+
+describe("POST /api/analyze: owner allowlist", () => {
+  function accept(): void {
+    vi.mocked(createAnalysis).mockReturnValue({ id: "job-1", stage: "queued" } as never);
+    vi.mocked(getAnalysis).mockReturnValue({ id: "job-1", stage: "loading_repo" } as never);
+  }
+  const post = (repoUrl: string, ip = "9.9.9.9") => POST(postRequest({ repoUrl, analysisLevel: 2 }, ip));
+
+  it("unset: every owner is analysed, exactly as before", async () => {
+    accept();
+    for (const url of ["https://github.com/acme/canary", "https://github.com/anyone/anything"]) {
+      const response = await post(url);
+      expect(response.status, url).toBe(202);
+    }
+    expect(runAnalysis).toHaveBeenCalledTimes(2);
+  });
+
+  it("empty or blank counts as unset", async () => {
+    accept();
+    for (const value of ["", "  ", ",,"]) {
+      process.env.ATTACKCANVAS_ALLOWED_OWNERS = value;
+      expect((await post(VALID_URL)).status, JSON.stringify(value)).toBe(202);
+    }
+  });
+
+  it("allowed: a listed owner is analysed, whatever the casing of the URL or the list", async () => {
+    accept();
+    process.env.ATTACKCANVAS_ALLOWED_OWNERS = "Widgets, ACME";
+    expect((await post("https://github.com/acme/canary")).status).toBe(202);
+    expect((await post("https://github.com/WIDGETS/thing")).status).toBe(202);
+    expect(runAnalysis).toHaveBeenCalledTimes(2);
+  });
+
+  it("blocked: another owner gets 403 OWNER_NOT_ALLOWED, and nothing is started", async () => {
+    process.env.ATTACKCANVAS_ALLOWED_OWNERS = "widgets";
+    const response = await post("https://github.com/acme/canary");
+
+    expect(response.status).toBe(403);
+    const json = await response.json();
+    expect(json.error).toMatchObject({
+      code: "OWNER_NOT_ALLOWED",
+      title: "Owner not allowed on this deployment",
+      canRetry: false,
+    });
+    expect(json.error.message).not.toContain("widgets"); // the list is not disclosed
+    expect(createAnalysis).not.toHaveBeenCalled();
+    expect(runAnalysis).not.toHaveBeenCalled();
+  });
+
+  it("blocked: costs nothing, spending no job slot check and no rate-limit attempt", async () => {
+    accept();
+    process.env.ATTACKCANVAS_ALLOWED_OWNERS = "widgets";
+    for (let i = 0; i < RATE_LIMIT_MAX + 3; i++) {
+      expect((await post("https://github.com/acme/canary", "7.7.7.7")).status).toBe(403);
+    }
+    expect(countActiveAnalyses).not.toHaveBeenCalled();
+    // The same address still has its whole hourly budget for an allowed owner.
+    for (let i = 0; i < RATE_LIMIT_MAX; i++) {
+      expect((await post("https://github.com/widgets/thing", "7.7.7.7")).status).toBe(202);
+    }
+  });
+
+  it("blocked: does not match a prefix or a longer name", async () => {
+    process.env.ATTACKCANVAS_ALLOWED_OWNERS = "acme";
+    for (const url of ["https://github.com/acme2/x", "https://github.com/my-acme/x", "https://github.com/acm/x"]) {
+      expect((await post(url)).status, url).toBe(403);
+    }
+  });
+
+  it("malformed setting: entries that are not owner names are dropped, the valid ones still work", async () => {
+    accept();
+    process.env.ATTACKCANVAS_ALLOWED_OWNERS = "acme, acme/shop, @bad";
+    expect((await post("https://github.com/acme/canary")).status).toBe(202);
+    expect((await post("https://github.com/shop/x")).status).toBe(403);
+  });
+
+  it("malformed setting with nothing valid: every owner is refused, never everyone allowed", async () => {
+    process.env.ATTACKCANVAS_ALLOWED_OWNERS = "acme/shop, https://github.com/acme, -x";
+    for (const url of ["https://github.com/acme/canary", "https://github.com/shop/x"]) {
+      const response = await post(url);
+      expect(response.status, url).toBe(403);
+      expect((await response.json()).error.code).toBe("OWNER_NOT_ALLOWED");
+    }
+    expect(createAnalysis).not.toHaveBeenCalled();
+  });
+
+  it("a malformed URL is still INVALID_URL, decided before the allowlist", async () => {
+    process.env.ATTACKCANVAS_ALLOWED_OWNERS = "acme";
+    const response = await post("https://example.com/acme/canary");
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.code).toBe("INVALID_URL");
+  });
+
+  it("the golden demo is exempt: it reads nothing and calls no model", async () => {
+    accept();
+    process.env.DEMO_FALLBACK = "1";
+    process.env.GOLDEN_REPO_URL = "https://github.com/acme/golden";
+    process.env.ATTACKCANVAS_ALLOWED_OWNERS = "widgets";
+
+    expect((await post("https://github.com/acme/golden")).status).toBe(202);
+    expect(seedDemoAnalysis).toHaveBeenCalledTimes(1);
+    // Only that one repo: another acme repo is still refused.
+    expect((await post("https://github.com/acme/other")).status).toBe(403);
   });
 });

@@ -117,6 +117,11 @@ export const ERROR_COPY = {
     message:
       "This analysis isn't waiting for answers anymore; it may already have finished. Reload the page to see where it stands.",
   },
+  OWNER_NOT_ALLOWED: {
+    title: "Owner not allowed on this deployment",
+    message:
+      "This AttackCanvas deployment only analyzes repositories from a fixed list of owners, and this repository's owner isn't on it. Run your own copy, or ask whoever runs this one.",
+  },
   SERVER_BUSY: {
     title: "AttackCanvas is busy",
     message:

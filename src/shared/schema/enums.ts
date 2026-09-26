@@ -152,6 +152,8 @@ export const ErrorCodeSchema = z.enum([
   // Request problems.
   "INVALID_REQUEST",
   "NOT_AWAITING_ANSWERS",
+  // The operator restricts which repository owners this deployment analyses.
+  "OWNER_NOT_ALLOWED",
   // Capacity: ours (SERVER_BUSY) and an upstream service's.
   "SERVER_BUSY",
   "UPSTREAM_RATE_LIMITED",

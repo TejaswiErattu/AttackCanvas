@@ -13,6 +13,7 @@ Copy `.env.example` to `.env.local` (gitignored) and fill in:
 | `ANTHROPIC_API_KEY` | `src/server/ai/claude.ts` | Never logged; `assertNoSecrets` runs on every outbound call. |
 | `GITHUB_PERSONAL_ACCESS_TOKEN` | `src/server/mcp/githubClient.ts` | **Fine-grained token, public read access only, no write scopes.** Read from the environment and handed to the MCP server's child process through its environment only -- never argv, never logged. |
 | `ATTACKCANVAS_MODEL_PROFILE` | `src/server/ai/models.ts` | `dev` or `demo`; picks which Claude model each stage calls. Unset or blank means `dev`; any other value throws on the first model call. Renamed with the project: the variable under the previous project prefix is no longer read, so a machine that still sets only the old name silently runs `dev`. Set this one on the demo machine. |
+| `ATTACKCANVAS_ALLOWED_OWNERS` | `src/server/http/ownerAllowlist.ts` | Optional. Comma-separated GitHub owners (`acme,widgets-inc`); a request for any other owner gets 403 `OWNER_NOT_ALLOWED`. Unset or blank means every owner is allowed. A set value with no valid owner refuses everyone. See "Responsible use" in `docs/security-design.md`. |
 
 ## GitHub MCP server
 
