@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
 /**
- * Threats across runs, rendered: the low-confidence toggle, the "Including low-confidence"
- * summary line, the drift panel's wording, "Still open from the last run", and statuses that
- * follow a threat from run to run. Uses fixtures/demo-analysis.json (6 visible threats and 3
+ * Threats across runs, rendered: every scored threat listed (below-25% ones greyed, with a
+ * toggle to take them out), severity tiles over every scored threat, an always-present Fix
+ * now section, the two-line drift panel, and statuses that follow a threat from run to run. Uses fixtures/demo-analysis.json (6 visible threats and 3
  * below 25%) through the real adapter and Dashboard, with jsdom's localStorage.
  *
  * ArchitectureGraph is stubbed only because React Flow needs layout APIs jsdom lacks.
@@ -62,20 +62,12 @@ function goneThreat(id: string, title: string): ThreatCardData {
   return { ...base, id, title, severity: "critical", confidence: 72 };
 }
 
-describe("low-confidence toggle", () => {
-  it("is off by default and lists only the visible threats", () => {
+describe("low-confidence threats in the list", () => {
+  it("lists every scored threat by default, below-25% ones last, greyed and badged", () => {
     const view = demoView();
     render(<Dashboard view={view} basisCounts={null} />);
     const toggle = screen.getByRole("checkbox", { name: "Show 3 low-confidence threats" });
-    expect((toggle as HTMLInputElement).checked).toBe(false);
-    expect(cardIds()).toEqual(view.threats.map((t) => `threat-card-${t.id}`));
-    expect(screen.queryByText(BELOW_CUTOFF_TEXT)).toBeNull();
-  });
-
-  it("lists hidden threats after the visible ones, greyed and badged, when on", () => {
-    const view = demoView();
-    render(<Dashboard view={view} basisCounts={null} />);
-    fireEvent.click(screen.getByRole("checkbox", { name: "Show 3 low-confidence threats" }));
+    expect((toggle as HTMLInputElement).checked).toBe(true);
     expect(cardIds()).toEqual([
       ...view.threats.map((t) => `threat-card-${t.id}`),
       ...view.hiddenThreats.map((t) => `threat-card-${t.id}`),
@@ -85,8 +77,35 @@ describe("low-confidence toggle", () => {
     expect(hidden.className).toContain("opacity-60");
     expect(within(hidden).getByText(BELOW_CUTOFF_TEXT)).toBeTruthy();
     expect(screen.getAllByText(BELOW_CUTOFF_TEXT)).toHaveLength(3);
-    // Still counted as today: the "Showing" line and Fix now ignore hidden threats.
-    expect(within(threatsRegion()).getByText(`Showing 6 of 6 threats`)).toBeTruthy();
+    expect(
+      within(threatsRegion()).getByText("Showing 9 of 9 threats, 3 below 25% confidence"),
+    ).toBeTruthy();
+  });
+
+  it("takes them out of the list when the toggle is turned off", () => {
+    const view = demoView();
+    render(<Dashboard view={view} basisCounts={null} />);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Show 3 low-confidence threats" }));
+    expect(cardIds()).toEqual(view.threats.map((t) => `threat-card-${t.id}`));
+    expect(screen.queryByText(BELOW_CUTOFF_TEXT)).toBeNull();
+  });
+
+  it("never puts a below-25% threat in Fix now", () => {
+    const view = demoView();
+    render(<Dashboard view={view} basisCounts={null} />);
+    const fixNow = screen.getByRole("region", { name: "Fix now" });
+    view.hiddenThreats.forEach((t) =>
+      expect(within(fixNow).queryByTestId(`threat-card-${t.id}`)).toBeNull(),
+    );
+  });
+
+  it("keeps the Fix now section when nothing meets the bar", () => {
+    const view = { ...demoView(), fixNow: [], fixNowTotal: 0 };
+    render(<Dashboard view={view} basisCounts={null} />);
+    const fixNow = screen.getByRole("region", { name: "Fix now" });
+    expect(within(fixNow).getByTestId("fix-now-empty").textContent).toContain(
+      "No threat met the Fix now bar in this run",
+    );
   });
 
   it("links the empty-list message to the toggle", () => {
@@ -119,7 +138,7 @@ describe("low-confidence toggle", () => {
 describe("severity summary", () => {
   const counts = { critical: 1, high: 3, medium: 1, low: 1 };
 
-  it("adds the including-low-confidence line under the counts when threats are hidden", () => {
+  it("counts every scored threat in the tiles and says how many are below 25%", () => {
     render(
       <SeveritySummary
         counts={counts}
@@ -128,10 +147,14 @@ describe("severity summary", () => {
         hiddenCounts={{ critical: 0, high: 1, medium: 1, low: 0 }}
       />,
     );
-    expect(screen.getByTestId("including-low-confidence").textContent).toContain("Including low-confidence: Critical 1, High 4, Medium 2, Low 1");
+    const tiles = [...document.querySelectorAll("dd")].map((dd) => dd.textContent);
+    expect(tiles).toEqual(["1", "4", "2", "1", "2"]);
+    expect(screen.getByTestId("scored-line").textContent).toBe(
+      "8 threats scored, 2 of them below 25% confidence: unverified, greyed in the list and never in Fix now.",
+    );
   });
 
-  it("keeps the visible counts in the tiles", () => {
+  it("keeps Fix now to the server's count", () => {
     render(
       <SeveritySummary
         counts={counts}
@@ -141,11 +164,10 @@ describe("severity summary", () => {
       />,
     );
     const tiles = [...document.querySelectorAll("dd")].map((dd) => dd.textContent);
-    expect(tiles).toEqual(["1", "3", "1", "1", "2"]);
-    expect(screen.getByText(/6 threats shown/)).toBeTruthy();
+    expect(tiles).toEqual(["5", "3", "1", "1", "2"]);
   });
 
-  it("shows no line when nothing is hidden", () => {
+  it("says nothing about 25% when nothing is below it", () => {
     render(
       <SeveritySummary
         counts={counts}
@@ -154,8 +176,7 @@ describe("severity summary", () => {
         hiddenCounts={{ critical: 0, high: 0, medium: 0, low: 0 }}
       />,
     );
-    expect(screen.queryByTestId("including-low-confidence")).toBeNull();
-    expect(screen.queryByTestId("carried-count")).toBeNull();
+    expect(screen.getByTestId("scored-line").textContent).toBe("6 threats scored.");
   });
 });
 
@@ -174,14 +195,15 @@ describe("drift panel wording", () => {
     },
   };
 
-  it("names the two groups and never says resolved or fixed", () => {
-    render(<SinceLastRun drift={drift} />);
+  it("shows two short lines and never says resolved or fixed", () => {
+    render(<SinceLastRun drift={drift} notClosedCount={1} lastRunDate="2026-09-12" />);
     const panel = screen.getByTestId("since-last-run");
-    expect(within(panel).getByText("Not found this run (2)")).toBeTruthy();
-    expect(within(panel).getByText("Dropped below 25% (1)")).toBeTruthy();
-    expect(within(panel).getByText("Quiet gone (was below 25%)")).toBeTruthy();
-    expect(within(panel).getByText("Weak cookie (now 12%)")).toBeTruthy();
-    expect(panel.textContent).not.toMatch(/resolved|fixed/i);
+    expect(within(panel).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "0 new threats this run.",
+      "2 threats from the last run not found this run, 1 of them not marked Fixed or False positive.",
+    ]);
+    expect(panel.textContent).toContain("Since last run (2026-09-12)");
+    expect(panel.textContent).not.toMatch(/resolved|\bfixed\b/);
   });
 
   it("keeps the nothing-to-compare message on a first run", () => {
@@ -191,15 +213,12 @@ describe("drift panel wording", () => {
 });
 
 describe("across two runs in the Dashboard", () => {
-  it("first run: no carried section, drift has nothing to compare, counts as today", async () => {
-    const view = demoView();
-    render(<Dashboard view={view} basisCounts={null} />);
+  it("first run: drift has nothing to compare", async () => {
+    render(<Dashboard view={demoView()} basisCounts={null} />);
     expect(await screen.findByText(/nothing to compare/)).toBeTruthy();
-    expect(screen.queryByTestId("carried-forward")).toBeNull();
-    expect(screen.queryByTestId("carried-count")).toBeNull();
   });
 
-  it("carries forward an unclosed threat the last run had, outside this run's counts", async () => {
+  it("counts last-run threats not found and not closed, outside this run's list", async () => {
     const view = demoView();
     const gone = goneThreat("threat-old-1", "Password reset token never expires");
     const closed = goneThreat("threat-old-2", "Debug endpoint left enabled");
@@ -207,18 +226,11 @@ describe("across two runs in the Dashboard", () => {
     window.localStorage.setItem(STATUS, JSON.stringify({ [threatKey(closed)]: "fixed" }));
     render(<Dashboard view={view} basisCounts={null} />);
 
-    const carried = await screen.findByTestId("carried-forward");
-    expect(within(carried).getByText("Still open from the last run (2026-09-01)")).toBeTruthy();
-    expect(within(carried).getByText(gone.title)).toBeTruthy();
-    expect(within(carried).getByText("72% confidence last run")).toBeTruthy();
-    expect(within(carried).getByText("Not re-found this run.")).toBeTruthy();
-    expect(within(carried).queryByText(closed.title)).toBeNull();
-    expect(screen.getByTestId("carried-count").textContent).toContain("1 from the last run not re-found and not marked fixed.");
-    // Not in this run's list or Fix now.
+    const panel = await screen.findByTestId("since-last-run");
+    expect(await within(panel).findByText(/2 threats from the last run not found this run, 1 of them/)).toBeTruthy();
+    expect(panel.textContent).toContain("(2026-09-01)");
     expect(cardIds()).not.toContain("threat-card-threat-old-1");
-    const drift = screen.getByTestId("since-last-run");
-    expect(within(drift).getByText("Not found this run (2)")).toBeTruthy();
-    expect(drift.textContent).not.toMatch(/resolved/i);
+    expect(panel.textContent).not.toMatch(/resolved/i);
   });
 
   it("migrates an id-keyed status map once, against the run it was saved on", async () => {

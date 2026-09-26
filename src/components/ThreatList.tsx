@@ -9,9 +9,9 @@
  * (The dashboard alone moves handled findings after open ones within a priority band; see
  * orderByStatus in src/client/findingStatus.ts.)
  *
- * Threats below 25% confidence are off by default. The "Show N low-confidence threats"
- * toggle lists them after the visible ones, greyed and badged as unverified. They are
- * display only and never enter the "Showing x of y" count.
+ * Every scored threat is listed. Threats below 25% confidence come after the others,
+ * greyed and badged as unverified; the "Show N low-confidence threats" toggle (on by
+ * default) can take them out of the list. They never enter Fix now.
  */
 
 import type { ThreatCardData } from "@/shared/viewModel";
@@ -124,12 +124,15 @@ export default function ThreatList({
     </label>
   ) : null;
 
-  if (items.length === 0 && lowItems.length === 0) {
+  const shown = items.length + lowItems.length;
+  const total = totalCount + (showHidden ? hiddenTotal : 0);
+
+  if (shown === 0) {
     return (
       <div>
         {toggle}
         <p className="rounded-2xl border border-dashed border-line-strong p-8 text-center text-sm text-muted">
-          {emptyMessage(totalCount, hiddenSummary)}
+          {emptyMessage(total, hiddenSummary)}
           {canToggle && !showHidden ? (
             <>
               {" "}
@@ -152,9 +155,8 @@ export default function ThreatList({
     <div>
       {toggle}
       <p className="mb-3 text-sm text-muted" aria-live="polite">
-        {items.length
-          ? `Showing ${items.length} of ${totalCount} threat${totalCount === 1 ? "" : "s"}`
-          : emptyMessage(totalCount, hiddenSummary)}
+        Showing {shown} of {total} threat{total === 1 ? "" : "s"}
+        {lowItems.length ? `, ${lowItems.length} below 25% confidence` : ""}
       </p>
       {items.length ? (
         <ul className="space-y-3">{items.map((threat) => card(threat, false))}</ul>

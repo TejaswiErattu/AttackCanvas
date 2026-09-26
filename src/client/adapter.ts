@@ -370,7 +370,9 @@ export function toDashboardViewModel(model: ThreatModel): DashboardViewModel {
     hiddenCounts: countBySeverity(hidden),
     assumptions: [...model.assumptions],
     limitations: [...model.limitations],
-    filterOptions: buildFilterOptions(model, visible),
+    // Over every scored threat: the list shows the ones below 25% too, so the filters must
+    // reach them.
+    filterOptions: buildFilterOptions(model, [...visible, ...hidden]),
   };
 }
 

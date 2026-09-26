@@ -753,7 +753,8 @@ describe("hiding low-confidence threats (CLAUDE.md rule 2)", () => {
     it("gives the same view as if the threat did not exist, apart from the hidden list", () => {
       const { hiddenThreats, hiddenCounts, ...rest } = withHidden;
       const { hiddenThreats: none, hiddenCounts: zero, ...restWithout } = withoutHidden;
-      expect(rest).toEqual(restWithout);
+      // Filter options also cover it (the list shows it); see "adds filter options for it".
+      expect({ ...rest, filterOptions: null }).toEqual({ ...restWithout, filterOptions: null });
       expect(hiddenThreats.map((t) => t.id)).toEqual(["hidden-one"]);
       expect(hiddenCounts).toEqual({ critical: 0, high: 0, medium: 0, low: 1 });
       expect(none).toEqual([]);
@@ -786,13 +787,22 @@ describe("hiding low-confidence threats (CLAUDE.md rule 2)", () => {
       expect(email).toMatchObject({ threatCount: 0, maxSeverity: null });
     });
 
-    it("creates no filter options", () => {
+    it("adds filter options for it, since the list shows it", () => {
       expect(withHidden.filterOptions).toEqual({
-        severities: ["high"],
-        stride: [{ code: "T", label: "Tampering" }],
-        owasp: [{ code: "A01:2025", label: "Broken Access Control" }],
-        components: [{ id: "api-server", name: "API Server" }],
-        confidenceLabels: ["high"],
+        severities: ["high", "low"],
+        stride: [
+          { code: "T", label: "Tampering" },
+          { code: "D", label: "Denial of service" },
+        ],
+        owasp: [
+          { code: "A01:2025", label: "Broken Access Control" },
+          { code: "A03:2025", label: "Software Supply Chain Failures" },
+        ],
+        components: [
+          { id: "api-server", name: "API Server" },
+          { id: "email-service", name: "Email Service" },
+        ],
+        confidenceLabels: ["high", "low"],
       });
     });
   });
@@ -838,7 +848,8 @@ describe("hiding low-confidence threats (CLAUDE.md rule 2)", () => {
     expect(view.fixNow).toEqual([]);
     expect(view.fixNowTotal).toBe(0);
     expect(view.counts).toEqual({ critical: 0, high: 0, medium: 0, low: 0 });
-    expect(view.filterOptions.components).toEqual([]);
+    expect(view.hiddenThreats.map((t) => t.id)).toEqual(["hidden-one"]);
+    expect(view.filterOptions.components).toEqual([{ id: "email-service", name: "Email Service" }]);
     expect(findUndefined(view)).toEqual([]);
   });
 });

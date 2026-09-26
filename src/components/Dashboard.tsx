@@ -55,7 +55,6 @@ import {
   type DriftModel,
 } from "@/client/drift";
 import { carryForward } from "@/client/carryForward";
-import CarriedForward from "@/components/CarriedForward";
 import type { BasisCounts, HiddenSummary } from "@/client/useAnalysis";
 import ArchitectureGraph from "@/components/ArchitectureGraph";
 import ArchitectureLegend from "@/components/ArchitectureLegend";
@@ -104,9 +103,10 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
   const [diagramView, setDiagramView] = useState<DiagramView>("overall");
 
   const threats = useMemo(() => view.threats ?? [], [view.threats]);
-  // Below-25% threats: listed only when the reader turns the toggle on (display only).
+  // Below-25% threats: listed after the others, greyed and marked unverified (display only).
   const hiddenThreats = useMemo(() => view.hiddenThreats ?? [], [view.hiddenThreats]);
-  const [showHidden, setShowHidden] = useState(false);
+  // On by default: every scored threat is listed, the ones below 25% greyed after the rest.
+  const [showHidden, setShowHidden] = useState(true);
 
   // Triage statuses live in this browser only, keyed by threatKey so a status follows the
   // same threat from run to run. Read after mount so the first render matches the server's.
@@ -155,8 +155,8 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
     setStatusesByKey((current) => setStatus(safeLocalStorage(), statusKey, current, key, status));
   };
   const statusCounts = useMemo(
-    () => summarise(threats.map((t) => t.id), statuses),
-    [threats, statuses],
+    () => summarise([...threats, ...hiddenThreats].map((t) => t.id), statuses),
+    [threats, hiddenThreats, statuses],
   );
 
   const drift = useMemo(() => (prevRun ? diffThreatModels(prevRun, view) : null), [prevRun, view]);
@@ -164,7 +164,7 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
     () => (prevRun ? newThreatKeys(prevRun, view) : new Set<string>()),
     [prevRun, view],
   );
-  // Last run's threats not re-found and not closed. Shown apart; never counted in this run.
+  // Last run's threats not re-found and not closed; the drift panel reports how many.
   const carried = useMemo(() => carryForward(drift, statusesByKey), [drift, statusesByKey]);
   const lastRunDate = prevRun?.repo?.analyzedAt ? formatAnalyzedAt(prevRun.repo.analyzedAt) : null;
 
@@ -403,7 +403,6 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
             fixNowCount={fixNowTotal}
             statusCounts={statusCounts}
             hiddenCounts={view.hiddenCounts ?? null}
-            carriedCount={carried.length}
           />
 
           <section
@@ -420,7 +419,7 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
               <p className="mt-3 text-sm text-muted">
                 {hiddenSummary.hidden} of {hiddenSummary.scored} scored threat
                 {hiddenSummary.scored === 1 ? "" : "s"} fell below 25% confidence and are
-                hidden by default. The threat list can show them, greyed and unverified.
+                listed after the others, greyed and marked unverified.
               </p>
             ) : null}
             {assumptions.length ? (
@@ -457,20 +456,22 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
         </div>
       </div>
 
-      {prevRun !== undefined ? <SinceLastRun drift={drift} /> : null}
+      {prevRun !== undefined ? (
+        <SinceLastRun drift={drift} notClosedCount={carried.length} lastRunDate={lastRunDate} />
+      ) : null}
 
-      {view.fixNow?.length ? (
-        <section aria-labelledby="fix-now-heading">
-          <h2 id="fix-now-heading" className="font-display text-xl font-semibold text-fg">
-            Fix now
-          </h2>
-          <p className="mt-1 text-sm text-muted">
-            Critical threats, and high-severity threats the analysis is at least 50%
-            confident in.
-            {fixNowTotal > view.fixNow.length
-              ? ` Showing the top ${view.fixNow.length} of ${fixNowTotal}; the full list is below.`
-              : ""}
-          </p>
+      <section aria-labelledby="fix-now-heading">
+        <h2 id="fix-now-heading" className="font-display text-xl font-semibold text-fg">
+          Fix now
+        </h2>
+        <p className="mt-1 text-sm text-muted">
+          Critical threats, and high-severity threats the analysis is at least 50%
+          confident in, at 25% confidence or above.
+          {view.fixNow?.length && fixNowTotal > view.fixNow.length
+            ? ` Showing the top ${view.fixNow.length} of ${fixNowTotal}; the full list is below.`
+            : ""}
+        </p>
+        {view.fixNow?.length ? (
           <ul className="mt-4 grid gap-3 xl:grid-cols-2">
             {view.fixNow.map((threat) => (
               <li key={`fix-now-${threat.id}`} className="min-w-0">
@@ -486,8 +487,19 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
               </li>
             ))}
           </ul>
-        </section>
-      ) : null}
+        ) : (
+          <p
+            data-testid="fix-now-empty"
+            className="mt-4 rounded-2xl border border-dashed border-line-strong p-5 text-sm text-muted"
+          >
+            No threat met the Fix now bar in this run. Every scored threat is in the list
+            below, highest priority first.{" "}
+            <a href="#threats-heading" className="text-mint underline underline-offset-2">
+              Go to the list
+            </a>
+          </p>
+        )}
+      </section>
 
       <section aria-labelledby="threats-heading" className="scroll-mt-24">
         <h2 id="threats-heading" className="font-display text-xl font-semibold text-fg">
@@ -517,7 +529,6 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
               showHidden={showHidden}
               onShowHiddenChange={setShowHidden}
             />
-            <CarriedForward threats={carried} lastRunDate={lastRunDate} />
           </div>
         </div>
       </section>

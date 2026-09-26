@@ -1,15 +1,10 @@
 /**
- * "Still open from the last run": threats the previous run listed that this run did not
- * find, and that the reader has not marked Fixed or False positive.
+ * Threats the previous run listed at 25% confidence or above that this run did not find,
+ * and that the reader has not marked Fixed or False positive. The drift panel reports how
+ * many ("k of them not marked Fixed or False positive").
  *
  * A threat can vanish from a run because the code changed, or because a model run sampled
- * differently. Nothing here can tell which, so a threat the reader has not closed stays in
- * view, greyed, with the severity and confidence the previous run gave it. It is display
- * only: carried threats never enter this run's counts, filters or Fix now.
- *
- * Only threats that were visible in the previous run are carried. One that was already
- * below 25% confidence then is listed under "Not found this run" in the drift panel but is
- * not carried, so a hidden threat never appears without the reader asking for it.
+ * differently. Nothing here can tell which, so only a status the reader set closes it.
  *
  * Pure: statuses are the stored threatKey-keyed map (src/client/findingStatus.ts).
  */

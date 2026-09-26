@@ -118,9 +118,8 @@ export type ThreatCardData = {
 };
 
 /**
- * A threat scored below 0.25 confidence. Same card data as a visible threat, flagged so no
- * consumer can mistake it for one: it is shown only on request, greyed, and never counts
- * toward the severity counts, Fix now, node stats or filter options.
+ * A threat scored below 0.25 confidence. Same card data as the others, flagged so no
+ * consumer can mistake it for one: it is listed greyed and never counts toward Fix now.
  */
 export type HiddenThreatCardData = ThreatCardData & { belowCutoff: true };
 
@@ -139,8 +138,8 @@ export type QuestionData = {
 export type SeverityCounts = Record<Severity, number>;
 
 /**
- * Only options that match at least one visible threat are listed. Threats below
- * confidence 0.25 are left out here, as in every count (CLAUDE.md rule 2).
+ * Only options that match at least one scored threat (at or below 25% confidence) are
+ * listed, since the threat list shows both.
  */
 export type FilterOptions = {
   severities: Severity[];
@@ -173,9 +172,9 @@ export type DashboardViewModel = {
   /** Sorted by priority, then risk (impact x likelihood), highest first. */
   threats: ThreatCardData[];
   /**
-   * Threats below 0.25 confidence, in the same order as `threats`. Hidden by default
-   * (CLAUDE.md rule 2); the list can show them greyed on request. Display only: none of
-   * the other fields here include them.
+   * Threats below 0.25 confidence, in the same order as `threats`. The list shows them
+   * greyed after the others (CLAUDE.md rule 2). Display only: apart from filterOptions, no
+   * other field here includes them, and they never enter fixNow.
    */
   hiddenThreats: HiddenThreatCardData[];
   /** Severity counts over `hiddenThreats` alone, for the "Including low-confidence" line. */

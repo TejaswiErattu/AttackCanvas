@@ -59,10 +59,13 @@ certainty for exactly this reason.
 The dashboard compares runs in the browser (`src/client/drift.ts`); nothing checks the code.
 
 - **"Not found this run" is not "fixed".** A model run can miss a threat an earlier run
-  reported. The drift panel says "not found" and "dropped below 25%", never "resolved";
-  threats not closed by a status stay under "Still open from the last run".
-- **Only one run back.** Carried-forward threats come from the previous run alone. A
-  threat missing for two runs in a row is no longer shown as still open.
+  reported. The drift panel counts those as "not found this run", never "resolved", and
+  says how many are not marked Fixed or False positive.
+- **Run-to-run variation.** The threats themselves come from a model, so two runs of an
+  unchanged repository can differ. Listing and counting every scored threat, including those
+  below 25% confidence, keeps the dashboard from swinging between "nothing" and "many"
+  because of the cutoff, but it does not remove the model's own variation.
+- **Only one run back.** The comparison is with the previous run alone.
 - **Identity is by name.** A threat is matched across runs by normalised title, component
   names and OWASP codes. A reworded title or a renamed component reads as a different
   threat, so its status does not follow and it shows as new.
@@ -70,8 +73,8 @@ The dashboard compares runs in the browser (`src/client/drift.ts`); nothing chec
   keyed by threat identity are converted once, against the last run stored in this
   browser. If that is not the run they were set on, some are dropped or land on another
   threat.
-- **Carried forward only when visible.** A threat that was already below 25% in the last
-  run and is gone now is listed as "not found" but is not carried forward.
+- **Not-closed count covers confident threats only.** A threat that was already below 25% in
+  the last run and is gone now counts as "not found" but not in "not marked Fixed".
 
 ## Security review
 

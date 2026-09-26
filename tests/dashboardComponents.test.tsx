@@ -68,9 +68,11 @@ function listedIds(): string[] {
 }
 
 describe("Dashboard with the demo fixture", () => {
-  it("lists every visible threat from the adapter, in its order", () => {
+  it("lists every scored threat from the adapter, in its order, below-25% ones last", () => {
     const view = renderDemo();
-    expect(listedIds()).toEqual(view.threats.map((t) => `threat-card-${t.id}`));
+    expect(listedIds()).toEqual(
+      [...view.threats, ...view.hiddenThreats].map((t) => `threat-card-${t.id}`),
+    );
   });
 
   it("narrows the list to one component from its button, and says so", () => {
@@ -99,7 +101,7 @@ describe("Dashboard with the demo fixture", () => {
     fireEvent.click(stripe);
     fireEvent.click(stripe);
 
-    expect(listedIds()).toHaveLength(view.threats.length);
+    expect(listedIds()).toHaveLength(view.threats.length + view.hiddenThreats.length);
     expect(stripe.getAttribute("aria-pressed")).toBe("false");
     expect(screen.queryByRole("status")).toBeNull();
   });

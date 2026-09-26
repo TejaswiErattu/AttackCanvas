@@ -32,9 +32,9 @@ Rules:
      Inference and assumption items are not supporting evidence: an
      inference is a conclusion, not direct support, so it neither blocks the
      floor nor counts toward it.
-     Labels: High >= 0.70, Medium 0.40-0.69, Low < 0.40. Hide < 0.25 by
-     default. Display only: the reader may show them greyed and marked
-     unverified; they never count toward severity counts or Fix now.
+     Labels: High >= 0.70, Medium 0.40-0.69, Low < 0.40. Below 0.25 is
+     display-flagged, not hidden: listed last, greyed, marked unverified,
+     counted in the severity tiles, never in Fix now.
    - basis is evidence_backed when at least one cited evidence item is a
      positive observation: its ruleId does not start with "gap:" and its
      kind is not inference or assumption. An inference never makes a threat
