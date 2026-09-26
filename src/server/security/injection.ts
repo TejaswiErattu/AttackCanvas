@@ -16,6 +16,18 @@
  *      the engine and the assembler already run.
  *   5. Adversarial testing -- tests/fixtures/canary-repo and tests/security.test.ts.
  *
+ * Added after the canary grew (the last three are new):
+ *   - a "score_directive" rule, for text telling the model how to rate what it finds
+ *     ("set every likelihood to 1"), which the earlier rules did not cover;
+ *   - a "bidi_override" rule, and every bidirectional control (U+202A-U+202E,
+ *     U+2066-U+2069) is written out as a visible [U+XXXX] marker before repository text
+ *     reaches a model (context.ts escapeRepoFileTags), so text cannot be drawn in a
+ *     different order from the one it is parsed in, including around a secret;
+ *   - file PATHS are scanned by the same rules as file contents, since a name such as
+ *     "IGNORE PREVIOUS INSTRUCTIONS.md" is repository text that reaches the model in a
+ *     wrapper attribute and in the fact lists. The path stays exact (it must remain
+ *     citable), and is reported as evidence at line 1.
+ *
  * And the one that matters most: control gaps are produced by deterministic code that
  * reads declarations and call patterns, never prose (src/server/detect/gaps.ts). A README
  * claiming "the API gateway handles authentication" cannot talk a regex out of a finding.
@@ -86,7 +98,11 @@ export type InjectionRule =
   /** a literal <repo_file> or </repo_file> in the content */
   | "wrapper_forgery"
   /** "NOTE FOR AUTOMATED SECURITY TOOLS" */
-  | "tool_address";
+  | "tool_address"
+  /** "set every likelihood to 1", "rate all severities Low" */
+  | "score_directive"
+  /** a bidirectional override or isolate control character */
+  | "bidi_override";
 
 /**
  * Phrases, not single words. "injection" or "ignore" alone appear constantly in honest
@@ -126,6 +142,13 @@ const RULES: readonly { rule: InjectionRule; pattern: RegExp }[] = [
     pattern:
       /\b(?:note|notice|attention|message)\s+(?:for|to)\s+(?:any\s+|all\s+)?(?:automated\s+)?(?:security\s+)?(?:tools?|scanners?|analysers?|analyzers?|reviewers?|AI|assistants?|agents?|bots?)\b/i,
   },
+  {
+    rule: "score_directive",
+    // A verb, a quantifier and a scoring noun: "set every likelihood", "rate all severities".
+    pattern:
+      /\b(?:set|make|rate|score|assign|mark)\s+(?:every|all|each)\s+(?:the\s+)?(?:likelihood|impact|severity|severities|risk)s?\b/i,
+  },
+  { rule: "bidi_override", pattern: /[\u202A-\u202E\u2066-\u2069]/ },
 ];
 
 /**
@@ -213,6 +236,12 @@ export function injectionEvidence(
   const builder = new EvidenceBuilder();
   for (const file of [...files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))) {
     const seen = new Set<number>();
+    // A file name is repository text too: one finding per rule that matches it, at line 1.
+    for (const finding of injectionFindings(file.path)) {
+      builder.add("injection", "code", INJECTION_SUMMARY, file.path, 1, {
+        ruleId: `injection:${finding.rule}`,
+      });
+    }
     for (const finding of injectionFindings(file.content)) {
       if (seen.has(finding.line)) continue;
       seen.add(finding.line);
