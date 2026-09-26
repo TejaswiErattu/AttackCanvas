@@ -21,6 +21,15 @@ export const MAX_TOTAL_BYTES = 2 * 1024 * 1024;
 export const FETCH_CONCURRENCY = 5;
 export const MIN_SOURCE_FILES = 3;
 
+/**
+ * How much the tree may CLAIM before selection stops fetching: twice the byte budget.
+ * Tree sizes can be missing or wrong, so the real budget (applySizePolicy) is still
+ * enforced on downloaded bytes; this only stops a 300-file selection from downloading
+ * many times the budget to fill it. A missing size counts as 0, so an entry with no size
+ * is never held back by it.
+ */
+export const MAX_CLAIMED_BYTES = 2 * MAX_TOTAL_BYTES;
+
 export type LoadedTier = Exclude<Tier, "ignore">;
 
 export type LoadedFile = {
@@ -90,17 +99,19 @@ export async function mapWithConcurrency<T, R>(
 
 /**
  * Classifies a tree and picks what to fetch: high before medium before low, path order
- * within a tier, and at most MAX_FILES of them. Everything past that is `overLimit`.
+ * within a tier, at most MAX_FILES of them, and no further once the sizes the tree
+ * claims add up to MAX_CLAIMED_BYTES. Everything past that is `overLimit`.
  *
- * Tree sizes are deliberately not used here. GitHub may omit them or get them wrong, so
- * the byte budget is enforced later, on what was actually downloaded.
+ * Tree sizes are not trusted for the budget itself: GitHub may omit them or get them
+ * wrong, so the byte budget is enforced later, on what was actually downloaded. They
+ * are trusted only as a ceiling on how much to download in the first place.
  */
 export function selectCandidates(entries: TreeResult["entries"]): {
   candidates: Candidate[];
   ignored: number;
   overLimit: number;
 } {
-  const all: Candidate[] = [];
+  const all: (Candidate & { size: number })[] = [];
   let ignored = 0;
 
   for (const entry of entries) {
@@ -109,7 +120,7 @@ export function selectCandidates(entries: TreeResult["entries"]): {
     if (tier === "ignore") {
       ignored += 1;
     } else {
-      all.push({ path: entry.path, tier, reason });
+      all.push({ path: entry.path, tier, reason, size: entry.size ?? 0 });
     }
   }
 
@@ -118,10 +129,19 @@ export function selectCandidates(entries: TreeResult["entries"]): {
       TIER_RANK[a.tier] - TIER_RANK[b.tier] || a.path.localeCompare(b.path),
   );
 
+  const candidates: Candidate[] = [];
+  let claimed = 0;
+  for (const { path, tier, reason, size } of all) {
+    if (candidates.length >= MAX_FILES) break;
+    if (claimed + size > MAX_CLAIMED_BYTES) continue; // a smaller or unsized entry may still fit
+    claimed += size;
+    candidates.push({ path, tier, reason });
+  }
+
   return {
-    candidates: all.slice(0, MAX_FILES),
+    candidates,
     ignored,
-    overLimit: Math.max(0, all.length - MAX_FILES),
+    overLimit: all.length - candidates.length,
   };
 }
 
@@ -249,17 +269,15 @@ function isNotText(cause: unknown, path: string): boolean {
 }
 
 /**
- * A lockfile the client refused as too large. The classifier keeps a lockfile out of the
- * fetch when its tree size is over the cap, but the tree size can be missing or wrong,
- * and a lockfile is optional: the dependency scan falls back to version ranges without
- * it. So this one file is skipped instead of failing the whole load.
+ * A file the client refused as too large (over its 1 MiB response cap). The classifier
+ * keeps such a file out of the fetch when the tree reports its size, but the tree size
+ * can be missing or wrong. The per-file cap is a policy about that one file, exactly as
+ * it is when the size is known, so the file is skipped and counted as ignored instead of
+ * failing the whole load. A lockfile is the same case with the same answer: the
+ * dependency scan falls back to version ranges without it.
  */
-function isLockfileTooLarge(cause: unknown, reason: string): boolean {
-  return (
-    reason === LOCKFILE_REASON &&
-    cause instanceof GitHubMcpError &&
-    cause.code === "REPO_TOO_LARGE"
-  );
+function isTooLarge(cause: unknown): boolean {
+  return cause instanceof GitHubMcpError && cause.code === "REPO_TOO_LARGE";
 }
 
 export async function loadRepositoryWith(
@@ -295,7 +313,7 @@ export async function loadRepositoryWith(
         );
         return { file, content };
       } catch (cause) {
-        if (isNotText(cause, file.path) || isLockfileTooLarge(cause, file.reason)) {
+        if (isNotText(cause, file.path) || isTooLarge(cause)) {
           return { file, content: undefined };
         }
         throw cause;
@@ -304,12 +322,12 @@ export async function loadRepositoryWith(
   );
 
   // Real UTF-8 byte length against the shared per-file/total-budget policy (see
-  // applySizePolicy). "not text" is a fetch-layer concept the shared policy doesn't
-  // know about, so it is filtered out here first.
+  // applySizePolicy). "not text" and "too large to fetch" are fetch-layer outcomes the
+  // shared policy doesn't know about, so they are filtered out here first.
   const sized: SizedCandidate[] = [];
   for (const { file, content } of fetched) {
     if (content === undefined) {
-      ignored += 1; // not text
+      ignored += 1; // not text, or over the client's response cap
       continue;
     }
     sized.push({

@@ -18,8 +18,21 @@ import { validateThreatModel } from "@/shared/schema";
 import demoJson from "../fixtures/demo-analysis.json";
 
 vi.mock("@/components/ArchitectureGraph", () => ({
-  default: ({ selectedNodeId }: { selectedNodeId: string | null }) => (
-    <div data-testid="graph" data-selected={selectedNodeId ?? ""} />
+  default: ({
+    selectedNodeId,
+    nodes,
+    edges,
+  }: {
+    selectedNodeId: string | null;
+    nodes: { id: string }[];
+    edges: { id: string }[];
+  }) => (
+    <div
+      data-testid="graph"
+      data-selected={selectedNodeId ?? ""}
+      data-nodes={nodes.map((n) => n.id).join(",")}
+      data-edges={edges.map((e) => e.id).join(",")}
+    />
   ),
 }));
 
@@ -107,11 +120,37 @@ describe("Dashboard with the demo fixture", () => {
       `threat-card-${first.id}`,
     );
 
-    fireEvent.click(within(card).getByRole("button"));
+    fireEvent.click(card.querySelector("button[aria-controls]")!);
 
     expect(within(card).getByText(first.attackScenario)).toBeTruthy();
     expect(within(card).getByText(first.mitigation.summary)).toBeTruthy();
     expect(within(card).getByTestId(`confidence-reasons-${first.id}`)).toBeTruthy();
     expect(within(card).getAllByText(first.evidence[0].summary).length).toBeGreaterThan(0);
+  });
+});
+
+describe("Dashboard diagram sub-views", () => {
+  it("re-selects the diagram's nodes and edges per view and leaves the threat list alone", async () => {
+    const { selectDiagramView } = await import("@/client/diagramViews");
+    const view = renderDemo();
+    const graph = screen.getByTestId("graph");
+    const before = listedIds();
+    expect(graph.getAttribute("data-nodes")).toBe(view.nodes.map((n) => n.id).join(","));
+
+    for (const [label, name] of [
+      ["Identity and auth", "identity"],
+      ["Data flows", "data_flows"],
+      ["External systems", "external"],
+    ] as const) {
+      fireEvent.click(screen.getByRole("radio", { name: label }));
+      expect(screen.getByRole("radio", { name: label }).getAttribute("aria-checked")).toBe("true");
+      const expected = selectDiagramView(view, name);
+      expect(screen.getByTestId("graph").getAttribute("data-nodes")).toBe(expected.nodeIds.join(","));
+      expect(screen.getByTestId("graph").getAttribute("data-edges")).toBe(expected.edgeIds.join(","));
+      expect(listedIds()).toEqual(before);
+    }
+
+    fireEvent.click(screen.getByRole("radio", { name: "Overall" }));
+    expect(screen.getByTestId("graph").getAttribute("data-nodes")).toBe(view.nodes.map((n) => n.id).join(","));
   });
 });

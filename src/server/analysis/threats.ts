@@ -20,6 +20,7 @@
  * invents an identifier.
  */
 
+import { note, type Note } from "@/server/analysis/limitations";
 import { z } from "zod";
 import { AiError, callStructured, type ClaudeDeps } from "@/server/ai/claude";
 import { loadPrompt } from "@/server/ai/prompts";
@@ -148,8 +149,16 @@ export type ThreatEngineResult = {
   threats: EngineThreat[];
   /** The evidence the surviving threats cite, in the architecture's order. */
   evidence: Evidence[];
-  /** Everything dropped, failed or worth knowing, in a deterministic order. */
+  /**
+   * Diagnostics: everything dropped, failed or worth knowing, in a deterministic order,
+   * with batch numbers and evidence ids. Not reader-facing (src/server/analysis/limitations.ts).
+   */
   limitations: string[];
+  /**
+   * The same messages with a code each, for the reader-facing Limitations section. Always
+   * set by generateThreats; optional only so hand-built test doubles need not.
+   */
+  notes?: Note[];
   batches: BatchReport[];
   /** One entry per successful call, in batch order. */
   usage: CallUsage[];
@@ -691,7 +700,7 @@ export function assignIds(threats: readonly DraftThreat[]): EngineThreat[] {
 type BatchOutcome = {
   report: BatchReport;
   threats: DraftThreat[];
-  limitations: string[];
+  notes: Note[];
   usage: CallUsage;
 };
 
@@ -784,23 +793,24 @@ export async function generateThreats(
       const offered = offeredBy(batch);
       const gapRoutes = gapRouteByEvidenceId(batch);
       const kept: DraftThreat[] = [];
-      const limitations: string[] = [];
+      const notes: Note[] = [];
       for (const returned of value.threats) {
         // Before reference validation, so a threat left with no support is dropped by the
         // existing "cites no evidence and states no assumption" rule.
         const { threat, removed } = stripCrossRouteGapCitations(returned, gapRoutes, knownPaths);
-        for (const r of removed) limitations.push(describeRemovedCitation(threat, index, r));
+        // A citation narrowed away leaves the threat standing: diagnostic only.
+        for (const r of removed) notes.push(note("internal", describeRemovedCitation(threat, index, r)));
         const issues = referenceIssues(threat, architecture, offered);
         if (issues.length === 0) kept.push(threat);
-        else limitations.push(describeDrop(threat, index, issues));
+        else notes.push(note("threat_discarded", describeDrop(threat, index, issues)));
       }
       for (const id of batch.unresolvedIds) {
-        limitations.push(`Batch ${index + 1} named unknown element ${id}.`);
+        notes.push(note("internal", `Batch ${index + 1} named unknown element ${id}.`));
       }
       return {
         report: { index, elementIds, returned: value.threats.length },
         threats: kept,
-        limitations: limitations.sort(cmp),
+        notes: notes.sort((a, b) => cmp(a.detail, b.detail)),
         usage,
       };
     }, batches.length),
@@ -828,7 +838,8 @@ export async function generateThreats(
   return {
     threats,
     evidence: evidence.filter((e) => cited.has(e.id)),
-    limitations: outcomes.flatMap((o) => o.limitations),
+    limitations: outcomes.flatMap((o) => o.notes.map((n) => n.detail)),
+    notes: outcomes.flatMap((o) => o.notes),
     batches: outcomes.map((o) => o.report),
     usage: outcomes.map((o) => o.usage),
     promptId: prompt.id,

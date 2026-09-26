@@ -43,6 +43,14 @@ export const BATCH_SIZE = 500;
 export const DETAIL_CONCURRENCY = 5;
 export const MAX_EVIDENCE = 40;
 
+/**
+ * Advisory records fetched per scan, at most. A manifest with thousands of dependencies
+ * can name thousands of distinct advisories, each a request with its own timeout; the
+ * report keeps only MAX_EVIDENCE of them anyway. The ids referenced by the most
+ * dependencies come first, then id order, so the cut is deterministic.
+ */
+export const MAX_DETAIL_FETCHES = 400;
+
 /** Refuse a response bigger than this rather than parse it. OSV records are a few KB. */
 const MAX_RESPONSE_CHARS = 2_000_000;
 
@@ -824,10 +832,16 @@ export async function scanDependencies(
         ]
       : [];
 
-  // Fetch each distinct advisory once.
-  const wanted = [...new Set([...idsByQuery.values()].flat())].filter(
-    (id) => !cache.has(id),
-  );
+  // Fetch each distinct advisory once, the most-referenced first, at most MAX_DETAIL_FETCHES.
+  const references = new Map<string, number>();
+  for (const ids of idsByQuery.values()) {
+    for (const id of ids) references.set(id, (references.get(id) ?? 0) + 1);
+  }
+  const uncached = [...references.keys()]
+    .filter((id) => !cache.has(id))
+    .sort((a, b) => references.get(b)! - references.get(a)! || a.localeCompare(b));
+  const wanted = uncached.slice(0, MAX_DETAIL_FETCHES);
+  const notFetched = uncached.length - wanted.length;
   let unavailable = 0;
 
   await mapWithConcurrency(wanted, DETAIL_CONCURRENCY, async (id) => {
@@ -846,6 +860,14 @@ export async function scanDependencies(
     }
   });
 
+  const fetchCapNote =
+    notFetched > 0
+      ? [
+          `${notFetched} advisories were not retrieved from OSV: the scan fetches at most ` +
+            `${MAX_DETAIL_FETCHES} advisory records, so dependencies with the least-referenced ` +
+            "advisories are missing from the results.",
+        ]
+      : [];
   const detailNote =
     unavailable > 0
       ? [
@@ -931,6 +953,6 @@ export async function scanDependencies(
 
   return {
     evidence,
-    limitations: [...limitations, ...partial, ...detailNote, ...capNote],
+    limitations: [...limitations, ...partial, ...fetchCapNote, ...detailNote, ...capNote],
   };
 }

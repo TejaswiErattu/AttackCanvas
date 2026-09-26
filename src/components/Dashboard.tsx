@@ -18,18 +18,53 @@
  * clears the node's highlight.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { DashboardViewModel } from "@/shared/viewModel";
+import { assignBoundaries } from "@/client/layoutGraph";
+import {
+  DIAGRAM_VIEWS,
+  DIAGRAM_VIEW_LABELS,
+  selectDiagramView,
+  type DiagramView,
+} from "@/client/diagramViews";
 import {
   EMPTY_FILTERS,
   filterThreats,
   type ThreatFilters,
 } from "@/client/filterThreats";
+import {
+  loadStatuses,
+  orderByStatus,
+  setStatus,
+  splitFullName,
+  statusStorageKey,
+  summarise,
+  type FindingStatus,
+  type StatusMap,
+} from "@/client/findingStatus";
+import {
+  diffThreatModels,
+  newThreatKeys,
+  recordRun,
+  threatKey,
+  type DriftModel,
+} from "@/client/drift";
 import type { BasisCounts, HiddenSummary } from "@/client/useAnalysis";
 import ArchitectureGraph from "@/components/ArchitectureGraph";
+import ArchitectureLegend from "@/components/ArchitectureLegend";
+import { ExposureBadge, typeText } from "@/components/ArchitectureNode";
+import type { Exposure } from "@/shared/viewModel";
+
+/** What each exposure means, for the node detail panel. */
+const EXPOSURE_DESCRIPTIONS: Record<Exposure, string> = {
+  external: "External: a service someone else runs.",
+  edge: "Edge: takes input from outside (an actor, a frontend, or a direct target of an actor).",
+  internal: "Internal: reachable only through other components.",
+};
 import SectionLabel from "@/components/SectionLabel";
 import FilterBar from "@/components/FilterBar";
 import SeveritySummary from "@/components/SeveritySummary";
+import SinceLastRun from "@/components/SinceLastRun";
 import ThreatCard from "@/components/ThreatCard";
 import ThreatList from "@/components/ThreatList";
 
@@ -38,6 +73,15 @@ type DashboardProps = {
   basisCounts: BasisCounts | null;
   hiddenSummary?: HiddenSummary | null;
 };
+
+/** Reading window.localStorage itself can throw when storage is blocked. */
+function safeLocalStorage(): Storage | null {
+  try {
+    return typeof window === "undefined" ? null : window.localStorage;
+  } catch {
+    return null;
+  }
+}
 
 /** Date only, and never locale-dependent, so the markup is stable between renders. */
 function formatAnalyzedAt(value: string): string {
@@ -49,9 +93,51 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
   const [filters, setFilters] = useState<ThreatFilters>({ ...EMPTY_FILTERS });
   const [selectedThreatId, setSelectedThreatId] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  // Which sub-view of the diagram is shown. Presentation only: the threat list ignores it.
+  const [diagramView, setDiagramView] = useState<DiagramView>("overall");
 
   const threats = useMemo(() => view.threats ?? [], [view.threats]);
-  const visible = useMemo(() => filterThreats(threats, filters), [threats, filters]);
+
+  // Triage statuses live in this browser only. Read after mount so the first render
+  // matches the server's, and re-read if the repo or ref changes.
+  const statusKey = useMemo(() => {
+    const name = splitFullName(view.repo?.fullName ?? "");
+    return name && view.repo?.ref ? statusStorageKey(name.owner, name.repo, view.repo.ref) : null;
+  }, [view.repo?.fullName, view.repo?.ref]);
+  const [statuses, setStatuses] = useState<StatusMap>({});
+  useEffect(() => {
+    setStatuses(statusKey ? loadStatuses(safeLocalStorage(), statusKey) : {});
+  }, [statusKey]);
+  const handleStatusChange = (id: string, status: FindingStatus) => {
+    if (!statusKey) return;
+    setStatuses((current) => setStatus(safeLocalStorage(), statusKey, current, id, status));
+  };
+  const statusCounts = useMemo(
+    () => summarise(threats.map((t) => t.id), statuses),
+    [threats, statuses],
+  );
+
+  // The run before this one, read once this run is recorded. undefined until then, so the
+  // first render (which must match the server's) shows nothing; null means no earlier run.
+  const [prevRun, setPrevRun] = useState<DriftModel | null | undefined>(undefined);
+  useEffect(() => {
+    const name = splitFullName(view.repo?.fullName ?? "");
+    setPrevRun(name ? recordRun(safeLocalStorage(), name.owner, name.repo, view) : null);
+  }, [view]);
+  const drift = useMemo(() => (prevRun ? diffThreatModels(prevRun, view) : null), [prevRun, view]);
+  const newKeys = useMemo(
+    () => (prevRun ? newThreatKeys(prevRun, view) : new Set<string>()),
+    [prevRun, view],
+  );
+
+  const issueRepo = view.repo?.fullName && view.repo.ref
+    ? { fullName: view.repo.fullName, ref: view.repo.ref }
+    : undefined;
+
+  const visible = useMemo(
+    () => orderByStatus(filterThreats(threats, filters, statuses), statuses),
+    [threats, filters, statuses],
+  );
 
   const selectedThreat = useMemo(
     () => threats.find((threat) => threat.id === selectedThreatId) ?? null,
@@ -94,7 +180,26 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
   const repo = view.repo;
   // Falls back to the list length only for a partial response that lacks the total.
   const fixNowTotal = view.fixNowTotal ?? view.fixNow?.length ?? 0;
-  const nodes = view.nodes ?? [];
+  const nodes = useMemo(() => view.nodes ?? [], [view.nodes]);
+  const boundaries = useMemo(() => view.boundaries ?? [], [view.boundaries]);
+  // The sub-view's nodes and edges. Hidden items are removed, not dimmed, so the diagram
+  // lays itself out again for what is left.
+  const shown = useMemo(() => {
+    const selection = selectDiagramView(
+      { nodes, edges: view.edges ?? [], threats },
+      diagramView,
+    );
+    const nodeIds = new Set(selection.nodeIds);
+    const edgeIds = new Set(selection.edgeIds);
+    return {
+      nodes: nodes.filter((node) => nodeIds.has(node.id)),
+      edges: (view.edges ?? []).filter((edge) => edgeIds.has(edge.id)),
+    };
+  }, [nodes, view.edges, threats, diagramView]);
+  const layoutNotes = useMemo(
+    () => assignBoundaries(boundaries, shown.nodes).notes,
+    [boundaries, shown.nodes],
+  );
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? null;
   const assumptions = view.assumptions ?? [];
   const limitations = view.limitations ?? [];
@@ -124,36 +229,55 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
         ) : null}
       </header>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
+      {/* The diagram reads left to right in five type columns, so it takes the full row. */}
+      <div className="space-y-6">
         <section aria-labelledby="architecture-heading" className="min-w-0">
-          <div className="flex flex-wrap items-end justify-between gap-2">
-            <h2 id="architecture-heading" className="font-display text-xl font-semibold text-fg">
-              Architecture
-            </h2>
-            <p className="flex items-center gap-3 text-xs text-subtle">
-              <span className="flex items-center gap-1.5">
-                <span aria-hidden="true" className="h-0.5 w-4 bg-boundary" />
-                Crosses a trust boundary
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span aria-hidden="true" className="h-0.5 w-4 bg-flow" />
-                Internal flow
-              </span>
-            </p>
-          </div>
+          <h2 id="architecture-heading" className="font-display text-xl font-semibold text-fg">
+            Architecture
+          </h2>
           <p className="mt-1 text-sm text-muted">
             Select a component to see the threats that involve it, or select a threat to
             highlight what it touches.
           </p>
+          <div
+            role="radiogroup"
+            aria-label="Diagram view"
+            className="mt-3 inline-flex flex-wrap gap-1 rounded-full border border-line bg-surface-2 p-1"
+          >
+            {DIAGRAM_VIEWS.map((name) => {
+              const active = diagramView === name;
+              return (
+                <button
+                  key={name}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  onClick={() => setDiagramView(name)}
+                  className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                    active ? "bg-mint text-white shadow-sm" : "text-muted hover:text-fg"
+                  }`}
+                >
+                  {DIAGRAM_VIEW_LABELS[name]}
+                </button>
+              );
+            })}
+          </div>
           <div className="mt-3">
             <ArchitectureGraph
-              nodes={nodes}
-              edges={view.edges ?? []}
+              nodes={shown.nodes}
+              edges={shown.edges}
+              emptyMessage={
+                diagramView === "overall"
+                  ? undefined
+                  : `Nothing in this analysis belongs in the "${DIAGRAM_VIEW_LABELS[diagramView]}" view.`
+              }
+              boundaries={boundaries}
               highlightNodeIds={highlight.nodeIds}
               highlightEdgeIds={highlight.edgeIds}
               selectedNodeId={selectedNodeId}
               onSelectNode={handleSelectNode}
             />
+            <ArchitectureLegend nodes={shown.nodes} notes={layoutNotes} />
           </div>
 
           {nodes.length > 0 ? (
@@ -192,25 +316,47 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
           ) : null}
 
           {selectedNode ? (
-            <p
-              role="status"
-              className="mt-3 rounded-xl border border-mint/40 bg-mint-deep/50 px-4 py-2.5 text-sm text-fg"
+            <section
+              aria-label={`${selectedNode.label} details`}
+              className="mt-3 rounded-xl border border-mint/40 bg-mint-deep/50 px-4 py-3 text-sm text-fg"
             >
-              The threat list below is narrowed to threats that involve{" "}
-              <strong className="font-semibold">{selectedNode.label}</strong>.{" "}
-              <a href="#threats-heading" className="text-mint underline underline-offset-2">
-                Go to the list
-              </a>
-            </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="font-display text-base font-semibold">{selectedNode.label}</h3>
+                <span className="text-xs uppercase tracking-wider text-subtle">
+                  {typeText(selectedNode.type)}
+                </span>
+                {selectedNode.exposure ? <ExposureBadge exposure={selectedNode.exposure} /> : null}
+              </div>
+              <dl className="mt-2 grid gap-x-4 gap-y-1 text-sm sm:grid-cols-[auto_1fr]">
+                <dt className="text-muted">Exposure</dt>
+                <dd>{EXPOSURE_DESCRIPTIONS[selectedNode.exposure ?? "internal"]}</dd>
+                <dt className="text-muted">Assets</dt>
+                <dd>{selectedNode.assets?.length ? selectedNode.assets.join(", ") : "None recorded"}</dd>
+                <dt className="text-muted">Technologies</dt>
+                <dd>
+                  {selectedNode.technologies?.length
+                    ? selectedNode.technologies.join(", ")
+                    : "None recorded"}
+                </dd>
+              </dl>
+              <p role="status" className="mt-2">
+                The threat list below is narrowed to threats that involve{" "}
+                <strong className="font-semibold">{selectedNode.label}</strong>.{" "}
+                <a href="#threats-heading" className="text-mint underline underline-offset-2">
+                  Go to the list
+                </a>
+              </p>
+            </section>
           ) : null}
         </section>
 
-        <div className="min-w-0 space-y-6">
+        <div className="grid min-w-0 gap-6 lg:grid-cols-2 lg:items-start">
           <SeveritySummary
             counts={view.counts}
             basisCounts={basisCounts}
             // The server's total, not the length of the (capped) list below.
             fixNowCount={fixNowTotal}
+            statusCounts={statusCounts}
           />
 
           <section
@@ -264,6 +410,8 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
         </div>
       </div>
 
+      {prevRun !== undefined ? <SinceLastRun drift={drift} /> : null}
+
       {view.fixNow?.length ? (
         <section aria-labelledby="fix-now-heading">
           <h2 id="fix-now-heading" className="font-display text-xl font-semibold text-fg">
@@ -283,6 +431,10 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
                   threat={threat}
                   selected={selectedThreatId === threat.id}
                   onSelect={handleSelectThreat}
+                  status={statuses[threat.id] ?? "open"}
+                  onStatusChange={statusKey ? handleStatusChange : undefined}
+                  repo={issueRepo}
+                  isNew={newKeys.has(threatKey(threat))}
                 />
               </li>
             ))}
@@ -309,6 +461,10 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
               onSelect={handleSelectThreat}
               totalCount={threats.length}
               hiddenSummary={hiddenSummary}
+              statuses={statuses}
+              onStatusChange={statusKey ? handleStatusChange : undefined}
+              repo={issueRepo}
+              newKeys={newKeys}
             />
           </div>
         </div>

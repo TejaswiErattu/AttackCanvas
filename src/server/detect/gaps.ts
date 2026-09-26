@@ -189,6 +189,8 @@ type Ctx = {
   code: (file: DetectorInput) => string;
   uncommented: (file: DetectorInput) => string;
   body: (route: Route) => string;
+  /** Every `.use(...)` call in loaded source (collectUseCalls), read once. */
+  useCalls: UseCall[];
   appLevelAuth: AppLevelAuth;
 };
 
@@ -206,7 +208,7 @@ export function isScannable(path: string): boolean {
   const normalized = normalizeSeparators(path);
   return (
     /\.(?:ts|tsx|js|jsx|mjs|cjs)$/.test(normalized) &&
-    !/(^|\/)(?:tests?|__tests__|__mocks__|e2e|examples?|fixtures?|docs?|scripts|stories)\//i.test(
+    !/(^|\/)(?:tests?|__tests__|__mocks__|mocks?|e2e|examples?|fixtures?|docs?|scripts|stories|bin|tools)\//i.test(
       normalized,
     ) &&
     !/\.(?:test|spec|stories)\.[jt]sx?$/.test(normalized) &&
@@ -262,8 +264,10 @@ function buildContext(
       }
       return hit;
     },
+    useCalls: [],
     appLevelAuth: { global: false, prefixes: [] },
   };
+  ctx.useCalls = collectUseCalls(ctx);
   ctx.appLevelAuth = appLevelAuth(ctx);
   return ctx;
 }
@@ -405,6 +409,42 @@ function usesPackageFeature(ctx: Ctx, pkg: string, features: readonly string[]):
   });
 }
 
+/**
+ * True when a development-or-test condition sits within the three lines before `offset`:
+ * `if (process.env.NODE_ENV !== "production")`, `if (isDev)`. What it guards may never
+ * run in production, so a finding under it is held to a lower certainty.
+ */
+const DEV_GUARD = /NODE_ENV|\bisDev\b|\bdevelopment\b|\b__DEV__\b|\bisTest\b/;
+
+function underDevGuard(text: string, offset: number): boolean {
+  let start = offset;
+  for (let lines = 0; lines < 3 && start > 0; lines++) {
+    start = text.lastIndexOf("\n", start - 1);
+    if (start === -1) {
+      start = 0;
+      break;
+    }
+  }
+  return DEV_GUARD.test(text.slice(start, offset));
+}
+
+/** The directory of a path: "apps/api/package.json" -> "apps/api", "package.json" -> "". */
+const dirOf = (path: string): string => {
+  const normalized = normalizeSeparators(path);
+  const slash = normalized.lastIndexOf("/");
+  return slash === -1 ? "" : normalized.slice(0, slash);
+};
+
+/** The package a file belongs to: the longest manifest directory that contains it. */
+function packageDirOf(path: string, manifestDirs: readonly string[]): string {
+  const normalized = normalizeSeparators(path);
+  let best = "";
+  for (const dir of manifestDirs) {
+    if ((dir === "" || normalized.startsWith(`${dir}/`)) && dir.length >= best.length) best = dir;
+  }
+  return best;
+}
+
 /** Evidence kind: source files are code, everything else is configuration. */
 const kindFor = (path: string): EvidenceKind =>
   isScannable(path) ? "code" : "config";
@@ -445,32 +485,68 @@ function mountPathOf(firstArgument: string | undefined): string | undefined {
  * catch-all matcher that Clerk and next-auth apps use, turning every route into a
  * confident false gap, so the broad reading is kept on purpose.
  */
-function appLevelAuth(ctx: Ctx): AppLevelAuth {
-  const scope: AppLevelAuth = { global: false, prefixes: [] };
+/** One `.use(...)` call: the names its arguments refer to and the mount path, if any. */
+type UseCall = { file: string; names: string[]; prefix: string | undefined };
 
+/**
+ * The name a `.use()` argument refers to. `middlewareName` handles identifiers and
+ * member calls; an inline `require("./middleware/requireAuth")` or `import("...")` is
+ * judged by the basename of its specifier, since that is the only name it has.
+ */
+function useArgumentName(argument: string): string | undefined {
+  const inline = /^(?:require|import)\s*\(\s*(['"`])([^'"`\n]+)\1\s*\)/.exec(argument.trim());
+  if (inline) return basename(inline[2]).replace(/\.[cm]?[jt]sx?$/, "");
+  return middlewareName(argument);
+}
+
+/**
+ * Every `x.use(...)` call in loaded source, read once and shared by the checks that ask
+ * "is this control applied at the app or router level?" (auth, authorization, validation,
+ * logging). The arguments are split on the comment-masked text, because the mount path is
+ * a string; the `.use(` itself is found on the code-masked text, so a call inside a string
+ * does not count.
+ */
+function collectUseCalls(ctx: Ctx): UseCall[] {
+  const calls: UseCall[] = [];
   for (const file of ctx.source) {
     const text = ctx.uncommented(file);
-    for (const match of ctx
-      .code(file)
-      .matchAll(/\b[A-Za-z_$][\w$]*\.use\s*\(/g)) {
-      const { args } = splitCallArguments(
-        text,
-        (match.index ?? 0) + match[0].length,
-      );
-      const guarded = args
-        .map(middlewareName)
-        .some((name) => name && isGuardName(name) && !ROUTER_NAME.test(name));
-      if (!guarded) continue;
-
-      const prefix = mountPathOf(args[0]);
-      if (prefix === undefined) scope.global = true;
-      else scope.prefixes.push(prefix);
+    for (const match of ctx.code(file).matchAll(/\b[A-Za-z_$][\w$]*\.use\s*\(/g)) {
+      const { args } = splitCallArguments(text, (match.index ?? 0) + match[0].length);
+      const names = args
+        .map(useArgumentName)
+        .filter((name): name is string => name !== undefined);
+      calls.push({ file: file.path, names, prefix: mountPathOf(args[0]) });
     }
   }
+  return calls;
+}
+
+/** The scope `.use()` calls with a matching argument name establish. */
+function scopeOfUseCalls(calls: readonly UseCall[], matches: (name: string) => boolean): AppLevelAuth {
+  const scope: AppLevelAuth = { global: false, prefixes: [] };
+  for (const call of calls) {
+    if (!call.names.some(matches)) continue;
+    if (call.prefix === undefined) scope.global = true;
+    else scope.prefixes.push(call.prefix);
+  }
+  return scope;
+}
+
+/**
+ * Next.js request middleware: `middleware.ts` up to Next 15, `proxy.ts` from Next 16. A
+ * file of either name that mentions auth is read as a global guard (see appLevelAuth).
+ */
+const NEXT_MIDDLEWARE_FILE = /(^|\/)(?:middleware|proxy)\.(?:ts|js)$/;
+
+function appLevelAuth(ctx: Ctx): AppLevelAuth {
+  const scope = scopeOfUseCalls(
+    ctx.useCalls,
+    (name) => isGuardName(name) && !ROUTER_NAME.test(name),
+  );
 
   const middleware = ctx.source.some(
     (file) =>
-      /(^|\/)middleware\.(?:ts|js)$/.test(normalizeSeparators(file.path)) &&
+      NEXT_MIDDLEWARE_FILE.test(normalizeSeparators(file.path)) &&
       /auth|clerk|session/i.test(ctx.code(file)),
   );
   if (middleware) scope.global = true;
@@ -491,13 +567,25 @@ function coveredByAppAuth(scope: AppLevelAuth, path: string): boolean {
 // 1. authz_missing
 // ---------------------------------------------------------------------------
 
+/**
+ * A `.use()` argument that decides authorization, not just authentication:
+ * `app.use("/admin", requireAdmin)`, `router.use(checkPermission("orders"))`. The route
+ * text never sees it, so authzMissing asks here before reporting.
+ */
+const ROLE_GUARD_NAME = /admin|role|permission|policy|authoriz|ability|acl|rbac/i;
+const CAN_GUARD_NAME = /^can[A-Z]/;
+const isRoleGuardName = (name: string): boolean =>
+  (ROLE_GUARD_NAME.test(name) || CAN_GUARD_NAME.test(name)) && !ROUTER_NAME.test(name);
+
 function authzMissing(ctx: Ctx): Finding[] {
   const found: Finding[] = [];
+  const roleScope = scopeOfUseCalls(ctx.useCalls, isRoleGuardName);
 
   for (const route of ctx.routes) {
     const fact = ctx.authOf(route);
     if (!fact || fact.status !== "authenticated" || fact.roleChecks.length > 0)
       continue;
+    if (coveredByAppAuth(roleScope, route.normalizedPath)) continue;
 
     const hasParam = route.normalizedPath.includes(":");
     if (!hasParam && !fact.adminPath) continue;
@@ -560,6 +648,17 @@ function isPublicRoute(path: string): boolean {
 
 function authnMissing(ctx: Ctx): Finding[] {
   const found: Finding[] = [];
+  // Files that mount a guard under a prefix: a route in another file may sit under that
+  // prefix through a router mount detectRoutes could not resolve (a wrapped router).
+  const prefixGuardFiles = new Set(
+    ctx.useCalls
+      .filter(
+        (call) =>
+          call.prefix !== undefined &&
+          call.names.some((name) => isGuardName(name) && !ROUTER_NAME.test(name)),
+      )
+      .map((call) => call.file),
+  );
 
   for (const route of ctx.routes) {
     const fact = ctx.authOf(route);
@@ -569,6 +668,7 @@ function authnMissing(ctx: Ctx): Finding[] {
     if (coveredByAppAuth(ctx.appLevelAuth, route.normalizedPath)) continue;
 
     const unknown = fact.status === "unknown";
+    const maybeMounted = prefixGuardFiles.size > 0 && !prefixGuardFiles.has(route.file);
     found.push({
       scope: "route",
       expectation: unknown
@@ -580,8 +680,11 @@ function authnMissing(ctx: Ctx): Finding[] {
       file: route.file,
       line: route.line,
       routeId: route.id,
-      basisFacts: [`${route.id} ${fact.status}`],
-      certainty: unknown ? 0.45 : 0.9,
+      basisFacts: [
+        `${route.id} ${fact.status}`,
+        ...(maybeMounted ? ["a prefix guard exists in another file"] : []),
+      ],
+      certainty: unknown ? 0.45 : maybeMounted ? 0.6 : 0.9,
       evidenceKind: "code",
     });
   }
@@ -606,20 +709,48 @@ const RATE_LIMIT_DEPS = [
   "@nestjs/throttler",
   "hono-rate-limiter",
   "limiter",
+  "express-brute",
+  "rate-limit-redis",
+  "koa2-ratelimit",
+  "elysia-rate-limit",
+];
+const RATE_LIMIT_PREFIXES = ["@hono-rate-limiter/"];
+
+/**
+ * Server-side OIDC handlers that own the login route and redirect it to a hosted
+ * provider. Narrower than delegatesAuth on purpose: a Next app on Clerk can sit beside an
+ * Express service with its own /login, and that one still needs a limiter.
+ */
+const LOGIN_DELEGATED_DEPS = [
+  "express-openid-connect",
+  "keycloak-connect",
+  "passport-auth0",
+  "passport-openidconnect",
+  "@clerk/express",
+  "supertokens-node",
 ];
 
+/** A limiter named for the mechanism, or for the behaviour it stops (a login lockout). */
 const RATE_LIMIT_USAGE =
-  /\brate[_-]?limit|\bthrottl(?:e|er|ing)\b|\bslowDown\b/i;
+  /\brate[_-]?limit|\bthrottl(?:e|er|ing)\b|\bslowDown\b|\bbrute[_-]?force|\block(?:out|Account)|\battempts?(?:Remaining|Left|Count)\b/i;
 
 function authRoutes(ctx: Ctx): Route[] {
   return ctx.routes.filter((route) => AUTH_PATH.test(route.normalizedPath));
 }
 
-/** Rate limiting applied at a gateway or platform is written in config, not code. */
+/** Reverse-proxy and platform configuration: the files a gateway-level control lives in. */
+const CONFIG_FILE = /\.(?:ya?ml|json|toml|conf)$|(?:^|\/)(?:Caddyfile|nginx\.conf|haproxy\.cfg)$/i;
+
+/**
+ * Rate limiting applied at a gateway or platform is written in config, not code: nginx
+ * `limit_req`, HAProxy `stick-table`, Caddy `rate_limit`, Kong `rate-limiting`.
+ */
+const CONFIG_RATE_LIMIT = /throttl|rate[_-]?limit|ratelimit|limit_req|limit_conn|stick-table/i;
+
 function configMentions(ctx: Ctx, pattern: RegExp): boolean {
   return ctx.files.some(
     (file) =>
-      /\.(?:ya?ml|json|toml|conf)$/i.test(file.path) &&
+      CONFIG_FILE.test(file.path) &&
       !isManifest(file.path) &&
       pattern.test(maskComments(file.content)),
   );
@@ -628,9 +759,11 @@ function configMentions(ctx: Ctx, pattern: RegExp): boolean {
 function rateLimitMissing(ctx: Ctx): Finding[] {
   const [route] = authRoutes(ctx);
   if (!route) return [];
-  if (hasAny(ctx.deps, RATE_LIMIT_DEPS)) return [];
+  // The login route is the identity provider's redirect: the brute-force target is theirs.
+  if (hasAny(ctx.deps, LOGIN_DELEGATED_DEPS)) return [];
+  if (hasAny(ctx.deps, RATE_LIMIT_DEPS) || hasPrefix(ctx.deps, RATE_LIMIT_PREFIXES)) return [];
   if (anySource(ctx, RATE_LIMIT_USAGE)) return [];
-  if (configMentions(ctx, /throttl|rate[_-]?limit/i)) return [];
+  if (configMentions(ctx, CONFIG_RATE_LIMIT)) return [];
 
   return [
     {
@@ -671,7 +804,44 @@ const CSRF_DEPS = [
   "tiny-csrf",
   "next-csrf",
   "@fastify/csrf-protection",
+  "csrf-sync",
+  "@dr.pogodin/csurf",
+  "koa-csrf",
 ];
+
+/**
+ * An Origin, Referer or Fetch-Metadata check is CSRF protection with no "csrf" in any
+ * name (OWASP's "verifying origin with standard headers"): the request's origin is read
+ * and compared, or `Sec-Fetch-Site` is consulted.
+ */
+const ORIGIN_READ =
+  /\b(?:headers\s*(?:\.\s*|\[\s*['"`])(?:origin|referer)\b|(?:get|header)\s*\(\s*['"`](?:origin|referer)['"`]\s*\))/i;
+const ORIGIN_COMPARED = /===|!==|==|!=|\.(?:includes|startsWith|endsWith|has|test)\s*\(/;
+const FETCH_METADATA = /sec-fetch-site/i;
+
+function checksOrigin(ctx: Ctx): boolean {
+  return ctx.source.some((file) => {
+    const text = ctx.uncommented(file);
+    if (FETCH_METADATA.test(text)) return true;
+    const read = ORIGIN_READ.exec(text);
+    if (!read) return false;
+    // The comparison is on the same line or the next one: `if (req.get("origin") !== X)`.
+    const nearby = text.slice(read.index, text.indexOf("\n", text.indexOf("\n", read.index) + 1) + 1 || undefined);
+    return ORIGIN_COMPARED.test(nearby);
+  });
+}
+
+/**
+ * A body parser that accepts only JSON. A browser cannot send `application/json`
+ * cross-site without a CORS preflight, so a JSON-only API is not reachable by the simple
+ * form post CSRF relies on; the risk is real only if some route accepts a form body.
+ */
+const JSON_ONLY_PARSER = /\b(?:express|bodyParser)\s*\.\s*json\s*\(/;
+const FORM_PARSER = /\burlencoded\s*\(|\bmulter\b|\bformidable\b|\bbusboy\b|\bmultipart\b|\bformData\s*\(/i;
+
+function jsonOnlyApi(ctx: Ctx): boolean {
+  return anySource(ctx, JSON_ONLY_PARSER) && !anySource(ctx, FORM_PARSER);
+}
 const COOKIE_USAGE =
   /\bres\s*\.\s*cookie\s*\(|\bcookies\s*\(\s*\)|\breq\s*\.\s*session\b/;
 
@@ -772,24 +942,52 @@ function csrfMissing(ctx: Ctx): Finding[] {
   if (usesPackage(ctx, CSRF_DEPS, ["@edge-csrf/"])) return [];
   if (usesPackageFeature(ctx, "lusca", ["csrf"])) return [];
   if (checksCsrfToken(ctx)) return [];
+  if (checksOrigin(ctx)) return [];
 
   // The value is inside a string, so this reads the comment-masked text.
   const sameSite = ctx.source.some((file) =>
     /sameSite\s*:\s*['"`]strict['"`]/i.test(ctx.uncommented(file)),
   );
+  const jsonOnly = jsonOnlyApi(ctx);
+  // Next.js: Server Actions check the origin themselves and route handlers are usually
+  // JSON, so a cookie signal proves less there than in an Express app.
+  const nextRoute = route.framework === "next_app" || route.framework === "next_pages";
+  // Monorepo: the cookie session may belong to another package than the route.
+  const manifests = ctx.files.filter((file) => isManifest(file.path));
+  const manifestDirs = manifests.map((file) => dirOf(file.path));
+  const cookieDirs = new Set([
+    ...ctx.source
+      .filter((file) => COOKIE_USAGE.test(ctx.code(file)))
+      .map((file) => packageDirOf(file.path, manifestDirs)),
+    ...manifests
+      .filter((file) => hasAny(dependencyNames([file]), SESSION_DEPS))
+      .map((file) => dirOf(file.path)),
+  ]);
+  const otherPackage =
+    manifests.length > 1 && !cookieDirs.has(packageDirOf(route.file, manifestDirs));
+
+  const expectation = jsonOnly
+    ? "Cookie sessions with state-changing routes need CSRF protection; only a JSON body parser was found, which a cross-site form cannot reach, so the exposure depends on whether any route accepts a form body"
+    : sameSite
+      ? "Cookie sessions with state-changing routes usually need a CSRF token; SameSite strict reduces the risk but is not a token"
+      : "Cookie sessions with state-changing routes need CSRF protection";
 
   return [
     {
       scope: "repository",
-      expectation: sameSite
-        ? "Cookie sessions with state-changing routes usually need a CSRF token; SameSite strict reduces the risk but is not a token"
-        : "Cookie sessions with state-changing routes need CSRF protection",
+      expectation,
       summary: `Cookie-based sessions are used and ${route.method} ${route.normalizedPath} changes state, with no CSRF middleware or token pattern found`,
       file: route.file,
       line: route.line,
       routeId: route.id,
-      basisFacts: ["cookie session signal", `${route.id} changes state`],
-      certainty: sameSite ? 0.5 : 0.8,
+      basisFacts: [
+        "cookie session signal",
+        `${route.id} changes state`,
+        ...(jsonOnly ? ["JSON-only body parser"] : []),
+        ...(nextRoute ? ["Next.js route"] : []),
+        ...(otherPackage ? ["cookie signal in another package"] : []),
+      ],
+      certainty: jsonOnly ? 0.45 : sameSite || nextRoute || otherPackage ? 0.5 : 0.8,
       evidenceKind: "code",
     },
   ];
@@ -805,7 +1003,18 @@ const HEADER_DEPS = [
   "@fastify/helmet",
   "next-secure-headers",
   "nuxt-security",
+  "secure-headers",
+  "express-secure-headers",
 ];
+
+/** Header middleware imported by subpath: `import { secureHeaders } from "hono/secure-headers"`. */
+const HEADER_SUBPATHS = ["hono/secure-headers"];
+
+/** Server templates and static pages, where a CSP can live in a `<meta http-equiv>`. */
+const TEMPLATE_FILE = /\.(?:html?|ejs|pug|jade|hbs|handlebars|njk|liquid|mustache|twig)$/i;
+
+/** Response headers a proxy, host or CDN sets from its own configuration. */
+const SECURITY_HEADER_NAMED = /Content-Security-Policy|X-Frame-Options|Strict-Transport-Security/i;
 
 /** lusca's response-header middlewares; its csrf() is csrf_missing's, not this check's. */
 const LUSCA_HEADER_FEATURES = [
@@ -819,7 +1028,7 @@ const LUSCA_HEADER_FEATURES = [
 ];
 
 const isHeaderConfig = (path: string): boolean =>
-  /^(?:next\.config\.|vercel\.json$|netlify\.toml$|_headers$)/.test(
+  /^(?:next\.config\.|vercel\.json$|netlify\.toml$|_headers$|firebase\.json$)/.test(
     basename(path),
   );
 
@@ -833,7 +1042,7 @@ const isHeaderConfig = (path: string): boolean =>
 function declaresHeaders(file: DetectorInput): boolean {
   const name = basename(file.path);
   if (name === "_headers") return file.content.trim() !== "";
-  if (name === "vercel.json") return /"headers"\s*:/.test(file.content);
+  if (name === "vercel.json" || name === "firebase.json") return /"headers"\s*:/.test(file.content);
   return /\bheaders\b/.test(maskCode(file.content));
 }
 
@@ -843,9 +1052,9 @@ function securityHeadersMissing(ctx: Ctx): Finding[] {
   );
   if (!web) return [];
   // A declared or imported header package is not protection until live code uses it.
-  if (usesPackage(ctx, HEADER_DEPS)) return [];
+  if (usesPackage(ctx, [...HEADER_DEPS, ...HEADER_SUBPATHS])) return [];
   if (usesPackageFeature(ctx, "lusca", LUSCA_HEADER_FEATURES)) return [];
-  if (anySource(ctx, /\bhelmet\s*\(/)) return [];
+  if (anySource(ctx, /\bhelmet\s*\(|\bsecureHeaders\s*\(/)) return [];
   // Declared, but no source was loaded to show whether it is used: unknown, not missing.
   if (hasAny(ctx.deps, [...HEADER_DEPS, "lusca"]) && ctx.source.length === 0) return [];
 
@@ -858,20 +1067,34 @@ function securityHeadersMissing(ctx: Ctx): Finding[] {
     return [];
   if (configs.some(declaresHeaders)) return [];
 
-  const named = /Content-Security-Policy|X-Frame-Options/i;
   const scanned = [...ctx.source, ...configs];
-  if (scanned.some((file) => named.test(ctx.uncommented(file)))) return [];
+  if (scanned.some((file) => SECURITY_HEADER_NAMED.test(ctx.uncommented(file)))) return [];
+  // A proxy or host sets headers from its own config; a template can carry a CSP meta tag.
+  // Config comments are `#` to end of line (nginx, Caddy, YAML, TOML), so the YAML masker applies.
+  if (
+    ctx.files.some(
+      (file) =>
+        CONFIG_FILE.test(file.path) &&
+        !isManifest(file.path) &&
+        SECURITY_HEADER_NAMED.test(maskYamlComments(file.content)),
+    )
+  )
+    return [];
+  if (ctx.files.some((file) => TEMPLATE_FILE.test(file.path) && hasCspMeta(file.content))) return [];
 
+  // Declared but not seen used: the file that mounts it may not have been loaded.
+  const declared = hasAny(ctx.deps, [...HEADER_DEPS, "lusca"]);
   return [
     {
       scope: "repository",
-      expectation:
-        "A web application should set security response headers such as a content security policy",
+      expectation: declared
+        ? "A web application should set security response headers such as a content security policy; a header package is declared but no file that mounts it was loaded"
+        : "A web application should set security response headers such as a content security policy",
       summary: `${web.name} is used and no helmet middleware, headers configuration or security header was found`,
       file: web.file,
       line: web.line,
-      basisFacts: [`${web.name} web framework`, "no header middleware"],
-      certainty: 0.9,
+      basisFacts: [`${web.name} web framework`, declared ? "header package declared, no use seen" : "no header middleware"],
+      certainty: declared ? 0.6 : 0.9,
       evidenceKind: "config",
     },
   ];
@@ -892,7 +1115,34 @@ const VALIDATION_LIBS = new Set([
   "class-validator",
   "ajv",
   "@sinclair/typebox",
+  "celebrate",
+  "express-joi-validation",
+  "zod-express-middleware",
+  "@hono/zod-validator",
+  "arktype",
+  "io-ts",
+  "runtypes",
+  "typia",
+  "validator",
+  "express-openapi-validator",
+  "effect",
 ]);
+
+/**
+ * A validation library re-exported from a local module or a workspace package:
+ * `import { z } from "@/lib/validation"`, `import { UserSchema } from "@acme/schemas"`.
+ */
+const VALIDATION_SPECIFIER = /schema|valid/i;
+
+/**
+ * A validation call in the handler itself, whatever module the schema came from.
+ * `JSON.parse` is parsing, not validation, and is excluded by the lookbehind.
+ */
+const VALIDATES_IN_BODY =
+  /(?<!\bJSON)\s*\.\s*(?:parse|safeParse|parseAsync|safeParseAsync|validate|validateSync|validateAsync|assert|check)\s*\(|\b(?:validationResult|matchedData)\s*\(/;
+
+/** Route middleware that validates: by name, or an express-validator chain (`body("email")`). */
+const VALIDATING_MIDDLEWARE = /valid|schema|sanitiz|celebrate|^(?:body|check|param|query|header|cookie)\b/i;
 
 const READS_INPUT =
   /\breq(?:uest)?\s*\.\s*(?:body|query)\b|\b(?:req|request)\s*\.\s*json\s*\(|\bsearchParams\b/;
@@ -904,8 +1154,9 @@ function packageRoot(specifier: string): string {
 }
 
 function importsValidation(file: DetectorInput): boolean {
-  return [...importsIn(file.content).values()].some((specifier) =>
-    VALIDATION_LIBS.has(packageRoot(specifier)),
+  return [...importsIn(file.content).values()].some(
+    (specifier) =>
+      VALIDATION_LIBS.has(packageRoot(specifier)) || VALIDATION_SPECIFIER.test(specifier),
   );
 }
 
@@ -913,13 +1164,20 @@ function inputValidationMissing(ctx: Ctx): Finding[] {
   const found: Finding[] = [];
   const seen = new Set<string>();
   const byFile = new Map(ctx.source.map((file) => [file.path, file]));
+  // Validation applied with app.use()/router.use() never appears on the route itself.
+  const appLevel = scopeOfUseCalls(
+    ctx.useCalls,
+    (name) => VALIDATING_MIDDLEWARE.test(name) && !ROUTER_NAME.test(name),
+  );
 
   for (const route of ctx.routes) {
     const file = byFile.get(route.file);
-    if (!file || !READS_INPUT.test(ctx.body(route))) continue;
+    const body = ctx.body(route);
+    if (!file || !READS_INPUT.test(body)) continue;
     if (importsValidation(file)) continue;
-    if (route.middleware.some((name) => /valid|schema|sanitiz/i.test(name)))
-      continue;
+    if (VALIDATES_IN_BODY.test(body)) continue;
+    if (route.middleware.some((name) => VALIDATING_MIDDLEWARE.test(name))) continue;
+    if (coveredByAppAuth(appLevel, route.normalizedPath)) continue;
 
     // A Pages API file is one handler for every method: report it once.
     const key = `${route.file}:${route.line}`;
@@ -950,9 +1208,33 @@ const DB_PORTS = new Set([5432, 3306, 27017, 6379]);
 
 /** Hosts that appear in `http://` URLs without being a network endpoint. */
 const NON_ENDPOINT_HOSTS =
-  /^(?:(?:www\.)?w3\.org|json-schema\.org|(?:www\.)?schema\.org|schemas\.[\w.-]+|xmlns\.com|purl\.org|maven\.apache\.org|www\.apache\.org|opensource\.org|unlicense\.org|(?:www\.)?sitemaps\.org|example\.(?:com|org|net))$/i;
+  /^(?:(?:www\.)?w3\.org|json-schema\.org|(?:www\.)?schema\.org|schemas\.[\w.-]+|xmlns\.com|purl\.org|maven\.apache\.org|www\.apache\.org|opensource\.org|unlicense\.org|(?:www\.)?sitemaps\.org|example\.(?:com|org|net)|ogp\.me|ns\.adobe\.com|(?:www\.)?iptc\.org|rdfs\.org|(?:www\.)?dublincore\.org|(?:www\.)?openarchives\.org)$/i;
 
-function isExternalHost(rawHost: string): boolean {
+/** Kubernetes service addressing: `name.namespace.svc`, `name.namespace.svc.cluster.local`. */
+const CLUSTER_HOST = /\.svc(?:\.|$)/;
+
+/**
+ * Service names declared under `services:` in loaded compose files. Inside the compose
+ * network they are hostnames, and one with a dot (`minio.storage`) would otherwise read
+ * as an external host.
+ */
+function composeServiceNames(files: readonly DetectorInput[]): Set<string> {
+  const names = new Set<string>();
+  for (const file of files) {
+    if (!isCompose(file.path)) continue;
+    const lines = maskYamlComments(file.content).split("\n");
+    const start = lines.findIndex((line) => /^services\s*:/.test(line));
+    if (start === -1) continue;
+    for (const line of lines.slice(start + 1)) {
+      if (/^\S/.test(line)) break; // next top-level key
+      const service = /^ {2}([\w.-]+)\s*:/.exec(line);
+      if (service) names.add(service[1].toLowerCase());
+    }
+  }
+  return names;
+}
+
+function isExternalHost(rawHost: string, internal: ReadonlySet<string> = new Set()): boolean {
   const host = rawHost.toLowerCase();
   if (/^[${%]/.test(host)) return false;
   if (!host.includes(".")) return false;
@@ -961,38 +1243,51 @@ function isExternalHost(rawHost: string): boolean {
   if (/^172\.(?:1[6-9]|2\d|3[01])\./.test(host)) return false;
   if (/\.(?:local|localhost|internal|test|invalid|example)$/.test(host))
     return false;
+  if (CLUSTER_HOST.test(host) || internal.has(host)) return false;
   return !NON_ENDPOINT_HOSTS.test(host);
 }
 
-function firstInsecureUrl(text: string): number | undefined {
+function firstInsecureUrl(text: string, internal: ReadonlySet<string>): number | undefined {
   for (const match of text.matchAll(
     /\bhttp:\/\/([^\s'"`/:?#)\]]+|\[[^\]]+\])/gi,
   )) {
-    if (isExternalHost(match[1])) return match.index;
+    if (isExternalHost(match[1], internal)) return match.index;
   }
   return undefined;
 }
 
-function transportInFile(ctx: Ctx, file: DetectorInput): Finding | undefined {
+/** A compose file for development only: its published ports never face the internet. */
+const DEV_COMPOSE = /dev|local|test|override/i;
+
+function transportInFile(
+  ctx: Ctx,
+  file: DetectorInput,
+  internal: ReadonlySet<string>,
+): Finding | undefined {
   const text = ctx.uncommented(file);
   const tls = /rejectUnauthorized\s*:\s*false/.exec(text);
-  const url = firstInsecureUrl(text);
+  const url = firstInsecureUrl(text, internal);
   const offset = tls?.index ?? url;
   if (offset === undefined) return undefined;
 
   const starts = lineStarts(file.content);
   const disabled = tls !== null && tls.index === offset;
+  const devOnly = disabled && underDevGuard(text, offset);
   return {
     scope: "file",
-    expectation:
-      "Traffic to another host should use TLS and certificate verification",
+    expectation: devOnly
+      ? "Traffic to another host should use TLS and certificate verification; this setting sits under a development condition and may never run in production"
+      : "Traffic to another host should use TLS and certificate verification",
     summary: disabled
       ? `${file.path} disables TLS certificate verification`
       : `${file.path} makes a plaintext http request to an external host`,
     file: file.path,
     line: lineAt(starts, offset),
-    basisFacts: [disabled ? "TLS verification disabled" : "plaintext http URL"],
-    certainty: 0.75,
+    basisFacts: [
+      disabled ? "TLS verification disabled" : "plaintext http URL",
+      ...(devOnly ? ["under a development condition"] : []),
+    ],
+    certainty: devOnly ? 0.5 : 0.75,
     evidenceKind: "code",
   };
 }
@@ -1026,12 +1321,13 @@ function exposedDatabasePort(file: DetectorInput): Finding | undefined {
 
 function transportInsecure(ctx: Ctx): Finding[] {
   const found: Finding[] = [];
+  const internal = composeServiceNames(ctx.files);
   for (const file of ctx.source) {
-    const finding = transportInFile(ctx, file);
+    const finding = transportInFile(ctx, file, internal);
     if (finding) found.push(finding);
   }
   for (const file of ctx.files) {
-    if (!isCompose(file.path)) continue;
+    if (!isCompose(file.path) || DEV_COMPOSE.test(basename(file.path))) continue;
     const finding = exposedDatabasePort(file);
     if (finding) found.push(finding);
   }
@@ -1053,8 +1349,21 @@ const KDF_DEPS = [
   "scrypt-kdf",
   "better-auth",
   "lucia",
+  "passport-local-mongoose",
+  "bcrypt-ts",
+  "hash-wasm",
+  "sodium-native",
+  "libsodium-wrappers",
 ];
+/** Passwordless mechanisms: a login route with no password to store. */
+const PASSWORDLESS_DEPS = ["otplib", "speakeasy", "passport-magic-link", "@simplewebauthn/server", "passport-webauthn"];
 const DELEGATED_EXACT = [
+  "express-openid-connect",
+  "keycloak-connect",
+  "supertokens-node",
+  "openid-client",
+  "passport-saml",
+  "@node-saml/passport-saml",
   "firebase",
   "firebase-admin",
   "auth0",
@@ -1070,6 +1379,8 @@ const DELEGATED_PREFIX = [
   "@kinde-oss/",
   "@propelauth/",
   "@descope/",
+  "@ory/",
+  "@okta/",
 ];
 const PASSWORD_ROUTE = /login|signin|register|signup|password|reset/i;
 
@@ -1081,7 +1392,25 @@ function delegatesAuth(ctx: Ctx): boolean {
   )
     return true;
   const nextAuth = ctx.deps.has("next-auth") || ctx.deps.has("@auth/core");
-  return nextAuth && !anySource(ctx, /CredentialsProvider|\bCredentials\s*\(/);
+  return nextAuth && !anySource(ctx, CREDENTIALS_PROVIDER);
+}
+
+const CREDENTIALS_PROVIDER = /CredentialsProvider|\bCredentials\s*\(/;
+
+/**
+ * A next-auth Credentials provider whose authorize() calls another service: the password
+ * is checked there, not against a local store. Read on comment-masked text so the fetch
+ * inside the provider's body counts.
+ */
+function credentialsVerifiedRemotely(ctx: Ctx): boolean {
+  const nextAuth = ctx.deps.has("next-auth") || ctx.deps.has("@auth/core");
+  if (!nextAuth) return false;
+  return ctx.source.some((file) => {
+    const text = ctx.uncommented(file);
+    const provider = CREDENTIALS_PROVIDER.exec(text);
+    if (!provider) return false;
+    return /\b(?:fetch|axios|got|ky)\s*[.(]/.test(text.slice(provider.index, provider.index + 2000));
+  });
 }
 
 /** md5 or sha1 within three lines of a password-shaped identifier. */
@@ -1110,14 +1439,18 @@ function passwordStorageWeak(ctx: Ctx): Finding[] {
     return [];
   if (delegatesAuth(ctx)) return [];
   if (hasAny(ctx.deps, KDF_DEPS)) return [];
-  if (anySource(ctx, /\b(?:bcrypt|argon2|scrypt|pbkdf2)/i)) return [];
+  if (anySource(ctx, /\b(?:bcrypt|argon2|scrypt|pbkdf2|crypto_pwhash|sodium)/i)) return [];
+  // Passwordless: a magic link, OTP or passkey login stores no password to hash.
+  if (hasAny(ctx.deps, PASSWORDLESS_DEPS)) return [];
 
   const weak = weakHashLine(ctx);
+  const remote = !weak && credentialsVerifiedRemotely(ctx);
   return [
     {
       scope: "repository",
-      expectation:
-        "An application that authenticates users itself and stores accounts needs a password hashing function such as bcrypt, argon2 or scrypt",
+      expectation: remote
+        ? "An application that authenticates users itself and stores accounts needs a password hashing function; the Credentials provider here calls another service, which may hold the password instead"
+        : "An application that authenticates users itself and stores accounts needs a password hashing function such as bcrypt, argon2 or scrypt",
       summary: weak
         ? `Authentication routes and a datastore exist and ${weak.file} hashes with a fast digest instead of a password hashing function`
         : `${route.method} ${route.normalizedPath} authenticates users against a datastore and no password hashing library was found`,
@@ -1128,8 +1461,9 @@ function passwordStorageWeak(ctx: Ctx): Finding[] {
         `${route.id} is an authentication route`,
         "datastore present",
         "no password hashing dependency",
+        ...(remote ? ["credentials verified by a remote call"] : []),
       ],
-      certainty: weak ? 0.95 : 0.8,
+      certainty: weak ? 0.95 : remote ? 0.5 : 0.8,
       evidenceKind: kindFor(weak?.file ?? route.file),
     },
   ];
@@ -1151,6 +1485,14 @@ const LOGGING_DEPS = [
   "tslog",
   "npmlog",
   "dd-trace",
+  "pino-http",
+  "express-winston",
+  "koa-logger",
+  "koa-pino-logger",
+  "log4js",
+  "applicationinsights",
+  "newrelic",
+  "posthog-node",
 ];
 const LOGGING_PREFIX = [
   "@sentry/",
@@ -1158,7 +1500,20 @@ const LOGGING_PREFIX = [
   "@logtail/",
   "@datadog/",
   "@axiomhq/",
+  "@google-cloud/logging",
+  "@aws-sdk/client-cloudwatch-logs",
+  "@newrelic/",
+  "@honeycombio/",
 ];
+
+/** `logger.info(...)`, `this.logger.log(...)` (NestJS), `log.warn(...)`. */
+const LOGGER_METHOD_CALL =
+  /\b(?:logger|log)\s*\.\s*(?:info|warn|error|debug|fatal|trace|log|verbose)\s*\(/;
+/** A logging or audit helper called by name in the sensitive handler: `audit(req, "login")`. */
+const LOG_HELPER_CALL =
+  /\b(?:log|audit|logEvent|auditLog|logAudit|recordEvent|track|logger)\w*\s*\(/;
+/** Logging middleware applied with `.use()`: `app.use(requestLogger)`, `app.use(morgan("combined"))`. */
+const LOGGING_MIDDLEWARE = /log|morgan|audit|pino|winston/i;
 
 function loggingMissing(ctx: Ctx): Finding[] {
   const sensitive = ctx.routes.filter((route) => {
@@ -1170,14 +1525,14 @@ function loggingMissing(ctx: Ctx): Finding[] {
 
   if (hasAny(ctx.deps, LOGGING_DEPS) || hasPrefix(ctx.deps, LOGGING_PREFIX))
     return [];
+  if (anySource(ctx, LOGGER_METHOD_CALL)) return [];
+  if (ctx.useCalls.some((call) => call.names.some((name) => LOGGING_MIDDLEWARE.test(name))))
+    return [];
   if (
-    anySource(
-      ctx,
-      /\b(?:logger|log)\s*\.\s*(?:info|warn|error|debug|fatal|trace)\s*\(/,
+    sensitive.some(
+      (r) => /\bconsole\s*\.\s*\w+\s*\(/.test(ctx.body(r)) || LOG_HELPER_CALL.test(ctx.body(r)),
     )
   )
-    return [];
-  if (sensitive.some((r) => /\bconsole\s*\.\s*\w+\s*\(/.test(ctx.body(r))))
     return [];
 
   return [
@@ -1206,8 +1561,25 @@ function loggingMissing(ctx: Ctx): Finding[] {
 /** (err, req, res, next), tolerating TypeScript parameter annotations. */
 const ERROR_MIDDLEWARE =
   /\(\s*(?:err|error|e)\s*(?::\s*[^,)]+)?,\s*(?:req|request)\s*(?::\s*[^,)]+)?,\s*(?:res|response)\s*(?::\s*[^,)]+)?,\s*(?:next|_next)\b/;
+/** `app.use(errorHandler)`, `app.use(errorHandler({ log }))`, `app.use(Sentry.Handlers.errorHandler())`. */
 const ERROR_REGISTRATION =
-  /\.use\s*\(\s*[\w$.]*(?:error|exception)[\w$]*\s*\)/i;
+  /\.use\s*\(\s*[\w$.]*(?:error|exception)[\w$]*\s*(?:\([^()]*\))?\s*\)/i;
+
+/** Packages that hand a rejected handler promise to the error handler on Express 4. */
+const ASYNC_FORWARDING_DEPS = [
+  "express-async-errors",
+  "express-async-handler",
+  "express-promise-router",
+  "@awaitjs/express",
+];
+
+/**
+ * A handler wrapped in an async-catching helper (`catchAsync(async (req, res) => …)`), or
+ * one that attaches `.catch(next)` to the awaited promise, forwards its own rejections.
+ */
+const ASYNC_WRAPPER =
+  /\b(?:asyncHandler|catchAsync|wrapAsync|asyncWrap|tryCatch|catchErrors|wrap|handleAsync|asyncMiddleware)\w*\s*\(\s*(?:async\b|\(|function\b)/;
+const CATCHES_PROMISE = /\.\s*catch\s*\(/;
 
 /** The lowest major version a declared range allows, e.g. 5 for "^5.1.0". */
 function lowestMajor(range: string): number | undefined {
@@ -1222,7 +1594,7 @@ function lowestMajor(range: string): number | undefined {
  * has an Express 4 service keeps the check.
  */
 function forwardsRejections(ctx: Ctx): boolean {
-  if (ctx.deps.has("express-async-errors")) return true;
+  if (hasAny(ctx.deps, ASYNC_FORWARDING_DEPS)) return true;
 
   const express = ctx.facts.frameworks.filter((f) => f.name === "express");
   return (
@@ -1242,6 +1614,7 @@ function errorHandlingGap(ctx: Ctx): Finding[] {
     if (route.framework !== "express") continue;
     const body = ctx.body(route);
     if (!/\bawait\b/.test(body) || /\btry\b/.test(body)) continue;
+    if (ASYNC_WRAPPER.test(body) || CATCHES_PROMISE.test(body)) continue;
 
     found.push({
       scope: "route",
@@ -1267,38 +1640,78 @@ const WILDCARD_ORIGIN =
   /\borigin\s*:\s*(?:(['"`])\*\1|true\b|req(?:uest)?\s*\.\s*headers\s*\.\s*origin\b)/;
 const WILDCARD_HEADER = /Access-Control-Allow-Origin['"]?\s*[,:]\s*['"]\*['"]/;
 
+/** A reflected origin: any caller's origin is echoed back, which browsers allow with credentials. */
+const REFLECTED_ORIGIN = /\borigin\s*:\s*(?:true\b|req(?:uest)?\s*\.\s*headers\s*\.\s*origin\b)/;
+/** Credentials allowed alongside: the combination that exposes a user's session cross-origin. */
+const CORS_CREDENTIALS = /\bcredentials\s*:\s*true\b|Access-Control-Allow-Credentials/i;
+
+/**
+ * A `cors` defined in the file itself (`function cors(options = { origin: ALLOWED })`,
+ * `const cors = (opts) => …`) is not the cors package: its defaults are its own and
+ * nothing here can read them, so its bare call is not reported. A `cors` bound by
+ * import or require, or never declared (mounted from a shared module), still is.
+ */
+const LOCAL_CORS_DEFINITION =
+  /\bfunction\s+cors\s*\(|\b(?:const|let|var)\s+cors\s*=\s*(?:async\s+)?(?:function\b|\(|[A-Za-z_$][\w$]*\s*=>)/;
+
+function definesCorsLocally(ctx: Ctx, file: DetectorInput): boolean {
+  return LOCAL_CORS_DEFINITION.test(ctx.code(file));
+}
+
 function corsInFile(ctx: Ctx, file: DetectorInput): Finding[] {
   const masked = ctx.code(file);
   const starts = lineStarts(file.content);
-  const lines = new Map<number, string>();
+  const lines = new Map<number, { how: string; reflected: boolean; devOnly: boolean }>();
+  const text = ctx.uncommented(file);
 
-  for (const match of masked.matchAll(/\bcors\s*\(/g)) {
-    const open = (match.index ?? 0) + match[0].length;
-    const { args, end } = splitCallArguments(file.content, open);
-    const bare = args.length === 0;
-    const wildcard = WILDCARD_ORIGIN.test(file.content.slice(open, end));
-    if (bare || wildcard)
-      lines.set(
-        lineAt(starts, match.index ?? 0),
-        bare ? "bare cors call" : "wildcard origin",
-      );
+  if (!definesCorsLocally(ctx, file)) {
+    for (const match of masked.matchAll(/\bcors\s*\(/g)) {
+      const open = (match.index ?? 0) + match[0].length;
+      const { args, end } = splitCallArguments(file.content, open);
+      const bare = args.length === 0;
+      const call = file.content.slice(open, end);
+      const wildcard = WILDCARD_ORIGIN.test(call);
+      if (bare || wildcard)
+        lines.set(lineAt(starts, match.index ?? 0), {
+          how: bare ? "bare cors call" : "wildcard origin",
+          reflected: REFLECTED_ORIGIN.test(call),
+          devOnly: underDevGuard(text, match.index ?? 0),
+        });
+    }
   }
 
-  const header = WILDCARD_HEADER.exec(ctx.uncommented(file));
+  const header = WILDCARD_HEADER.exec(text);
   if (header)
-    lines.set(lineAt(starts, header.index), "wildcard allow-origin header");
+    lines.set(lineAt(starts, header.index), {
+      how: "wildcard allow-origin header",
+      reflected: false,
+      devOnly: underDevGuard(text, header.index),
+    });
 
-  return [...lines].map(([line, how]) => ({
-    scope: "file" as const,
-    expectation:
-      "Cross-origin access should be limited to the origins that need it",
-    summary: `${file.path} allows any origin (${how})`,
-    file: file.path,
-    line,
-    basisFacts: [how],
-    certainty: 0.9,
-    evidenceKind: "code" as const,
-  }));
+  // A literal `*` cannot carry credentials (browsers refuse the pair), so on its own it
+  // exposes public data only; a reflected origin with credentials exposes the session.
+  const credentials = CORS_CREDENTIALS.test(text);
+  return [...lines].map(([line, { how, reflected, devOnly }]) => {
+    const withSession = reflected || credentials;
+    return {
+      scope: "file" as const,
+      expectation: devOnly
+        ? "Cross-origin access should be limited to the origins that need it; this setting sits under a development condition and may never run in production"
+        : withSession
+          ? "Cross-origin access should be limited to the origins that need it"
+          : "Cross-origin access should be limited to the origins that need it; a literal wildcard cannot carry credentials, so this exposes only what the endpoint serves to anyone",
+      summary: `${file.path} allows any origin (${how})`,
+      file: file.path,
+      line,
+      basisFacts: [
+        how,
+        ...(withSession ? ["credentials or reflected origin"] : ["no credentials"]),
+        ...(devOnly ? ["under a development condition"] : []),
+      ],
+      certainty: devOnly ? 0.5 : withSession ? 0.9 : 0.5,
+      evidenceKind: "code" as const,
+    };
+  });
 }
 
 function corsPermissive(ctx: Ctx): Finding[] {
@@ -1310,7 +1723,49 @@ function corsPermissive(ctx: Ctx): Finding[] {
 // ---------------------------------------------------------------------------
 
 const LOCKFILE =
-  /(?:^|\/)(?:package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?)$/i;
+  /(?:^|\/)(?:package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|deno\.lock)$/i;
+
+/** True when the manifest declares at least one dependency of any kind. */
+function declaresDependencies(content: string): boolean {
+  try {
+    const parsed = JSON.parse(content) as Record<string, unknown> | null;
+    if (!parsed || typeof parsed !== "object") return false;
+    return ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"].some(
+      (section) => {
+        const value = parsed[section];
+        return !!value && typeof value === "object" && Object.keys(value as object).length > 0;
+      },
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Postinstall commands that are the repository's own tooling, not a third-party hook:
+ * the supply-chain vector is a dependency's postinstall, which `ignore-scripts` stops.
+ */
+const BENIGN_POSTINSTALL =
+  /^\s*(?:husky(?:\s+install)?|prisma\s+generate|npx\s+prisma\s+generate|patch-package|next\s+telemetry|electron-builder\s+install-app-deps|ngcc|tsc\b|(?:npm|pnpm|yarn)\s+(?:run\s+)?build|node\s+scripts?\/)/i;
+
+/** The postinstall command a manifest declares, or undefined. */
+function postinstallCommand(content: string): string | undefined {
+  try {
+    const scripts = (JSON.parse(content) as { scripts?: Record<string, unknown> } | null)?.scripts;
+    const command = scripts?.postinstall;
+    return typeof command === "string" ? command : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `.npmrc` with `ignore-scripts=true`: no dependency's install script runs. */
+function ignoresInstallScripts(ctx: Ctx): boolean {
+  return ctx.files.some(
+    (file) =>
+      basename(file.path) === ".npmrc" && /^\s*ignore-scripts\s*=\s*true\s*$/im.test(file.content),
+  );
+}
 
 function supplyChainIntegrity(ctx: Ctx): Finding[] {
   const manifests = ctx.files.filter((file) => isManifest(file.path));
@@ -1320,7 +1775,8 @@ function supplyChainIntegrity(ctx: Ctx): Finding[] {
   const noLockfile = !ctx.files.some((file) =>
     LOCKFILE.test(normalizeSeparators(file.path)),
   );
-  if (noLockfile) {
+  // A manifest with no dependencies has no tree to pin.
+  if (noLockfile && manifests.some((manifest) => declaresDependencies(manifest.content))) {
     found.push({
       scope: "repository",
       expectation:
@@ -1329,22 +1785,25 @@ function supplyChainIntegrity(ctx: Ctx): Finding[] {
       file: manifests[0].path,
       line: 1,
       basisFacts: ["manifest present", "no lockfile loaded"],
-      certainty: 0.5,
+      certainty: 0.35,
       evidenceKind: "config",
     });
   }
 
+  if (ignoresInstallScripts(ctx)) return found;
   for (const manifest of manifests) {
     if (!manifestScripts(manifest.content).includes("postinstall")) continue;
+    const benign = BENIGN_POSTINSTALL.test(postinstallCommand(manifest.content) ?? "");
     found.push({
       scope: "repository",
-      expectation:
-        "A postinstall script runs arbitrary code on every install and is a common supply chain vector",
+      expectation: benign
+        ? "A postinstall script runs on every install; this one is the repository's own tooling, so the exposure is the dependencies' install scripts, which ignore-scripts would stop"
+        : "A postinstall script runs arbitrary code on every install and is a common supply chain vector",
       summary: `${manifest.path} runs a postinstall script on every install`,
       file: manifest.path,
       line: lineOf(manifest.content, '"postinstall"'),
-      basisFacts: ["postinstall script declared"],
-      certainty: 0.9,
+      basisFacts: ["postinstall script declared", ...(benign ? ["known tooling command"] : [])],
+      certainty: benign ? 0.4 : 0.9,
       evidenceKind: "config",
     });
   }
@@ -1422,14 +1881,36 @@ function maskYamlComments(content: string): string {
  * CDN serves. A positive observation of the tag, so certainty is high; one finding per
  * page, at its first such tag, naming the libraries by the name derived from the URL.
  */
+/**
+ * Vendors that serve a mutable script and document that SRI must not be used on it:
+ * payments, tag managers, analytics, maps, CAPTCHAs, chat widgets. An integrity hash on
+ * these would break the page at the vendor's next deploy.
+ */
+const NO_SRI_HOSTS =
+  /^(?:js\.stripe\.com|(?:www\.)?googletagmanager\.com|(?:www\.)?google-analytics\.com|maps\.googleapis\.com|js\.hcaptcha\.com|challenges\.cloudflare\.com|connect\.facebook\.net|widget\.intercom\.io|cdn\.segment\.com|js\.sentry-cdn\.com|browser\.sentry-cdn\.com|static\.hotjar\.com|cdn\.paddle\.com|checkout\.razorpay\.com|www\.paypal\.com|www\.paypalobjects\.com|js\.braintreegateway\.com|cdn\.jsdelivr\.net\/npm\/@?[^/]+@latest)$/i;
+
+function hostOf(src: string): string | undefined {
+  try {
+    return new URL(src.startsWith("//") ? `https:${src}` : src).host.toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
+/** Build tools that add integrity hashes to the emitted HTML. */
+const SRI_BUILD_DEPS = ["webpack-subresource-integrity", "vite-plugin-sri", "rollup-plugin-sri", "@nuxtjs/security", "nuxt-security"];
+
 function cdnScriptsWithoutIntegrity(ctx: Ctx): Finding[] {
   const found: Finding[] = [];
+  if (hasAny(ctx.deps, SRI_BUILD_DEPS)) return found;
   for (const page of ctx.files) {
     if (!isServedHtml(page.path)) continue;
 
-    const bare = scriptTags(page.content).filter(
-      (tag) => tag.external && !tag.integrity,
-    );
+    const bare = scriptTags(page.content).filter((tag) => {
+      if (!tag.external || tag.integrity) return false;
+      const host = hostOf(tag.src);
+      return host === undefined || !NO_SRI_HOSTS.test(host);
+    });
     if (bare.length === 0) continue;
 
     const names = [
@@ -1535,7 +2016,7 @@ function workerProxyWithoutRateLimit(ctx: Ctx): Finding[] {
   );
   if (workers.size === 0) return [];
   if (hasAny(ctx.deps, RATE_LIMIT_DEPS)) return [];
-  if (configMentions(ctx, /ratelimit|rate[_-]?limit|throttl/i)) return [];
+  if (configMentions(ctx, CONFIG_RATE_LIMIT)) return [];
 
   const found: Finding[] = [];
   for (const file of ctx.source) {

@@ -20,6 +20,12 @@ empty `threats` array is a valid answer.
   Library defaults are already applied: an option that is absent or commented out in
   the source is shown with the value the library uses instead. This block is context,
   not evidence: it has no ids and cannot be cited.
+- `## EXPOSURE` — every component in the architecture, once, with its exposure and its
+  assets. `external` is a service someone else runs (an external service or auth
+  provider); `edge` takes input from outside (an actor, a frontend, or any component an
+  actor sends data to directly); `internal` is reachable only through other components.
+  Use it to judge how reachable a threat's target is. It is context, not evidence: it
+  has no ids and cannot be cited.
 - `## FILE EXCERPTS` — the repository's own text, wrapped in `<repo_file path="...">`
   tags with lines numbered from 1.
 
@@ -227,6 +233,13 @@ Each assumption costs the threat confidence, so write one only when it is needed
   That uncertainty is handled by the scoring code and must not be counted twice.
 - `asset` is the single thing of value the attacker reaches, written plainly, such as
   "stored password hashes" rather than "data".
+- `title`, `attackScenario`, `asset`, `assumptions`, `impactReason`, `likelihoodReason`
+  and `mitigation` are read by the application's developers, not by this pipeline. Name
+  things as they would: a component by its name, a route by method and path, code by
+  file and line. Never write an evidence id, gap id, element id, unknown id or batch
+  number, a component type value such as `external_service`, or how this analysis works
+  (detectors, the schema, certainty, fallbacks). Keep genuine uncertainty, but say it
+  plainly in `assumptions`, as a statement about the application.
 - `mitigation` is actionable: `summary` says what to do, `steps` say how, and
   `codeLocation` names the file the change belongs in. Prefer a library already present
   in the application over introducing a new one.

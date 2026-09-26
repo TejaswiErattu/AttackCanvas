@@ -20,10 +20,15 @@ export function file(path: string, content: string): DetectorInput {
 export function manifest(
   deps: Record<string, string> = {},
   scripts: Record<string, string> = {},
+  devDeps: Record<string, string> = {},
 ): DetectorInput {
   return file(
     "package.json",
-    JSON.stringify({ name: "app", dependencies: deps, scripts }, null, 2),
+    JSON.stringify(
+      { name: "app", dependencies: deps, devDependencies: devDeps, scripts },
+      null,
+      2,
+    ),
   );
 }
 

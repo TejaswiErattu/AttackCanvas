@@ -235,11 +235,11 @@ export type ConfidenceExplanation = {
 
 const QUALITATIVE: Record<Category, string> = {
   code: "Backed by code or configuration evidence",
-  gap: "Supported by a missing-control finding; how much it adds depends on the detector's certainty",
+  gap: "Based on a security control the code checks could not find. This is a prediction, not a confirmed flaw",
   semgrep: "Confirmed by a Semgrep finding",
   osv: "Confirmed by a known vulnerable dependency (OSV)",
   developer: "Confirmed by a developer answer",
-  inference: "Rests on an inference, which counts only when nothing else supports the threat",
+  inference: "Rests on an inference, used only because nothing else supports the threat",
 };
 /**
  * The gap floor, qualitatively: a gap-only threat stored at exactly the floor was raised to
@@ -247,9 +247,9 @@ const QUALITATIVE: Record<Category, string> = {
  * beyond them. The model does not carry gap certainty or gap CWEs, so which one is unknown.
  */
 const FLOOR_APPLIED =
-  "Raised to the 40% minimum for a near-certain missing control: every weakness it claims is one the missing-control finding asserts";
+  "Raised to the 40% minimum: the control looks clearly absent, and the weakness is the one its absence implies";
 const FLOOR_NOT_APPLIED =
-  "Not raised to the 40% minimum for a missing control: that needs near-certain missing-control findings and no claimed weakness beyond theirs";
+  "Not raised to the 40% minimum: that needs the control to look clearly absent and the threat to claim nothing beyond it";
 
 const QUALITATIVE_ORDER: readonly Category[] = [
   "code",

@@ -27,11 +27,13 @@ import {
   ANALYSIS_TTL_MS,
   MAX_TIMEOUT_MS,
   NO_GAPS_LIMITATION,
+  INJECTION_ECHO_LIMITATION,
   PIPELINE_TIMEOUT_MS,
   countActiveAnalyses,
   countByBasis,
   createAnalysis,
   deleteAnalysis,
+  findActiveAnalysis,
   getAnalysis,
   isExpired,
   resetStore,
@@ -288,6 +290,26 @@ const COUNTED_STAGES = [
 ] as const;
 
 const TERMINAL_STAGES_UNDER_TEST = ["complete", "failed"] as const;
+
+describe("findActiveAnalysis", () => {
+  it("returns the first in-flight real job the matcher accepts, in creation order", () => {
+    const first = createAnalysis("acme/canary");
+    createAnalysis("acme/canary");
+    expect(findActiveAnalysis((s) => s.repoUrl === "acme/canary")?.id).toBe(first.id);
+  });
+
+  it("skips terminal and demo jobs, and returns undefined when nothing matches", () => {
+    const done = createAnalysis("acme/canary");
+    done.stage = "complete";
+    const failed = createAnalysis("acme/canary");
+    failed.stage = "failed";
+    createAnalysis("acme/canary", 2, { isDemo: true });
+    expect(findActiveAnalysis(() => true)).toBeUndefined();
+    const live = createAnalysis("acme/other");
+    expect(findActiveAnalysis((s) => s.repoUrl === "acme/other")?.id).toBe(live.id);
+    expect(findActiveAnalysis((s) => s.repoUrl === "acme/canary")).toBeUndefined();
+  });
+});
 
 describe("countActiveAnalyses", () => {
   it("is 0 with no jobs at all", () => {
@@ -624,7 +646,7 @@ describe("runAnalysis", () => {
     expect(result.stage).toBe("complete");
     expect(result.droppedStages).toEqual(["semgrep"]);
     expect(result.threatModel?.limitations).toContain(
-      'Upstream analysis stage "semgrep" was dropped or unavailable.',
+      "The Semgrep code scanner could not run, so findings it would have added are missing.",
     );
   });
 
@@ -818,9 +840,10 @@ describe("runAnalysis", () => {
 
     expect(result.stage).toBe("complete");
     expect(result.threatModel).toBeDefined();
-    expect(
-      result.threatModel?.limitations.some((l) => l.includes('"injection_echo"')),
-    ).toBe(true);
+    // The reader gets one plain sentence; the check code and JSON path are diagnostics.
+    expect(result.threatModel?.limitations).toContain(INJECTION_ECHO_LIMITATION);
+    expect(result.threatModel?.limitations.some((l) => l.includes("injection_echo"))).toBe(false);
+    expect(result.diagnostics.some((l) => l.includes('"injection_echo"'))).toBe(true);
   });
 
   it("never calls selectQuestions once a fatal output issue is found (unknown_file)", async () => {

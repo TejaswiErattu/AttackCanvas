@@ -46,7 +46,7 @@ export const EVIDENCE_KIND_LABELS = {
 } as const satisfies Record<EvidenceKind, string>;
 
 export const EVIDENCE_SOURCE_LABELS = {
-  detector: "Deterministic detector",
+  detector: "Code analysis",
   semgrep: "Semgrep",
   osv: "OSV",
   ai: "AI analysis",

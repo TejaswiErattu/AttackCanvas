@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { MergedArchitecture } from "@/server/analysis/architecture";
 import {
   EXCERPT_HEADER,
+  EXPOSURE_HEADER,
+  renderExposure,
   FLOW_BOUNDARY_STRIDE,
   FLOW_STRIDE,
   STRIDE_BY_TYPE,
@@ -537,7 +539,10 @@ describe("file excerpts", () => {
         ],
       });
       noSentinel(batch.text);
-      expect(batch.text.match(/\[REDACTED:generic_secret\]/g)).toHaveLength(3);
+      // Three in the element block, and the name and the token asset again in ## EXPOSURE.
+      expect(batch.text.match(/\[REDACTED:generic_secret\]/g)).toHaveLength(5);
+      const exposure = batch.text.split(EXPOSURE_HEADER)[1].split(EXCERPT_HEADER)[0];
+      expect(exposure.match(/\[REDACTED:generic_secret\]/g)).toHaveLength(2);
       expect(batch.text).toContain("orders");
     });
 
@@ -1244,5 +1249,63 @@ describe("startup file only for batches that serve browser requests", () => {
     const a = arch();
     expect(servesBrowserRequests({ kind: "data_flow", id: "memo-post", files: [] }, a, loaded)).toBe(true);
     expect(servesBrowserRequests({ kind: "data_flow", id: "memo-db", files: ["app/routes/memos.js"] }, a, loaded)).toBe(false);
+  });
+});
+
+describe("## EXPOSURE block", () => {
+  const ARCH = {
+    components: [
+      component("customer", "actor"),
+      component("web-frontend", "frontend"),
+      component("orders-api", "api", { assets: ["orders", "card tokens"] }),
+      component("public-hook", "backend"),
+      component("orders-db", "database", { assets: [] }),
+      component("stripe", "external_service"),
+      component("okta", "auth_provider"),
+    ],
+    dataFlows: [
+      flow("f1", { sourceId: "customer", targetId: "web-frontend" }),
+      flow("f2", { sourceId: "web-frontend", targetId: "orders-api" }),
+      flow("f3", { sourceId: "customer", targetId: "public-hook" }),
+      flow("f4", { sourceId: "orders-api", targetId: "orders-db" }),
+    ],
+  };
+
+  it("lists every component exactly once, with its exposure and assets", () => {
+    const lines = renderExposure(ARCH);
+    expect(lines[0]).toBe(EXPOSURE_HEADER);
+    const entries = lines.filter((line) => line.startsWith("- "));
+    expect(entries).toHaveLength(ARCH.components.length);
+    for (const c of ARCH.components) {
+      expect(entries.filter((line) => line.startsWith(`- ${c.id} `))).toHaveLength(1);
+    }
+    expect(entries).toEqual([
+      '- customer "customer" (actor): edge; assets: customer data',
+      '- web-frontend "web-frontend" (frontend): edge; assets: web-frontend data',
+      '- orders-api "orders-api" (api): internal; assets: orders; card tokens',
+      '- public-hook "public-hook" (backend): edge; assets: public-hook data',
+      '- orders-db "orders-db" (database): internal; assets: none recorded',
+      '- stripe "stripe" (external_service): external; assets: stripe data',
+      '- okta "okta" (auth_provider): external; assets: okta data',
+    ]);
+  });
+
+  it("lists a component once even if the architecture repeats it", () => {
+    const twice = { ...ARCH, components: [...ARCH.components, ARCH.components[0]] };
+    expect(renderExposure(twice).filter((l) => l.startsWith("- customer "))).toHaveLength(1);
+  });
+
+  it("appears in the batch once, before the file excerpts, covering components outside the batch", () => {
+    const batch = build(["orders-api"]);
+    expect(batch.text.split(EXPOSURE_HEADER)).toHaveLength(2);
+    expect(batch.text.indexOf(EXPOSURE_HEADER)).toBeLessThan(batch.text.indexOf(EXCERPT_HEADER));
+    const block = batch.text.split(EXPOSURE_HEADER)[1].split(EXCERPT_HEADER)[0];
+    for (const id of ["web-frontend", "orders-api", "report-worker"]) {
+      expect(block.split("\n").filter((line) => line.startsWith(`- ${id} `))).toHaveLength(1);
+    }
+  });
+
+  it("is omitted when there are no components", () => {
+    expect(renderExposure({ components: [], dataFlows: [] })).toEqual([]);
   });
 });

@@ -79,6 +79,7 @@ function threat(id: string, overrides: Partial<ThreatCardData>): ThreatCardData 
     basis: "evidence_backed",
     basisLabel: "Confirmed by evidence",
     componentNames: ["API"],
+    affectedNames: ["API"],
     componentIds: ["api"],
     dataFlowIds: [],
     confidenceReasons: [],
@@ -115,6 +116,7 @@ const LOUD_CRITICAL = threat("loud-critical", {
   confidence: 95,
   confidenceLabel: "high",
   componentNames: ["Database"],
+  affectedNames: ["Database"],
   componentIds: ["db"],
 });
 
@@ -149,6 +151,8 @@ const VIEW: DashboardViewModel = {
       threatCount: 9,
       maxSeverity: "critical",
       technologies: ["next"],
+      assets: [],
+      exposure: "internal",
     },
     {
       id: "db",
@@ -158,9 +162,12 @@ const VIEW: DashboardViewModel = {
       threatCount: 1,
       maxSeverity: "low",
       technologies: ["postgres"],
+      assets: [],
+      exposure: "internal",
     },
   ],
   edges: [],
+  boundaries: [],
   // Server order: low first, critical second. Not sorted by severity.
   threats: [QUIET_GAP, LOUD_CRITICAL, MIDDLE],
   assumptions: ["Sessions are cookie-based."],
@@ -340,7 +347,7 @@ describe("Dashboard highlighting", () => {
     const quiet = within(screen.getByRole("region", { name: "Threats" })).getByTestId(
       "threat-card-quiet-gap",
     );
-    fireEvent.click(within(quiet).getByRole("button"));
+    fireEvent.click(quiet.querySelector("button[aria-controls]")!);
 
     // Exactly QUIET_GAP's component ids as nodes and its data-flow ids as edges.
     const graph = screen.getByTestId("graph");
@@ -357,7 +364,7 @@ describe("Dashboard highlighting", () => {
     const card = within(screen.getByRole("region", { name: "Threats" })).getByTestId(
       "threat-card-flow-only",
     );
-    fireEvent.click(within(card).getByRole("button"));
+    fireEvent.click(card.querySelector("button[aria-controls]")!);
 
     const graph = screen.getByTestId("graph");
     expect(graph.getAttribute("data-highlight-nodes")).toBe("api");
@@ -370,8 +377,8 @@ describe("Dashboard highlighting", () => {
     const quiet = within(screen.getByRole("region", { name: "Threats" })).getByTestId(
       "threat-card-quiet-gap",
     );
-    fireEvent.click(within(quiet).getByRole("button"));
-    fireEvent.click(within(quiet).getByRole("button"));
+    fireEvent.click(quiet.querySelector("button[aria-controls]")!);
+    fireEvent.click(quiet.querySelector("button[aria-controls]")!);
 
     expect(screen.getByTestId("graph").getAttribute("data-highlight-nodes")).toBe("");
     expect(screen.getByTestId("graph").getAttribute("data-highlight-edges")).toBe("");

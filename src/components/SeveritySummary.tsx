@@ -16,6 +16,11 @@ import { BASIS_LABELS } from "@/shared/labels";
 import type { Severity } from "@/shared/schema";
 import type { SeverityCounts } from "@/shared/viewModel";
 import type { BasisCounts } from "@/client/useAnalysis";
+import {
+  FINDING_STATUSES,
+  FINDING_STATUS_LABELS,
+  type StatusCounts,
+} from "@/client/findingStatus";
 
 /** Display order, highest severity first. */
 export const SEVERITY_ORDER: readonly Severity[] = ["critical", "high", "medium", "low"];
@@ -62,6 +67,8 @@ type SeveritySummaryProps = {
   counts: SeverityCounts;
   basisCounts: BasisCounts | null;
   fixNowCount: number;
+  /** The reader's own triage counts over the listed threats; omitted when not tracked. */
+  statusCounts?: StatusCounts;
 };
 
 function readCount(counts: SeverityCounts | undefined, severity: Severity): number {
@@ -73,6 +80,7 @@ export default function SeveritySummary({
   counts,
   basisCounts,
   fixNowCount,
+  statusCounts,
 }: SeveritySummaryProps) {
   const total = SEVERITY_ORDER.reduce(
     (sum, severity) => sum + readCount(counts, severity),
@@ -128,6 +136,16 @@ export default function SeveritySummary({
         {total} threat{total === 1 ? "" : "s"} shown. Threats below 25% confidence are
         hidden by the analysis.
       </p>
+
+      {statusCounts ? (
+        <p data-testid="status-counts" className="mt-1 text-sm text-muted">
+          Your status:{" "}
+          {FINDING_STATUSES.map(
+            (value) => `${statusCounts[value]} ${FINDING_STATUS_LABELS[value].toLowerCase()}`,
+          ).join(", ")}
+          .
+        </p>
+      ) : null}
 
       {basisCounts ? (
         // Labelled "all scored threats" on purpose: the route derives basisCounts from the

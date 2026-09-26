@@ -293,6 +293,34 @@ describe("limits", () => {
     expect(result.truncated).toBe(true);
   });
 
+  it("stops fetching once the tree's claimed sizes reach twice the byte budget (bug bash case 3)", async () => {
+    // 50 files claiming 190 KiB each: 9.3 MiB claimed against a 2 MiB budget. Only the
+    // first 22 (4.08 MiB claimed) are downloaded at all; the rest are overLimit unseen.
+    const entries = Array.from({ length: 50 }, (_, i) =>
+      file(`src/f${String(i).padStart(2, "0")}.ts`, 190 * 1024),
+    );
+    const deps = fakeDeps(entries, { content: () => "x".repeat(190 * 1024) });
+    const result = await loadRepositoryWith(deps, "o", "r");
+
+    expect(deps.fetched.length).toBeLessThanOrEqual(23);
+    expect(deps.fetched.length).toBeLessThan(50);
+    expect(result.files).toHaveLength(10);
+    expect(totalBytes(result.files)).toBeLessThanOrEqual(MAX_TOTAL_BYTES);
+    expect(result.skipped.overLimit).toBe(40);
+    expect(result.truncated).toBe(true);
+  });
+
+  it("does not let the claimed-size ceiling hold back an entry with no size", async () => {
+    const entries: TreeEntry[] = [
+      ...Array.from({ length: 30 }, (_, i) => file(`src/a${String(i).padStart(2, "0")}.ts`, 190 * 1024)),
+      { path: "src/unsized.ts", type: "file" },
+    ];
+    const deps = fakeDeps(entries, { content: (path) => (path === "src/unsized.ts" ? "ok" : "x".repeat(1024)) });
+    await loadRepositoryWith(deps, "o", "r");
+
+    expect(deps.fetched).toContain("src/unsized.ts");
+  });
+
   it("does not trust the tree size: a small claimed size cannot smuggle in a big file", async () => {
     const entries = Array.from({ length: 12 }, (_, i) =>
       file(`src/f${i}.ts`, 10),

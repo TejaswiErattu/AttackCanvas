@@ -21,7 +21,15 @@
  * ever rendered as text (CLAUDE.md rule 3).
  */
 
+import { useId, useState } from "react";
 import type { ThreatCardData } from "@/shared/viewModel";
+import { buildIssue, type IssueRepo } from "@/client/issueBody";
+import {
+  FINDING_STATUSES,
+  FINDING_STATUS_LABELS,
+  isFindingStatus,
+  type FindingStatus,
+} from "@/client/findingStatus";
 import EvidencePanel from "@/components/EvidencePanel";
 import { SEVERITY_BADGE_CLASS, SEVERITY_TEXT } from "@/components/SeveritySummary";
 
@@ -48,6 +56,13 @@ type ThreatCardProps = {
   threat: ThreatCardData;
   selected: boolean;
   onSelect: (id: string) => void;
+  /** The reader's triage status. Omitted where statuses are not tracked; then no selector. */
+  status?: FindingStatus;
+  onStatusChange?: (id: string, status: FindingStatus) => void;
+  /** The analysed repository and ref, for the GitHub issue link. Omitted: no issue actions. */
+  repo?: IssueRepo;
+  /** True when this threat was not in the previous run of the repository. */
+  isNew?: boolean;
 };
 
 function Chip({ children, title }: { children: React.ReactNode; title?: string }) {
@@ -67,7 +82,28 @@ function DetailHeading({ children }: { children: React.ReactNode }) {
   );
 }
 
-export default function ThreatCard({ threat, selected, onSelect }: ThreatCardProps) {
+export default function ThreatCard({
+  threat,
+  selected,
+  onSelect,
+  status = "open",
+  onStatusChange,
+  repo,
+  isNew = false,
+}: ThreatCardProps) {
+  const [copied, setCopied] = useState<"idle" | "copied" | "failed">("idle");
+  // The same threat can be on the page twice (Fix now and the list), so ids need to be unique.
+  const uid = useId();
+  const issue = repo ? buildIssue(threat, repo) : null;
+  const copyMarkdown = async () => {
+    try {
+      await navigator.clipboard.writeText(issue?.body ?? "");
+      setCopied("copied");
+    } catch {
+      setCopied("failed");
+    }
+  };
+  const statusId = `${uid}-status`;
   const headingId = `threat-${threat.id}-title`;
   const detailsId = `threat-${threat.id}-details`;
   const severityClass =
@@ -105,6 +141,22 @@ export default function ThreatCard({ threat, selected, onSelect }: ThreatCardPro
             {threat.confidence}% &middot;{" "}
             {CONFIDENCE_TEXT[threat.confidenceLabel] ?? threat.confidenceLabel}
           </span>
+          {isNew ? (
+            <span
+              data-testid={`new-badge-${threat.id}`}
+              className="rounded-full border border-mint bg-mint-deep px-2.5 py-0.5 text-[11px] font-semibold text-fg"
+            >
+              New
+            </span>
+          ) : null}
+          {status !== "open" ? (
+            <span
+              data-testid={`status-badge-${threat.id}`}
+              className="rounded-full border border-line-strong bg-ink-2 px-2.5 py-0.5 text-[11px] font-semibold text-fg"
+            >
+              {FINDING_STATUS_LABELS[status]}
+            </span>
+          ) : null}
           <span aria-hidden="true" className="ml-auto text-subtle">
             {selected ? "\u2212" : "+"}
           </span>
@@ -116,8 +168,8 @@ export default function ThreatCard({ threat, selected, onSelect }: ThreatCardPro
 
         <p className="mt-1 text-xs text-subtle">
           {threat.basisLabel}
-          {threat.componentNames?.length
-            ? ` \u00b7 ${threat.componentNames.join(", ")}`
+          {(threat.affectedNames ?? threat.componentNames)?.length
+            ? ` \u00b7 Affects ${(threat.affectedNames ?? threat.componentNames).join(", ")}`
             : ""}
         </p>
 
@@ -137,6 +189,78 @@ export default function ThreatCard({ threat, selected, onSelect }: ThreatCardPro
           ))}
         </div>
       </button>
+
+      {copied === "failed" && issue ? (
+        // The browser refused clipboard access; let the reader copy by hand.
+        <div className="pb-3 pl-6 pr-4 sm:pr-5">
+          <label htmlFor={`${uid}-md`} className="text-xs text-muted">
+            Couldn&apos;t copy automatically. Select all and copy:
+          </label>
+          <textarea
+            id={`${uid}-md`}
+            readOnly
+            rows={6}
+            value={issue.body}
+            onFocus={(event) => event.currentTarget.select()}
+            className="mt-1 w-full rounded-xl border border-line-strong bg-ink p-2 font-mono text-xs text-fg"
+          />
+        </div>
+      ) : null}
+
+      {onStatusChange || issue ? (
+        // Outside the header button: a control nested in a button is invalid and would
+        // toggle the card as well.
+        <div className="flex flex-wrap items-center gap-2 pb-3 pl-6 pr-4 sm:pr-5">
+          {onStatusChange ? (
+            <>
+              <label htmlFor={statusId} className="text-xs text-muted">
+                Status
+              </label>
+              <select
+            id={statusId}
+            value={status}
+            onChange={(event) => {
+              const value = event.target.value;
+              if (isFindingStatus(value)) onStatusChange(threat.id, value);
+            }}
+            className="rounded-full border border-line-strong bg-ink px-3 py-1 text-xs text-fg focus-visible:border-mint"
+          >
+            {FINDING_STATUSES.map((value) => (
+              <option key={value} value={value}>
+                {FINDING_STATUS_LABELS[value]}
+              </option>
+            ))}
+          </select>
+            </>
+          ) : null}
+          {issue ? (
+            <div className="ml-auto flex items-center gap-2">
+              {issue.tooLong ? (
+                <span role="note" className="text-xs text-muted">
+                  Too long for a link. Copy as Markdown and paste it into a new issue.
+                </span>
+              ) : null}
+              {issue.url ? (
+                <a
+                  href={issue.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded-full border border-line-strong px-3 py-1 text-xs font-medium text-fg hover:border-mint hover:text-mint"
+                >
+                  Open as GitHub issue
+                </a>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => void copyMarkdown()}
+                className="rounded-full border border-line-strong px-3 py-1 text-xs font-medium text-fg hover:border-mint hover:text-mint"
+              >
+                {copied === "copied" ? "Copied" : copied === "failed" ? "Copy failed" : "Copy as Markdown"}
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {selected ? (
         <div id={detailsId} className="space-y-6 border-t border-line py-5 pl-6 pr-4 sm:pr-5">

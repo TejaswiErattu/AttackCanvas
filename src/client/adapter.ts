@@ -26,6 +26,7 @@ import {
   STRIDE_LABELS,
 } from "@/shared/labels";
 import { explainConfidence, isGapEvidence } from "@/shared/confidence";
+import { exposureMap, type Exposure } from "@/client/exposure";
 import type {
   AnalysisError,
   AnalysisStatus,
@@ -161,7 +162,7 @@ function confidenceReasonsFor(threat: Threat, cited: readonly Evidence[]): strin
   const total = `Confidence ${Math.round(threat.confidence * 100)}% (${threat.confidenceLabel})`;
   return exact
     ? [...lines, total]
-    : [...lines, `${total}. Point values for these reasons are not shown, so they do not add up to it.`];
+    : [...lines, `${total}. These are reasons, not scores that add up to it.`];
 }
 
 function toEvidenceItem(evidence: Evidence): EvidenceItem {
@@ -185,12 +186,19 @@ function toMitigationData(mitigation: Mitigation): MitigationData {
 
 type Lookups = {
   componentNames: ReadonlyMap<string, string>;
+  flowNames: ReadonlyMap<string, string>;
   evidence: ReadonlyMap<string, Evidence>;
 };
 
 function buildLookups(model: ThreatModel): Lookups {
   return {
     componentNames: new Map(model.components.map((c) => [c.id, c.name])),
+    flowNames: new Map(
+      model.dataFlows.map((f) => {
+        const name = (id: string) => model.components.find((c) => c.id === id)?.name ?? id;
+        return [f.id, `${name(f.sourceId)} \u2192 ${name(f.targetId)}`];
+      }),
+    ),
     evidence: new Map(model.evidence.map((e) => [e.id, e])),
   };
 }
@@ -213,6 +221,15 @@ function toThreatCard(threat: Threat, lookups: Lookups): ThreatCardData {
     componentNames: threat.componentIds.map(
       (id) => lookups.componentNames.get(id) ?? id,
     ),
+    affectedNames: [
+      ...new Set([
+        ...threat.componentIds.map((id) => lookups.componentNames.get(id) ?? id),
+        ...threat.dataFlowIds.flatMap((id) => {
+          const name = lookups.flowNames.get(id);
+          return name ? [name] : [];
+        }),
+      ]),
+    ],
     componentIds: [...threat.componentIds],
     dataFlowIds: [...threat.dataFlowIds],
     confidenceReasons: confidenceReasonsFor(
@@ -232,7 +249,11 @@ function toThreatCard(threat: Threat, lookups: Lookups): ThreatCardData {
 // Graph
 // ---------------------------------------------------------------------------
 
-function toGraphNode(component: Component, threats: readonly Threat[]): GraphNode {
+function toGraphNode(
+  component: Component,
+  threats: readonly Threat[],
+  exposure: ReadonlyMap<string, Exposure>,
+): GraphNode {
   const affecting = threats.filter((t) => t.componentIds.includes(component.id));
   return {
     id: component.id,
@@ -242,6 +263,8 @@ function toGraphNode(component: Component, threats: readonly Threat[]): GraphNod
     threatCount: affecting.length,
     maxSeverity: maxSeverityOf(affecting),
     technologies: [...component.technologies],
+    assets: [...component.assets],
+    exposure: exposure.get(component.id) ?? "internal",
   };
 }
 
@@ -305,6 +328,11 @@ export function toDashboardViewModel(model: ThreatModel): DashboardViewModel {
   const lookups = buildLookups(model);
   const threats = visible.map((threat) => toThreatCard(threat, lookups));
   // Selected by the server-computed priority only; nothing is re-scored here.
+  // Rated on the full flow list, so a sub-view that hides a flow never changes a badge.
+  const exposure = exposureMap(
+    model.components,
+    model.dataFlows.map((flow) => ({ source: flow.sourceId, target: flow.targetId })),
+  );
   const fixNowCards = threats
     .filter((t) => t.priority === "fix_now")
     .sort(compareFixNow);
@@ -322,8 +350,13 @@ export function toDashboardViewModel(model: ThreatModel): DashboardViewModel {
     counts: countBySeverity(visible),
     fixNow: fixNowCards.slice(0, FIX_NOW_LIMIT),
     fixNowTotal: fixNowCards.length,
-    nodes: model.components.map((component) => toGraphNode(component, visible)),
+    nodes: model.components.map((component) => toGraphNode(component, visible, exposure)),
     edges: model.dataFlows.map(toGraphEdge),
+    boundaries: model.trustBoundaries.map((boundary) => ({
+      id: boundary.id,
+      name: boundary.name,
+      componentIds: [...boundary.componentIds],
+    })),
     threats,
     assumptions: [...model.assumptions],
     limitations: [...model.limitations],

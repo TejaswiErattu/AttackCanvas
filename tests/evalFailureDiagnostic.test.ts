@@ -81,6 +81,24 @@ class FakeOverloadedError extends Error {
   }
 }
 
+/** Shaped like the SDK's APIError for a 400 that quotes the request in its body. */
+class FakeBadRequestError extends Error {
+  readonly status = 400;
+  readonly error = {
+    type: "error",
+    error: {
+      type: "invalid_request_error",
+      message: `Your credit balance is too low. ${PROVIDER_BODY_TEXT}`,
+    },
+  };
+  readonly headers = { authorization: `Bearer ${HEADER_VALUE}` };
+  readonly request_id = "req_400test123";
+  constructor() {
+    super(`400 ${PROVIDER_BODY_TEXT}`);
+    this.name = "BadRequestError";
+  }
+}
+
 /** Every request fails with a 529; records how many were sent. */
 function overloadedClient(): MessagesApi & { sent: number } {
   const client = {
@@ -91,6 +109,14 @@ function overloadedClient(): MessagesApi & { sent: number } {
     },
   };
   return client as MessagesApi & { sent: number };
+}
+
+function badRequestClient(): MessagesApi {
+  return {
+    async create() {
+      throw new FakeBadRequestError();
+    },
+  };
 }
 
 function pipelineDeps(client: MessagesApi, writeDebug: () => void): Partial<PipelineDeps> {
@@ -186,6 +212,41 @@ describe("eval failure diagnostic for a failed threat-batch provider call", () =
     }
     // .debug/ dumps stay off: NODE_ENV is not development.
     expect(writeDebug).not.toHaveBeenCalled();
+  });
+
+  it("logs a 400's category, request id, stage and batch, and none of the provider's text", async () => {
+    vi.stubEnv(FAILURE_DIAGNOSTICS_ENV, "1");
+    const state = createAnalysis("acme/canary");
+
+    await runAnalysis(state.id, pipelineDeps(badRequestClient(), () => {}));
+
+    expect(log).toHaveBeenCalledTimes(1);
+    const fields = vi.mocked(log).mock.calls[0]![2] as Record<string, unknown>;
+    expect(fields).toMatchObject({
+      apiStatus: 400,
+      batch: { number: 1, of: 2 },
+      providerRequest: {
+        status: 400,
+        category: "credit_balance_low",
+        errorType: "invalid_request_error",
+        requestId: "req_400test123",
+        stage: "stride",
+        attempt: 1,
+      },
+    });
+    const serialized = JSON.stringify(fields);
+    for (const forbidden of [
+      PROVIDER_BODY_TEXT,
+      "credit balance",
+      HEADER_VALUE,
+      "Bearer",
+      REPO_SECRET,
+      "<repo_file",
+      "comp-app",
+      ...CANARY_INJECTION_PHRASES,
+    ]) {
+      expect(serialized).not.toContain(forbidden);
+    }
   });
 
   it("tags the thrown error with its batch only, without element ids", async () => {

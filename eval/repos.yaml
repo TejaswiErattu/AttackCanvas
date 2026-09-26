@@ -30,3 +30,8 @@ repos:
     # Same pinned commit; differs from nodegoat-f64cfa8 by b956a3f (same-line evidence rule) and a3118b6.
     # Scored against eval/expected/nodegoat-a3118b6.yaml, a byte-identical copy of the draft key.
     url: "https://github.com/OWASP/NodeGoat/tree/c5cb68a7084e4ae7dcc60e6a98768720a81841e8"
+  - name: nodegoat-a6ef3ec # OWASP/NodeGoat again, at AttackCanvas a6ef3ec (reader-facing limitations and findings)
+    # Same pinned commit; differs from nodegoat-a3118b6 by the diagram work (592bc44..889d674),
+    # 7d83ed1 (limitations split from diagnostics) and a6ef3ec (finding wording, prompt rule).
+    # Scored against eval/expected/nodegoat-a6ef3ec.yaml, a byte-identical copy of the draft key.
+    url: "https://github.com/OWASP/NodeGoat/tree/c5cb68a7084e4ae7dcc60e6a98768720a81841e8"

@@ -25,6 +25,7 @@ import type {
   Stride,
 } from "@/shared/schema";
 import type { ThreatCardData } from "@/shared/viewModel";
+import { statusOf, type FindingStatus, type StatusMap } from "@/client/findingStatus";
 
 export type ThreatFilters = {
   severities: readonly Severity[];
@@ -35,6 +36,8 @@ export type ThreatFilters = {
   confidenceLabels: readonly ConfidenceLabel[];
   priorities: readonly Priority[];
   basis: readonly Basis[];
+  /** The reader's own triage status; a threat with no saved status is "open". */
+  statuses: readonly FindingStatus[];
   /** Free text; case-insensitive, matched against title, scenario, components and ids. */
   search: string;
 };
@@ -48,6 +51,7 @@ export const EMPTY_FILTERS: ThreatFilters = Object.freeze({
   confidenceLabels: Object.freeze([]) as readonly ConfidenceLabel[],
   priorities: Object.freeze([]) as readonly Priority[],
   basis: Object.freeze([]) as readonly Basis[],
+  statuses: Object.freeze([]) as readonly FindingStatus[],
   search: "",
 });
 
@@ -124,6 +128,7 @@ function matchesComponents(
 export function filterThreats(
   threats: readonly ThreatCardData[],
   filters: Partial<ThreatFilters> = {},
+  statuses: StatusMap = {},
 ): ThreatCardData[] {
   // Annotated, because Array.isArray widens a readonly array to any[] and that would
   // leave every element below typed as `any`.
@@ -138,6 +143,7 @@ export function filterThreats(
       matchesAny(filters.severities, [threat.severity]) &&
       matchesAny(filters.priorities, [threat.priority]) &&
       matchesAny(filters.basis, [threat.basis]) &&
+      matchesAny(filters.statuses, [statusOf(statuses, threat.id)]) &&
       matchesAny(filters.confidenceLabels, [threat.confidenceLabel]) &&
       matchesAny(filters.stride, strideCodes) &&
       matchesAny(filters.owasp, owaspCodes) &&
@@ -157,6 +163,7 @@ export function hasActiveFilters(filters: Partial<ThreatFilters> = {}): boolean 
     !unconstrained(filters.confidenceLabels) ||
     !unconstrained(filters.priorities) ||
     !unconstrained(filters.basis) ||
+    !unconstrained(filters.statuses) ||
     toText(filters.search).trim() !== ""
   );
 }

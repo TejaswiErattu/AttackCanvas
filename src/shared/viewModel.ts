@@ -19,6 +19,9 @@ import type {
  * absent values are `null`, `[]` or `{ x: 0, y: 0 }`. Built by src/client/adapter.ts.
  */
 
+/** Where a component sits relative to the outside world; rated by src/client/exposure.ts. */
+export type Exposure = "external" | "edge" | "internal";
+
 export type CodeLabel<Code extends string> = { code: Code; label: string };
 
 export type GraphNode = {
@@ -30,6 +33,10 @@ export type GraphNode = {
   threatCount: number;
   maxSeverity: Severity | null;
   technologies: string[];
+  /** What is worth protecting here, from the model. */
+  assets: string[];
+  /** Where it sits relative to the outside world (src/client/exposure.ts). */
+  exposure: Exposure;
 };
 
 export type GraphEdge = {
@@ -39,6 +46,14 @@ export type GraphEdge = {
   label: string;
   crossesTrustBoundary: boolean;
   dataClassification: DataClassification;
+};
+
+/** A trust boundary as the diagram draws it: its name and the components inside it. */
+export type TrustBoundaryView = {
+  id: string;
+  name: string;
+  /** In the model's order. A component may appear in more than one boundary. */
+  componentIds: string[];
 };
 
 export type EvidenceItem = {
@@ -72,6 +87,12 @@ export type ThreatCardData = {
   basis: Basis;
   basisLabel: string;
   componentNames: string[];
+  /**
+   * Everything the threat affects, as a reader names it: its components, then each data
+   * flow as "Source → Target". A threat about a flow alone would otherwise show no
+   * affected location at all.
+   */
+  affectedNames: string[];
   /**
    * Component ids (graph nodes), in the same order as componentNames. Kept apart from
    * dataFlowIds because the schema only makes ids unique within one collection: a flow
@@ -140,6 +161,8 @@ export type DashboardViewModel = {
   fixNowTotal: number;
   nodes: GraphNode[];
   edges: GraphEdge[];
+  /** In the model's order; the diagram puts a component in the first one that lists it. */
+  boundaries: TrustBoundaryView[];
   /** Sorted by priority, then risk (impact x likelihood), highest first. */
   threats: ThreatCardData[];
   assumptions: string[];

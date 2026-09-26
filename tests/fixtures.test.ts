@@ -487,13 +487,13 @@ describe("a gap-backed threat on the demo fixture", () => {
     const view = toDashboardViewModel(withGapThreat());
     const card = view.threats.find((t) => t.id === "gap-backed")!;
 
-    expect(card.confidenceReasons[0]).toContain("missing-control finding");
+    expect(card.confidenceReasons[0]).toContain("a security control the code checks could not find");
     expect(card.confidenceReasons.join("\n")).not.toMatch(/[+-]\d\.\d\d/);
-    expect(card.confidenceReasons.at(-1)).toMatch(/^Confidence 60% \(medium\)\. .*do not add up/);
+    expect(card.confidenceReasons.at(-1)).toMatch(/^Confidence 60% \(medium\)\. .*not scores that add up/);
 
     const sql = view.threats.find((t) => t.id === "sql-injection-note-search")!;
     expect(sql.confidenceReasons).toContain("+0.35 code evidence");
-    expect(sql.confidenceReasons.join("\n")).not.toContain("do not add up");
+    expect(sql.confidenceReasons.join("\n")).not.toContain("not scores that add up");
   });
 });
 

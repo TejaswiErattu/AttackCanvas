@@ -1,0 +1,170 @@
+# Gap detector adversarial review
+
+Goal: make `src/server/detect/gaps.ts` report a gap for a control that IS present. One
+section per `GapKind`; each entry names how a present control is missed, the fix type
+(**code** change, **lower** certainty, or **doc**umented limitation), an estimate in
+minutes, and a sketch of the smallest repository that triggers the false gap. Sketches use
+the factories in `tests/gapSamples.ts` so they become tests in `tests/detect.gaps.test.ts`.
+
+Written before any code changed (2026-09-25). Fix status is tracked in the commit log; the
+documented limitations live in `docs/known-limitations.md` under "Gap detector".
+
+### Outcome
+
+Line numbers in this document refer to the review baseline, commit `443abe0`.
+
+Every **code** entry landed in one commit per kind (`1d4f6b0` through `3f7823e`), each with
+tests in `tests/detect.gaps.test.ts` built from the sketch; every **lower** entry landed in
+`b9c0aca`. Two fixes are narrower than the sketch, on purpose:
+
+- **3d** skips the rate-limit gap only for server-side OIDC handlers that own the login route
+  (`express-openid-connect`, `keycloak-connect`, `passport-auth0`, `passport-openidconnect`,
+  `@clerk/express`, `supertokens-node`), not for every hosted provider: the sample repository
+  has a Next app on Clerk beside an Express `/login` that still needs a limiter.
+- **8b** skips the password gap on a passwordless dependency (`otplib`, `speakeasy`, magic
+  link, WebAuthn) but not on "no file mentions a password": a handler that delegates to
+  `users.authenticate(req.body)` says nothing either, and the plain `/login` case must
+  stay reported.
+
+**Commit granularity.** The playbook asks for "one commit each" per code-change fix.
+There are 40 code-change entries and they landed in 13 commits, one per gap kind. That was
+a deliberate choice made in the approved plan: the entries for one kind edit the same
+check function and the same constant lists, so separate commits would have been a chain
+of overlapping edits to the same lines, each unable to build its test file cleanly
+without the one before. The consequence is that one gap kind reverts as a unit, not one
+entry at a time. Each entry still has its own named test (`1a:`, `2b:` and so on) inside
+that kind's `describe("adversarial: <kind>")` block. Splitting now would mean rewriting
+history, which is out of scope. The mapping is:
+
+| Kind | Entries | Commit |
+|---|---|---|
+| authz_missing | 1a, 1b, 1c | `1d4f6b0` |
+| authn_missing | 2a, 2b, 2c | `e5dd527` |
+| rate_limit_missing | 3a, 3b, 3c, 3d | `9050256` |
+| csrf_missing | 4a, 4b, 4c | `a878bc6` |
+| security_headers_missing | 5a, 5b, 5c | `bd696f6` |
+| input_validation_missing | 6a, 6b, 6c, 6d | `1d1fc78` |
+| transport_insecure | 7a, 7b, 7d, 7e | `3a4ea68` |
+| password_storage_weak | 8a, 8b | `03c08ad` |
+| logging_missing | 9a, 9b, 9c | `043421f` |
+| error_handling_gap | 10a, 10b, 10c | `d9545c0` |
+| cors_permissive | 11a, 11b | `2d69170` |
+| supply_chain_integrity | 12a, 12c, 12d, 12e | `d516020` |
+| client_secret_storage | 13a, 13d | `3f7823e` |
+| certainty lowerings | 2d, 4d, 4e, 5d, 7c, 8c, 11c, 12b | `b9c0aca` |
+
+Two pinned certainties moved with their entries: a bare `cors()` with no credentials is now
+0.5 (11a) and a missing lockfile is 0.35 (12b).
+
+
+Each entry: how a present control is missed; fix type (**code** / **lower** / **doc**); estimated minutes; sketch of the smallest repository that triggers the false gap. Every sketch is written so `tests/gapSamples.ts` factories (`expressRepo`, `manifest`, `file`) can express it.
+
+## 1. authz_missing (`gaps.ts:494-522`)
+
+- **1a. Ownership check in the handler body is not a "role check".** `ROLE_PATTERNS` (`auth.ts:69-76`) only knows requireRole/hasRole/isAdmin/role ===/roles.includes/scopes.includes. The most common authorization in the wild is an ownership comparison. Fix: **code**, 10 min — add ownership patterns to `ROLE_PATTERNS`: `req.user.id !==`/`===`, `userId: req.user`, `\bowner(?:Id)?\b\s*[!=]==?`, `\b(?:can|authorize|checkPermission|hasPermission|ability)\w*\s*\(`, `\bwith(?:Role|Permission)\w*\s*\(`. Sketch:
+  ```js
+  // package.json {express}, package-lock.json, src/app.js
+  app.get("/posts/:id", requireAuth, async (req, res) => {
+    const post = await db.find(req.params.id);
+    if (post.ownerId !== req.user.id) return res.status(403).end();
+    res.json(post);
+  });
+  ```
+  → authz_missing 0.7 today.
+- **1b. Role guard applied at app/router level.** `app.use("/admin", requireAdmin)` sets `appLevelAuth.prefixes` for authn only; authz reads `fact.roleChecks` which come from the route text. Fix: **code**, 10 min — in `authzMissing`, skip a route covered (global or prefix) by a `.use()` guard whose name matches `/admin|role|permission|policy|can[A-Z]/`. Sketch: `app.use("/admin", requireAdmin);\napp.get("/admin/users", requireAuth, handler);` → authz gap 0.85 today.
+- **1c. Next App Router wrapper `withRole("admin", h)`.** `WRAPPED_EXPORT` captures `withRole`; `isGuardName("withRole")` is false (GUARD_NAME has `requireRole` only) so the route is *unauthenticated* AND has no role check → authn gap 0.9 plus nothing for authz. Fix: **code**, 5 min — add `role|permission` to `GUARD_NAME` and to `ROLE_PATTERNS` as `\bwith(?:Role|Permission)\w*\s*\(`. Sketch: `app/api/admin/users/route.ts`: `export const GET = withRole("admin", async () => Response.json([]));`.
+- **1d. Role check inside an imported guard with an uninformative name.** `const guard = require("@acme/auth").guard; app.get("/orders/:id", requireAuth, guard, h)` where `guard` checks ownership inside a workspace package. Neither the name nor the route text shows it, so authz_missing fires at 0.7. Names that say what they do (`requireAdmin`, `withRole`, `checkPermission`) are handled by 1b and 1c. Fix: **doc**, 0 min. Sketch: `expressRepo('const { guard } = require("@acme/auth");\napp.get("/orders/:id", requireAuth, guard, h)')`, with `packages/auth/index.js` holding the ownership check and not loaded.
+
+## 2. authn_missing (`gaps.ts:561-589`, `appLevelAuth` 448-478)
+
+- **2a. Next.js 16 renamed `middleware.ts` to `proxy.ts`.** `appLevelAuth` matches only `/middleware\.(ts|js)$/` (line 473). A Next 16 app with `proxy.ts` calling `auth()` gets every mutating route handler reported at 0.9. Fix: **code**, 5 min — `/(^|\/)(?:middleware|proxy)\.(?:ts|js)$/`. Sketch: `package.json {next: "16"}`, `proxy.ts`: `import { auth } from "@/auth"; export default auth((req) => {...}); export const config = { matcher: ["/api/:path*"] };`, `app/api/orders/route.ts`: `export async function POST() { return Response.json({}); }`.
+- **2b. Guard names outside `GUARD_NAME`.** `app.use(checkJwt)` (Auth0 quickstart), `app.use(expressjwt({...}))`, `app.use(clerkMiddleware())`, `router.use(verifySession)`, `app.use(jwtCheck)`: none contain `auth|protect|require(User|Login|Role)|isAdmin|verify(Token|Jwt)|logged_?in`. Fix: **code**, 5 min — extend `GUARD_NAME` with `jwt|clerk|guard|verify(?:Session|User)|session(?:Guard|Required)`. Sketch: `const { expressjwt } = require("express-jwt");\napp.use(expressjwt({ secret, algorithms: ["HS256"] }));\napp.post("/orders", handler);` → 0.9 today.
+- **2c. Inline `require` in `.use()`.** `app.use(require("./middleware/auth"))`: `middlewareName` returns `require`, not a guard. Fix: **code**, 10 min — in `appLevelAuth`, when an argument is `require("x")`/`import("x")`, judge the specifier's basename with `isGuardName`. Sketch: `app.use(require("./middleware/requireAuth"));\napp.post("/orders", handler);`.
+- **2d. Prefix guard + unresolved router mount.** `app.use("/api", requireAuth); app.use("/api", wrap(usersRouter));` — `mountPrefixes` drops the wrapped mount (by design), the route stays `/users`, so `coveredByAppAuth` fails the prefix test. Fix: **lower**, 2 min — when `appLevelAuth.prefixes` is non-empty and the route's file is not the file that registered the prefix, certainty 0.9 → 0.6 (the guard may cover it via a mount we could not resolve). Sketch: `src/app.js`: `app.use("/api", requireAuth); app.use("/api", logged(usersRouter));`, `src/routes/users.js`: `router.post("/users", handler);`.
+- **2e. Guard registered in a file the loader did not fetch.** `src/server.js` does `app.use(requireAuth)` and mounts `src/app.js`, but the repository is past the 300-file cap and `src/server.js` was not loaded. Every mutating route in `src/app.js` is reported at 0.9. Fix: **doc**, 0 min. Sketch: `[manifest({express}), LOCKFILE, expressApp('app.post("/orders", h)')]` with the guard-registering `src/server.js` absent from the loaded files.
+
+## 3. rate_limit_missing (`gaps.ts:628-652`, worker variant 1530-1563)
+
+- **3a. Reverse-proxy limiting in config.** nginx `limit_req_zone`/`limit_req`, HAProxy `stick-table`, Caddy `rate_limit`: `configMentions` looks for `throttl|rate[_-]?limit` in `.yaml|.json|.toml|.conf`; `limit_req` does not match, and `Caddyfile` has no extension. Fix: **code**, 5 min — pattern `throttl|rate[_-]?limit|limit_req|limit_conn|stick-table`, file filter adds `Caddyfile|nginx\.conf|\.conf$`. Sketch: `nginx.conf`: `limit_req_zone $binary_remote_addr zone=login:10m rate=5r/m; ... location /login { limit_req zone=login; }`, plus `expressRepo('app.post("/login", h)')`.
+- **3b. Packages not in `RATE_LIMIT_DEPS`.** `express-brute` (the classic login limiter), `rate-limit-redis`, `koa2-ratelimit`, `elysia-rate-limit`, `@nestjs/throttler` ✓, `bottleneck`. Fix: **code**, 3 min — add `express-brute`, `koa2-ratelimit`, `elysia-rate-limit`, `rate-limit-redis`, `@hono-rate-limiter/` prefix. Sketch: `expressRepo('const ExpressBrute = require("express-brute"); const brute = new ExpressBrute(store); app.post("/login", brute.prevent, h)', {"express-brute": "^1"})`.
+- **3c. Hand-rolled limiter named for the behaviour, not the mechanism.** `loginAttempts`, `bruteForceGuard`, `lockout`: `RATE_LIMIT_USAGE` needs `rate_limit|throttle|slowDown`. Fix: **code**, 3 min — add `brute[_-]?force|lock(?:out|Account)|attempts?(?:Remaining|Left|Count)` to `RATE_LIMIT_USAGE`. Sketch: `expressRepo('const bruteForce = require("./bruteForce");\napp.post("/login", bruteForce, h)')`.
+- **3d. Login delegated to a hosted IdP.** `/login` redirects to Auth0/Clerk/Cognito; the brute-force target is theirs. `delegatesAuth(ctx)` already exists for password_storage_weak. Fix: **code**, 3 min — `if (delegatesAuth(ctx)) return []` in `rateLimitMissing`. Sketch: `expressRepo('app.get("/login", (req,res)=>res.redirect(auth0.loginUrl()))', {"express-openid-connect": "^2"})` (after 8a adds that dep to `DELEGATED_EXACT`).
+- **3e. Limiter dep in a workspace manifest that was not loaded.** Dependencies are the union of every loaded `package.json`, so a truncated monorepo loses one. The detector has no truncation signal (`LoadedRepo.truncated` exists in the loader and could be threaded through later). Fix: **doc**, 0 min. Sketch: `apps/api/src/app.js` with `app.post("/login", limiter, h)` where `limiter` comes from `packages/security`, whose `package.json` declares `express-rate-limit` and was not loaded.
+
+## 4. csrf_missing (`gaps.ts:759-796`)
+
+- **4a. JSON-only API.** A mutating route that only accepts `application/json` (no `urlencoded`, no multipart) cannot be hit by a simple cross-site request; CSRF needs a form-encodable body. The detector fires on any cookie signal + any non-`/api` mutating route. Fix: **code**, 10 min — if source has `express.json(`/`bodyParser.json(`/`fastify` and no `urlencoded(`/`multer`/`formidable`/`busboy`, certainty 0.8 → 0.45 and expectation says why. Sketch: `expressRepo('app.use(express.json());\napp.post("/checkout", h)', {"express-session": "^1"})` → 0.8 today.
+- **4b. Origin / Fetch-Metadata check.** `if (req.get("origin") !== ALLOWED) return res.status(403)` or `req.headers["sec-fetch-site"] === "same-origin"` is an OWASP-listed CSRF defence with no `csrf` in any name. Fix: **code**, 10 min — treat a source that reads `sec-fetch-site`, or compares `headers.origin|get("origin")|headers.referer` with `===|!==|includes|startsWith|endsWith`, as protection. Sketch: `expressRepo('app.use((req,res,next)=>{ if (req.method!=="GET" && req.get("origin")!==ORIGIN) return res.sendStatus(403); next(); });\napp.post("/checkout", h)', {"cookie-session": "^2"})`.
+- **4c. Packages missing from `CSRF_DEPS`.** `csrf-sync`, `@dr.pogodin/csurf` and `koa-csrf` were not listed. A csrf-named export is already caught by `checksCsrfToken`, so the real miss is an export with no "csrf" in its name. Fix: **code**, 2 min, add the three packages. Sketch: `expressRepo('const { doubleSubmit } = require("csrf-sync");\napp.use(doubleSubmit);\napp.post("/checkout", h)', {"csrf-sync": "^4", "express-session": "^1"})`.
+- **4d. Next.js.** `next-auth` is a `SESSION_DEPS` entry, so any Next app with a non-`/api` mutating App Router route (`app/checkout/route.ts` → `/checkout`) fires at 0.8, though Server Actions have built-in origin checks and route handlers are usually JSON. Fix: **lower**, 2 min — certainty 0.5 for `next_app`/`next_pages` routes. Sketch: `package.json {next, next-auth}`, `app/checkout/route.ts`: `export async function POST(req) { const body = await req.json(); ... }`.
+- **4e. Monorepo: cookies in one app, mutating routes in another.** `apps/web` uses `express-session`; `apps/api` is bearer-only with `POST /orders`. Both signals are repo-wide. Fix: **lower**, 3 min — when more than one manifest is loaded and the route's top-level directory differs from every cookie-signal file's, certainty 0.5. Sketch: `apps/web/package.json {express, express-session}`, `apps/web/src/app.js` (`app.use(session(...))`), `apps/api/package.json {express}`, `apps/api/src/app.js` (`app.post("/orders", h)`).
+
+## 5. security_headers_missing (`gaps.ts:840-878`, HTML variant 1371-1409)
+
+- **5a. Headers set by the reverse proxy or host config.** `nginx.conf` `add_header Content-Security-Policy`, `Caddyfile` `header`, `firebase.json` hosting `headers`, `app.yaml`, `static.json`: `isHeaderConfig` knows only `next.config.*`, `vercel.json`, `netlify.toml`, `_headers`, and the `named` scan covers source + those configs. Fix: **code**, 10 min — scan every non-source loaded file with `/\.(?:conf|ya?ml|toml|json)$|Caddyfile$/` for `Content-Security-Policy|X-Frame-Options|Strict-Transport-Security` (comment-masked), and add `firebase.json` (`"headers"`) to `declaresHeaders`. Sketch: `expressRepo('app.get("/x", h)')` + `file("nginx.conf", 'server { add_header Content-Security-Policy "default-src \'self\'"; }')` → 0.9 today.
+- **5b. Framework header middleware not named helmet.** Hono `secureHeaders()` from `hono/secure-headers`, `express-secure-headers`, `secure-headers`. Fix: **code**, 3 min, add them to the header packages and accept a `secureHeaders(` call. Sketch: `package.json {hono}`, `src/index.ts`: `import { secureHeaders } from "hono/secure-headers"; app.use(secureHeaders());`.
+- **5c. CSP meta tag in a server template.** `views/layout.ejs` with `<meta http-equiv="Content-Security-Policy" …>`: `named` scans js/ts + configs, never `.ejs/.pug/.hbs/.html`. Fix: **code**, 5 min — include files with `/\.(?:html?|ejs|pug|hbs|handlebars|njk|liquid)$/` in the `scanned` list (reuse `hasCspMeta` from web.ts). Sketch: `expressRepo('app.set("view engine","ejs"); app.get("/", (req,res)=>res.render("index"))')` + `file("views/index.ejs", '<meta http-equiv="Content-Security-Policy" content="default-src \'self\'">')`.
+- **5d. helmet declared but its `app.use(helmet())` is in an unloaded file.** The "declared but unused" rule is deliberate; with 300-file truncation it fires at 0.9. Fix: **lower**, 2 min — when `hasAny(ctx.deps, HEADER_DEPS)` but no usage found, certainty 0.6. Sketch: `[manifest({express, helmet}), LOCKFILE, expressApp('app.get("/x", h)')]` → 0.9 today.
+
+## 6. input_validation_missing (`gaps.ts:912-943`)
+
+- **6a. Validation library re-exported from a local module or workspace package.** `import { z } from "@/lib/validation"`, `import { UserSchema } from "@acme/schemas"`: `packageRoot` is not in `VALIDATION_LIBS`. Fix: **code**, 5 min — also accept a specifier matching `/schema|valid/i`, and accept usage in the body: `/\.(?:parse|safeParse|parseAsync|validate|validateSync|assert|validateSync)\s*\(|\bvalidationResult\s*\(|\bmatchedData\s*\(/`. Sketch: `[manifest({express}), LOCKFILE, expressApp('const { UserSchema } = require("@acme/schemas");\napp.post("/x", (req,res)=>{ const u = UserSchema.parse(req.body); res.json(u); })')]` → 0.55 today.
+- **6b. Router/app-level validation middleware.** `router.use(validateBody(schema))`, `app.use(mongoSanitize())`, `app.use(celebrate(...))`: not in `route.middleware`. Fix: **code**, 10 min — reuse the `.use(` scanner: any `.use()` argument name matching `/valid|schema|sanitiz|celebrate/` → skip (or 0.35). Sketch: `expressRepo('const validate = require("./validate");\nrouter.use(validate);\napp.use(router);\napp.post("/x", (req,res)=>res.json(req.body))')`.
+- **6c. express-validator chains as route middleware.** `app.post("/x", body("email").isEmail(), h)`: middleware name is `body`, which `/valid|schema|sanitiz/` misses (the file imports express-validator, which is in the set, so this passes only when the import is in the same file; a shared `validators.js` fails). Fix: **code**, 2 min — extend the middleware-name test with `\b(?:body|check|param|query|header|cookie)\b`. Sketch: `[manifest({express, "express-validator": "^7"}), LOCKFILE, expressApp('const { rules } = require("./validators");\napp.post("/x", rules.email, (req,res)=>res.json(req.body))'), file("src/validators.js", 'const { body } = require("express-validator"); exports.rules = { email: body("email").isEmail() };')]`.
+- **6d. Libraries missing from `VALIDATION_LIBS`.** `celebrate`, `express-joi-validation`, `zod-express-middleware`, `@hono/zod-validator`, `arktype`, `io-ts`, `runtypes`, `effect`, `validator`, `express-openapi-validator`, `typia`. The middleware-name test `/valid|schema|sanitiz/` also misses `celebrate`. Fix: **code**, 2 min. Sketch: `[manifest({express, celebrate}), LOCKFILE, expressApp('const { celebrate, Joi } = require("celebrate");\napp.post("/x", celebrate({ body: Joi.object() }), h)')]`.
+- **6e. Firestore rules validated by a Cloud Function trigger.** The rules allow a write without reading `request.resource`, and a `functions/` `onCreate` trigger validates and deletes bad documents. The gap stays at 0.8 with the caveat in its expectation. Fix: **doc**, 0 min. Sketch: `firestore.rules` with `allow write: if request.auth != null;` plus `functions/index.js` with `onDocumentCreated("posts/{id}", validateOrDelete)`.
+
+## 7. transport_insecure (`gaps.ts:976-1039`)
+
+- **7a. Cluster-internal hosts with dots.** `http://minio.storage:9000`, `http://payments.default.svc`, `http://api.default.svc.cluster.local` (`.local` ✓), Docker Compose service names from a loaded compose file. Fix: **code**, 10 min — `isExternalHost` also returns false for hosts ending `.svc` or containing `.svc.`, and for any service name declared under `services:` in a loaded compose file (build the set once in `buildContext`). Sketch: `[file("docker-compose.yml", "services:\n  minio.storage:\n    image: minio\n"), file("src/c.js", 'fetch("http://minio.storage:9000/b")')]`.
+- **7b. Namespace/identifier URLs beyond `NON_ENDPOINT_HOSTS`.** `http://ogp.me/ns#` (in every Open Graph `<html prefix>`), `http://ns.adobe.com/...`, `http://iptc.org`, `http://www.w3.org` ✓. Fix: **code**, 2 min — add `ogp\.me`, `ns\.adobe\.com`, `iptc\.org`, `rdfs\.org`, `dublincore\.org`. Sketch: `file("src/Head.tsx", '<html prefix="og: http://ogp.me/ns#">')`.
+- **7c. `rejectUnauthorized: false` guarded by a dev/test condition.** Fix: **lower**, 3 min — when `NODE_ENV|isDev|development|test` appears within 3 lines before the match, certainty 0.75 → 0.5. Sketch: `file("src/db.js", 'const ssl = process.env.NODE_ENV === "production" ? true : { rejectUnauthorized: false };')`.
+- **7d. Dev-only compose files.** `docker-compose.dev.yml`, `docker-compose.override.yml`, `docker-compose.local.yml` publishing `5432:5432`. Fix: **code**, 3 min — skip compose files whose basename contains `dev|local|test|override`. Sketch: `[file("docker-compose.dev.yml", 'services:\n  db:\n    ports:\n      - "5432:5432"\n')]` → 0.75 today.
+- **7e. Tooling directories not excluded by `isScannable`.** `bin/`, `tools/`, `mocks/` are scanned; `bin/dev-proxy.js` with `http://` fires. Fix: **code**, 2 min — add `bin|tools|mocks?` to the exclusion list in `isScannable`. Sketch: `file("tools/proxy.js", 'fetch("http://api.acme-corp.com")')`.
+
+## 8. password_storage_weak (`gaps.ts:1101-1136`)
+
+- **8a. Delegation / KDF packages not listed.** `express-openid-connect` (Auth0), `keycloak-connect`, `supertokens-node`, `@ory/`, `@okta/`, `openid-client`, `passport-saml`; KDFs: `passport-local-mongoose` (pbkdf2 inside), `bcrypt-ts`, `hash-wasm`, `sodium-native`/`libsodium-wrappers` (`crypto_pwhash`). Fix: **code**, 3 min — extend `DELEGATED_EXACT`, `DELEGATED_PREFIX`, `KDF_DEPS`, and the usage regex with `crypto_pwhash|sodium`. Sketch: `expressRepo('app.post("/login", passport.authenticate("local"), h)', {pg: "^8", "passport-local-mongoose": "^8"})` → 0.8 today.
+- **8b. Passwordless login.** `/login` handles magic links / OTP / WebAuthn; there is no password to hash. Fix: **code**, 3 min — skip when no loaded source mentions `password|passwd|pwd` at all, or when deps include `otplib|speakeasy|@simplewebauthn/|passport-magic-link`. Sketch: `expressRepo('app.post("/login", async (req,res)=>{ await sendMagicLink(req.body.email); res.end(); })', {pg: "^8", otplib: "^12"})`.
+- **8c. Credentials provider that verifies against an external API.** next-auth `CredentialsProvider` whose `authorize` does `fetch("https://idp/…")`; the repo stores no password. Fix: **lower**, 2 min — when `delegatesAuth` fails only because Credentials is present, and the Credentials body contains `fetch(`/`axios`, certainty 0.8 → 0.5. Sketch: `[manifest({next, "next-auth": "^4", pg}), file("pages/api/auth/[...nextauth].ts", 'CredentialsProvider({ async authorize(c) { const r = await fetch("https://idp.example.com/login", …); return r.ok ? await r.json() : null; } })'), file("pages/api/login.ts", "export default function handler(req,res){res.end()}")]`.
+- **8d. KDF wrapped in an unloaded module.** `import { hashPassword } from "@/lib/password"` where that module uses argon2, but it was not loaded or lives in a workspace package whose manifest was not loaded. Fix: **doc**, 0 min. Sketch: `expressRepo('const { hashPassword } = require("@acme/crypto");\napp.post("/register", async (req,res)=>{ await db.insert(await hashPassword(req.body.password)); res.end(); })', {pg: "^8"})` with `packages/crypto` absent.
+
+## 9. logging_missing (`gaps.ts:1163-1200`)
+
+- **9a. Method and call shapes not matched.** `this.logger.log(...)` (NestJS Logger), `log("user login")` from a re-exported helper, `audit(req, "login")`, `logEvent(`, `logger("...")`. The regex needs `logger|log` `.` `info|warn|error|debug|fatal|trace`. Fix: **code**, 5 min — add `log|verbose` to the method list and accept `\b(?:log|audit|logEvent|auditLog|logAudit|recordEvent|track)\w*\s*\(` in sensitive route bodies. Sketch: `expressRepo('const { audit } = require("./audit");\napp.post("/login", (req,res)=>{ audit(req, "login"); res.end(); })')` → 0.7 today.
+- **9b. Logging middleware applied at app level.** `app.use(requestLogger)`, `app.use(pinoHttp())`, `app.use(morgan("combined"))` when the logging dep is in an unloaded workspace manifest. Fix: **code**, 5 min — skip when any `.use(` argument name matches `/log|morgan|audit/i` (reuse the `.use` scanner from `appLevelAuth`). Sketch: `expressRepo('const requestLogger = require("./logging");\napp.use(requestLogger);\napp.post("/login", h)')`.
+- **9c. Packages missing from `LOGGING_DEPS`.** `pino-http`, `express-winston`, `koa-logger`, `log4js`, `@google-cloud/logging`, `@aws-sdk/client-cloudwatch-logs`, `applicationinsights`, `newrelic`, `@newrelic/`, `@honeycombio/`, `posthog-node`. Fix: **code**, 2 min. Sketch: `expressRepo('app.post("/login", h)', {"pino-http": "^10"})`.
+- **9d. Platform request logging.** Vercel, Render or CloudWatch captures stdout and access logs with no trace in the repository, though that is not security logging of the authentication event itself. Fix: **doc**, 0 min. Sketch: `expressRepo('app.post("/login", h)')` plus a `render.yaml` with no logging config, deployed where the platform keeps access logs.
+
+## 10. error_handling_gap (`gaps.ts:1234-1260`)
+
+- **10a. Error middleware registered with a call expression.** `app.use(Sentry.Handlers.errorHandler())`, `app.use(errorHandler({ log }))`: `ERROR_REGISTRATION` requires `.use(<name>)` with nothing after the name, so the `(...)` breaks it. Fix: **code**, 3 min — `/\.use\s*\(\s*[\w$.]*(?:error|exception)[\w$]*\s*(?:\([^()]*\))?\s*\)/i`. Sketch: `expressRepo('app.get("/a", async (req,res)=>{ await load(); res.end(); });\napp.use(errorHandler({ log: true }));')` → 0.5 today.
+- **10b. Async wrappers.** `express-async-handler`, `express-promise-router`, `@awaitjs/express` forward rejections; local `catchAsync(async (req,res)=>…)` too. Fix: **code**, 5 min — add the three deps to `forwardsRejections`; treat a body whose handler is wrapped in `/\b(?:asyncHandler|catchAsync|wrapAsync|asyncWrap|tryCatch|catchErrors|wrap)\w*\s*\(\s*(?:async\b|\()/` as handled. Sketch: `expressRepo('const { catchAsync } = require("./utils");\napp.get("/a", catchAsync(async (req,res)=>{ await load(); res.end(); }));')`.
+- **10c. `.catch(next)` on the awaited promise.** `await load().catch(next)` has `await`, no `try`. Fix: **code**, 2 min — a body containing `\.catch\s*\(` counts as handled. Sketch: `expressRepo('app.get("/a", async (req,res,next)=>{ const x = await load().catch(next); res.json(x); });')`.
+- **10d. Error handler in a file the loader did not fetch.** The gap is already at 0.5 for this reason. Fix: **doc**, 0 min. Sketch: `expressRepo('app.get("/a", async (req,res)=>{ await load(); res.end(); })')` where `src/errors.js` holds `app.use((err, req, res, next) => ...)` and was not loaded.
+
+## 11. cors_permissive (`gaps.ts:1270-1306`)
+
+- **11a. Wildcard on a non-credentialed public endpoint.** `Access-Control-Allow-Origin: *` cannot be combined with credentials by browsers; on a public read-only API, CDN asset route, `/health`, `/.well-known/`, or `app.options("*", cors())` preflight it is the intended policy. Fix: **code**, 10 min — certainty 0.9 only when `credentials\s*:\s*true` or `Access-Control-Allow-Credentials` appears in the same file, or the origin is *reflected* (`req.headers.origin`, `origin: true`); a plain `*`/bare `cors()` without credentials is 0.5 and the expectation says "public data only". Sketch: `expressRepo('app.use("/public", cors());\napp.get("/public/feed", h)', {cors: "^2"})` → 0.9 today.
+- **11b. Locally defined `cors` function.** `function cors(opts = { origin: ALLOWED }) {…}` + `app.use(cors())`: the call is bare, the package is not involved. Fix: **code**, 5 min — in `corsInFile`, only count `cors(` when the file binds `cors` from the `cors`/`@koa/cors`/`@fastify/cors`/`hono/cors` package (`packageRefs`) or requires it inline. Sketch: `[manifest({express}), LOCKFILE, expressApp('function cors(o = { origin: "https://app.example.com" }) { return (req,res,next)=>next(); }\napp.use(cors());')]`.
+- **11c. Dev-only branch.** `if (process.env.NODE_ENV !== "production") app.use(cors())`. Fix: **lower**, 3 min — same NODE_ENV-within-3-lines rule as 7c, 0.9 → 0.5. Sketch: `expressRepo('if (process.env.NODE_ENV === "development") app.use(cors());', {cors: "^2"})`.
+- **11d. Wildcard header text that is not a header write.** The wildcard-header scan keeps string literals on purpose so `res.setHeader("Access-Control-Allow-Origin", "*")` is caught, which means a string that only mentions the header is reported too. Fix: **doc**, 0 min. Sketch: `file("src/errors.js", 'throw new Error("Access-Control-Allow-Origin: \"*\" is not allowed here")')`.
+
+## 12. supply_chain_integrity (`gaps.ts:1315-1352`, CDN variant 1425-1451)
+
+- **12a. Manifest with no dependencies.** `dependencies: {}` (or absent) + no lockfile → "declares dependencies and no lockfile" at 0.5. Fix: **code**, 3 min — skip the lockfile finding when every manifest declares zero deps/devDeps/optionalDeps. Sketch: `[manifest({})]` → gap today (this exact case is pinned in `tests/detect.gaps.test.ts:216`, so the test changes to `manifest({express})`).
+- **12b. Lockfile present in the repository but not loaded.** `yarn.lock` and `pnpm-lock.yaml` over 200 KB are ignored at load (only `package-lock.json` has the 1 MiB exemption), and any lockfile can fall past the 300-file cap. Fix: **lower**, 2 min, 0.5 to 0.35, plus a **doc** entry; `deno.lock` also joins the lockfile list. Sketch: `[manifest({express}), file("yarn.lock", "x".repeat(250_000))]`, where the loader ignores the lockfile so the detector never sees it.
+- **12c. Benign postinstall.** `husky install`, `prisma generate`, `patch-package`, `next telemetry disable`, `electron-builder install-app-deps`: the repo's own script is not a third-party integrity risk. Fix: **code**, 5 min — read the script value; when it matches `/^(?:husky|prisma generate|patch-package|next telemetry|electron-builder|ngcc|tsc\b|npm run build|pnpm build|yarn build)/` certainty 0.9 → 0.4. Also skip entirely when `.npmrc` has `ignore-scripts=true`. Sketch: `[manifest({prisma}, {postinstall: "prisma generate"}), LOCKFILE]` → 0.9 today.
+- **12d. CDN scripts that forbid SRI.** Stripe.js (`js.stripe.com/v3`), Google Tag Manager/Analytics, Google Maps, reCAPTCHA, hCaptcha, Cloudflare Turnstile, Facebook Pixel, Intercom, Segment: vendors serve mutable scripts and document that SRI must not be used. Fix: **code**, 5 min — host allowlist; such tags are dropped from `bare` (or reported at 0.3). Sketch: `[file("index.html", '<script src="https://js.stripe.com/v3/"></script>')]` → 0.9 today.
+- **12e. SRI injected at build time.** `webpack-subresource-integrity`, `vite-plugin-sri`, `rollup-plugin-sri` or `nuxt-security` add `integrity` to the emitted HTML, so the source template has none. Fix: **code**, 2 min, skip the CDN finding when one of those is declared. Sketch: `[manifest({}, {}, {"vite-plugin-sri": "^0.1"}), LOCKFILE, file("src/index.html", '<script src="https://cdn.jsdelivr.net/npm/x@1/x.js"></script>')]`.
+
+## 13. client_secret_storage (`gaps.ts:1462-1477`, `web.ts:147-180`)
+
+- **13a. Key name contains a secret word but is not a secret.** `tokenExpiresAt`, `refreshTokenExpiry`, `apiKeyName`, `csrfToken`/`xsrf-token` (double-submit by design), `publicKey`, `stripePublishableKey`, `recaptchaToken`, `anonToken`, `tokenCount`. `SECRET_KEY` is a substring test. Fix: **code**, 5 min — after the match, exclude keys matching `/expir|ttl|count|name|version|time|csrf|xsrf|public|publishable|anon|recaptcha|turnstile|captcha/i`. Sketch: `[file("src/auth.js", 'localStorage.setItem("tokenExpiresAt", String(Date.now()+3600e3));')]` → 0.75 today.
+- **13b. Encrypted or non-web storage wrappers (not a false gap).** `secureStorage.setItem("token")` and React Native `AsyncStorage.setItem("token")` are not matched, because the pattern requires `localStorage` or `sessionStorage`. This is a missed gap, recorded so the scope is explicit. Fix: **doc**, 0 min. Sketch: `file("src/auth.ts", 'await AsyncStorage.setItem("token", t);')` produces no gap.
+- **13c. Write in a test, mock or storybook file (already handled).** `isScannable` excludes those files, and the gap filters browser-storage facts to scannable files, so no false gap fires. Recorded so the filter is not removed by accident. Fix: **doc**, 0 min. Sketch: `file("src/__mocks__/auth.js", 'localStorage.setItem("token", "x");')` produces no gap.
+- **13d. Secret written then immediately removed (logout flow).** `localStorage.setItem("token", "")`/`removeItem("token")`: `removeItem` is not matched ✓; `setItem("token", "")` with an empty literal is matched. Fix: **code**, 2 min — skip when the second argument is an empty string literal or `null`. Sketch: `[file("src/logout.js", 'localStorage.setItem("token", "");')]`.
+
+Count of code-change fixes ≤ 15 min: 1a, 1b, 1c, 2a, 2b, 2c, 3a, 3b, 3c, 3d, 4a, 4b, 4c, 5a, 5b, 5c, 6a, 6b, 6c, 6d, 7a, 7b, 7d, 7e, 8a, 8b, 9a, 9b, 9c, 10a, 10b, 10c, 11a, 11b, 12a, 12c, 12d, 12e, 13a, 13d (40 entries, grouped into 13 commits by kind below). Certainty lowerings (one commit): 2d, 4d, 4e, 5d, 7c, 8c, 11c, 12b. Documented limitations: 1d, 2e, 3e, 6e, 8d, 9d, 10d, 11d, 13b, 13c.
+
+

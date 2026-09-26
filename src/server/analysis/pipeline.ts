@@ -105,6 +105,7 @@ import {
 } from "@/server/analysis/architecture";
 import { failedBatchOf, generateThreats } from "@/server/analysis/threats";
 import { assembleThreatModel } from "@/server/analysis/assemble";
+import { dedupe, userLimitations } from "@/server/analysis/limitations";
 import { selectQuestions, type QuestionEffects } from "@/server/questions";
 import { applyAnswers, type DeveloperAnswer } from "@/server/analysis/answers";
 import { AiError, type CallFailure, type ClaudeDeps, type RequestDiagnostic } from "@/server/ai/claude";
@@ -138,6 +139,10 @@ export const ANALYSIS_TTL_MS = 60 * 60 * 1000;
  * outcome a user could otherwise misread as "nothing to report" rather than "the
  * detector may not cover this framework".
  */
+/** Shown once when a threat title repeats wording aimed at automated tools. */
+export const INJECTION_ECHO_LIMITATION =
+  "A threat title repeats wording found in the repository that addresses automated tools. Read that threat critically: the repository may have tried to steer the analysis.";
+
 export const NO_GAPS_LIMITATION =
   "No control gaps were detected. This may mean the project is well configured, or " +
   "that its framework is outside the detector's JavaScript and TypeScript coverage.";
@@ -176,6 +181,13 @@ export type AnalysisState = {
   pending?: PendingAnswerState;
   threatModel?: ThreatModel;
   cost: AnalysisCost;
+  /**
+   * What the pipeline did that a developer debugging this run would want: dropped
+   * architecture items, gap fallback bindings, discarded threats, ignored answers, with
+   * the ids involved. Server-side only: never in the API response or the ThreatModel.
+   * Logged in development and saved by the eval runner.
+   */
+  diagnostics: string[];
   /** Non-fatal degradations (Semgrep down), surfaced as assemble's droppedStages. */
   droppedStages: string[];
   /**
@@ -250,6 +262,7 @@ export function createAnalysis(
     updatedAt: now,
     cost: { calls: 0, totalUsd: 0 },
     droppedStages: [],
+    diagnostics: [],
     isDemo: options.isDemo ?? false,
     deadlineAt: now + timeoutMs,
     timeoutMs,
@@ -317,6 +330,23 @@ export function countActiveAnalyses(): number {
     if (!state.isDemo && !TERMINAL_STAGES.has(state.stage)) count += 1;
   }
   return count;
+}
+
+/**
+ * The first stored job that is still in flight (not complete or failed, not a demo seed)
+ * and satisfies `matches`, in creation order, or undefined. The analyze route uses it
+ * to hand a duplicate submission the job that is already running for the same
+ * repository and level instead of starting a second paid run.
+ */
+export function findActiveAnalysis(
+  matches: (state: AnalysisState) => boolean,
+): AnalysisState | undefined {
+  sweepExpired();
+  for (const state of store.values()) {
+    if (state.isDemo || TERMINAL_STAGES.has(state.stage)) continue;
+    if (matches(state)) return state;
+  }
+  return undefined;
 }
 
 export function deleteAnalysis(id: string): void {
@@ -699,6 +729,22 @@ function logSkippedUnknowns(skipped: readonly { unknownId: string; reason: strin
   }
 }
 
+/**
+ * Records diagnostics on the job (deduplicated) and, in development, writes them to the
+ * log. log() refuses anything secret-shaped; that is swallowed, as a diagnostic line must
+ * never fail a finished analysis.
+ */
+function addDiagnostics(state: AnalysisState, lines: readonly string[]): void {
+  if (lines.length === 0) return;
+  state.diagnostics = dedupe([...state.diagnostics, ...lines]);
+  if (process.env.NODE_ENV !== "development") return;
+  try {
+    log("debug", "analysis diagnostics", { analysisId: state.id, diagnostics: [...lines] });
+  } catch {
+    // Nothing safe to say; the lines stay on the job.
+  }
+}
+
 function fail(state: AnalysisState, cause: unknown): AnalysisState {
   // One failure transition per job. An orphaned stage that later throws (its own
   // DeadlineError, or TIMEOUT from a stopped threat pool) reaches here again: it must not
@@ -847,7 +893,12 @@ async function runSteps(state: AnalysisState, deps: PipelineDeps): Promise<Analy
     threats: engine.threats,
     gaps: detector.gaps,
     assumptions: [],
-    limitations: [...architecture.limitations, ...engine.limitations, ...osvResult.limitations],
+    // Reader-facing: one plain sentence per kind of uncertainty. The merge's and the
+    // engine's own messages (component ids, batch numbers) go to diagnostics below.
+    limitations: userLimitations(
+      [...(architecture.notes ?? []), ...(engine.notes ?? [])],
+      osvResult.limitations,
+    ),
     droppedStages: state.droppedStages,
   });
   if (!assembled.ok) {
@@ -877,9 +928,16 @@ async function runSteps(state: AnalysisState, deps: PipelineDeps): Promise<Analy
       issues: fatalIssues.map(({ path, message }) => ({ path, message })),
     });
   }
-  const extraLimitations: string[] = outputIssues.map(
-    (issue) => `Output check "${issue.code}" flagged an item: ${issue.path}.`,
-  );
+  addDiagnostics(state, [
+    ...(architecture.notes ?? []).map((n) => n.detail),
+    ...(engine.notes ?? []).map((n) => n.detail),
+    ...outputIssues.map((issue) => `Output check "${issue.code}" flagged an item: ${issue.path}.`),
+  ]);
+  // Only injection_echo can reach here (the others are fatal above). The reader needs to
+  // know to read a title critically, not which JSON path matched.
+  const extraLimitations: string[] = outputIssues.some((issue) => issue.code === "injection_echo")
+    ? [INJECTION_ECHO_LIMITATION]
+    : [];
   if (noGaps) extraLimitations.push(NO_GAPS_LIMITATION);
 
   // E. questions engine (PAID only if a candidate qualifies) ----------------
@@ -897,7 +955,8 @@ async function runSteps(state: AnalysisState, deps: PipelineDeps): Promise<Analy
   // (questions, pending, threatModel) with no further await in between, so this is the
   // one checkpoint that guards all of it. See the module header.
   checkDeadline(state);
-  extraLimitations.push(...q.limitations);
+  // Question-engine messages name unknown ids; they are diagnostics, not limitations.
+  addDiagnostics(state, q.limitations);
 
   // F. patch questions + limitations back in, re-validate -------------------
   let finalized = finalizeModel({
@@ -982,6 +1041,8 @@ export async function resumeWithAnswers(
 
   return withDeadline(
     (async () => {
+      // applyAnswers already adds its reader-facing sentences to model.limitations; its
+      // diagnostic lines (question and threat ids) go to the job, not the model.
       const { model, limitations } = applyAnswers({
         model: threatModel,
         effects: pending.effects,
@@ -991,10 +1052,8 @@ export async function resumeWithAnswers(
 
       setStage(state, "finalizing");
 
-      const patched: ThreatModel = {
-        ...model,
-        limitations: [...model.limitations, ...limitations],
-      };
+      addDiagnostics(state, limitations);
+      const patched: ThreatModel = { ...model, limitations: dedupe(model.limitations) };
       const validated = validateThreatModel(patched);
       if (!validated.ok) {
         throw new AiError("AI_FAILURE", "answered threat model failed validation", {

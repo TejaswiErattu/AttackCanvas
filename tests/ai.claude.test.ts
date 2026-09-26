@@ -1650,6 +1650,7 @@ describe("callStructured, 4xx structural diagnostics", () => {
     expect(error).toBeInstanceOf(AiError);
     expect(error.request).toEqual({
       status: 400,
+      category: "unknown",
       errorType: "invalid_request_error",
       requestId: "req_0123456789abcdef",
       stage: "architecture",
@@ -1667,6 +1668,26 @@ describe("callStructured, 4xx structural diagnostics", () => {
     expect(serialized).not.toContain("PROVIDER_MESSAGE_MUST_NOT_BE_RECORDED");
     expect(serialized).not.toContain("A small app");
     expect(serialized).not.toContain("not json");
+  });
+
+  it("records the allowlisted category of the rejection, never the provider's message", async () => {
+    const creditError = Object.assign(new Error("400 PROVIDER_MESSAGE_MUST_NOT_BE_RECORDED"), {
+      status: 400,
+      request_id: "req_0123456789abcdef",
+      error: {
+        type: "error",
+        error: {
+          type: "invalid_request_error",
+          message: "Your credit balance is too low. PROVIDER_MESSAGE_MUST_NOT_BE_RECORDED",
+        },
+      },
+    });
+    const error = (await run(harness([creditError])).catch((e: unknown) => e)) as AiError;
+
+    expect(error.request?.category).toBe("credit_balance_low");
+    expect(error.request?.requestId).toBe("req_0123456789abcdef");
+    expect(JSON.stringify(error.request)).not.toContain("PROVIDER_MESSAGE_MUST_NOT_BE_RECORDED");
+    expect(error.message).not.toContain("PROVIDER_MESSAGE_MUST_NOT_BE_RECORDED");
   });
 
   it("records nothing structural for a non-4xx failure", async () => {

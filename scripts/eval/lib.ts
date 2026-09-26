@@ -66,6 +66,12 @@ export const EvalResultSchema = z.object({
   ranAt: z.string(),
   cost: z.object({ calls: z.number().int().min(0), totalUsd: z.number().min(0) }),
   threatModel: ThreatModelSchema,
+  /**
+   * The pipeline's diagnostics for the run (AnalysisState.diagnostics): what the merge,
+   * the threat engine and the questions dropped or rebound, with ids. Absent in results
+   * saved before diagnostics were split from the reader-facing limitations.
+   */
+  diagnostics: z.array(z.string()).optional(),
 });
 export type EvalResult = z.infer<typeof EvalResultSchema>;
 

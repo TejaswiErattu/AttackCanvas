@@ -25,7 +25,7 @@ const EVIDENCE: EvidenceItem[] = [
     summary: "Route handler reads the id straight from the request.",
     location: "src/app/api/notes/route.ts:14-18",
     snippet: "const id = request.nextUrl.searchParams.get('id')",
-    sourceLabel: "Deterministic detector",
+    sourceLabel: "Code analysis",
   },
   {
     kind: "scanner",
@@ -41,7 +41,7 @@ const EVIDENCE: EvidenceItem[] = [
     summary: "No authorisation middleware was found on this route.",
     location: null,
     snippet: null,
-    sourceLabel: "Deterministic detector",
+    sourceLabel: "Code analysis",
   },
 ];
 
@@ -59,6 +59,7 @@ const THREAT: ThreatCardData = {
   basis: "evidence_backed",
   basisLabel: "Confirmed by evidence",
   componentNames: ["Notes API", "Postgres"],
+  affectedNames: ["Notes API", "Postgres"],
   componentIds: ["notes-api", "postgres"],
   dataFlowIds: ["api-db"],
   confidenceReasons: ["+0.35 code evidence", "Confidence 82% (high)"],
@@ -130,8 +131,8 @@ describe("ThreatCard confidence reasons", () => {
 
   it("shows qualitative gap wording untouched, adding no numbers or totals of its own", () => {
     const lines = [
-      "Supported by a missing-control finding; how much it adds depends on the detector's certainty",
-      "Confidence 40% (medium). Point values for these reasons are not shown, so they do not add up to it.",
+      "Based on a security control the code checks could not find. This is a prediction, not a confirmed flaw",
+      "Confidence 40% (medium). These are reasons, not scores that add up to it.",
     ];
     renderCard({ confidenceReasons: lines }, true);
 
