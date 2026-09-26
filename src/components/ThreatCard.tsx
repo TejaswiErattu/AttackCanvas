@@ -63,7 +63,14 @@ type ThreatCardProps = {
   repo?: IssueRepo;
   /** True when this threat was not in the previous run of the repository. */
   isNew?: boolean;
+  /**
+   * True for a threat below 25% confidence, shown only because the reader asked. The card
+   * is greyed, says so, and drops the priority badge: such a threat is never in Fix now.
+   */
+  belowCutoff?: boolean;
 };
+
+export const BELOW_CUTOFF_TEXT = "Below 25% confidence: unverified, review before acting";
 
 function Chip({ children, title }: { children: React.ReactNode; title?: string }) {
   return (
@@ -90,6 +97,7 @@ export default function ThreatCard({
   onStatusChange,
   repo,
   isNew = false,
+  belowCutoff = false,
 }: ThreatCardProps) {
   const [copied, setCopied] = useState<"idle" | "copied" | "failed">("idle");
   // The same threat can be on the page twice (Fix now and the list), so ids need to be unique.
@@ -115,9 +123,10 @@ export default function ThreatCard({
     <article
       data-testid={`threat-card-${threat.id}`}
       aria-labelledby={headingId}
+      data-below-cutoff={belowCutoff ? "true" : undefined}
       className={`relative overflow-hidden rounded-2xl border bg-surface/80 transition-colors before:absolute before:inset-y-0 before:left-0 before:w-1 ${stripe} ${
         selected ? "border-mint/70 bg-surface-2/90" : "border-line hover:border-line-strong"
-      }`}
+      } ${belowCutoff ? "opacity-60 grayscale" : ""}`}
     >
       <button
         type="button"
@@ -132,11 +141,20 @@ export default function ThreatCard({
           >
             {SEVERITY_TEXT[threat.severity] ?? threat.severity}
           </span>
-          <span
-            className={`rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${priorityClass}`}
-          >
-            {threat.priorityLabel}
-          </span>
+          {belowCutoff ? (
+            <span
+              data-testid={`below-cutoff-badge-${threat.id}`}
+              className="rounded-full border border-dashed border-line-strong px-2.5 py-0.5 text-[11px] font-semibold text-muted"
+            >
+              {BELOW_CUTOFF_TEXT}
+            </span>
+          ) : (
+            <span
+              className={`rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${priorityClass}`}
+            >
+              {threat.priorityLabel}
+            </span>
+          )}
           <span className="text-xs text-muted">
             {threat.confidence}% &middot;{" "}
             {CONFIDENCE_TEXT[threat.confidenceLabel] ?? threat.confidenceLabel}

@@ -35,6 +35,7 @@ import type {
   FilterOptions,
   GraphEdge,
   GraphNode,
+  HiddenThreatCardData,
   MitigationData,
   QuestionData,
   SeverityCounts,
@@ -48,7 +49,10 @@ import type {
 
 const FIX_NOW_LIMIT = 5;
 
-/** CLAUDE.md rule 2: threats below this confidence are hidden. Display-layer only. */
+/**
+ * CLAUDE.md rule 2: threats below this confidence are hidden by default. Display-layer
+ * only: they are kept apart in `hiddenThreats` so the list can show them on request.
+ */
 const HIDE_BELOW_CONFIDENCE = 0.25;
 
 const SEVERITY_ORDER: readonly Severity[] = ["critical", "high", "medium", "low"];
@@ -301,7 +305,7 @@ function buildFilterOptions(
   const stride = StrideSchema.options
     .filter((code) => usedStride.has(code))
     .map((code) => ({ code, label: STRIDE_LABELS[code] }));
-  const owasp =Owasp2025Schema.options
+  const owasp = Owasp2025Schema.options
     .filter((code) => usedOwasp.has(code))
     .map((code) => ({ code, label: OWASP_LABELS[code] }));
 
@@ -325,8 +329,12 @@ export function toDashboardViewModel(model: ThreatModel): DashboardViewModel {
   // filter options all derive from it, so a hidden threat cannot leak into any of them.
   // filter() returns a new array, so sorting it leaves model.threats untouched.
   const visible = model.threats.filter(isVisible).sort(compareThreats);
+  const hidden = model.threats.filter((t) => !isVisible(t)).sort(compareThreats);
   const lookups = buildLookups(model);
   const threats = visible.map((threat) => toThreatCard(threat, lookups));
+  const hiddenThreats = hidden.map(
+    (threat): HiddenThreatCardData => ({ ...toThreatCard(threat, lookups), belowCutoff: true }),
+  );
   // Selected by the server-computed priority only; nothing is re-scored here.
   // Rated on the full flow list, so a sub-view that hides a flow never changes a badge.
   const exposure = exposureMap(
@@ -358,6 +366,8 @@ export function toDashboardViewModel(model: ThreatModel): DashboardViewModel {
       componentIds: [...boundary.componentIds],
     })),
     threats,
+    hiddenThreats,
+    hiddenCounts: countBySeverity(hidden),
     assumptions: [...model.assumptions],
     limitations: [...model.limitations],
     filterOptions: buildFilterOptions(model, visible),

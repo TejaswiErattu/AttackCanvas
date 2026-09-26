@@ -191,12 +191,24 @@ Level 2's measured range comes from six NodeGoat runs (mean $3.37). With
 ## Working with findings
 
 - **Status.** Mark a finding Open, Fixed, Accepted risk or False positive. A status is your
-  own triage note and never changes severity, confidence or priority.
+  own triage note and never changes severity, confidence or priority. It is saved against
+  the threat's identity (title, components and OWASP categories), not its per-run number,
+  so a Fixed status follows the same threat to the next run.
+- **Low-confidence threats.** Threats below 25% confidence are hidden by default. "Show N
+  low-confidence threats" lists them after the others, greyed and marked "Below 25%
+  confidence: unverified, review before acting". They never count toward the severity
+  tiles or Fix now; the summary adds one "Including low-confidence" line when any exist.
 - **Issue links.** Each finding can open a pre-filled GitHub issue (title, evidence, severity,
   confidence and basis) in the analysed repository. You review and submit it; nothing is
   created for you. A finding too long for a link offers "Copy as Markdown" instead.
 - **Drift.** "Since last run" compares this analysis with the previous one of the same
-  repository and marks components, flows and threats that were added or removed.
+  repository, over every scored threat including those below 25%. It lists new threats,
+  threats **not found this run**, and threats that **dropped below 25%**. Neither group
+  means a threat was fixed: the analysis can miss what an earlier run found, and only a
+  status you set says a threat is closed.
+- **Still open from the last run.** A threat the last run listed, that this run did not
+  re-find, and that you have not marked Fixed or False positive stays below the list,
+  greyed, with its original severity and confidence. It is not counted in this run.
 
 Status and drift history are stored **per browser**, in `localStorage`. Nothing is saved on
 a server, so another browser, device or teammate does not see them.

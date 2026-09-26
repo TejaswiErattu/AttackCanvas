@@ -750,8 +750,25 @@ describe("hiding low-confidence threats (CLAUDE.md rule 2)", () => {
     const withHidden = toDashboardViewModel(modelWith(hiddenThreat(0.249)));
     const withoutHidden = toDashboardViewModel(modelWith());
 
-    it("gives the same view as if the threat did not exist", () => {
-      expect(withHidden).toEqual(withoutHidden);
+    it("gives the same view as if the threat did not exist, apart from the hidden list", () => {
+      const { hiddenThreats, hiddenCounts, ...rest } = withHidden;
+      const { hiddenThreats: none, hiddenCounts: zero, ...restWithout } = withoutHidden;
+      expect(rest).toEqual(restWithout);
+      expect(hiddenThreats.map((t) => t.id)).toEqual(["hidden-one"]);
+      expect(hiddenCounts).toEqual({ critical: 0, high: 0, medium: 0, low: 1 });
+      expect(none).toEqual([]);
+      expect(zero).toEqual({ critical: 0, high: 0, medium: 0, low: 0 });
+    });
+
+    it("keeps it as a full card flagged belowCutoff, without touching visible cards", () => {
+      const [hidden] = withHidden.hiddenThreats;
+      expect(hidden.belowCutoff).toBe(true);
+      expect(hidden).toMatchObject({
+        id: "hidden-one", severity: "low", confidence: 25, priority: "fix_now",
+        componentNames: ["Email Service"],
+      });
+      expect(hidden.confidenceReasons.length).toBeGreaterThan(0);
+      expect("belowCutoff" in withHidden.threats[0]).toBe(false);
     });
 
     it("excludes it from counts", () => {
@@ -782,6 +799,7 @@ describe("hiding low-confidence threats (CLAUDE.md rule 2)", () => {
 
   it("counts a threat exactly at the boundary", () => {
     const view = toDashboardViewModel(modelWith(hiddenThreat(0.25)));
+    expect(view.hiddenThreats).toEqual([]);
 
     expect(view.counts).toEqual({ critical: 0, high: 1, medium: 0, low: 1 });
     expect(view.fixNow.map((t) => t.id)).toEqual(["visible-one", "hidden-one"]); // high before low, whatever the risk

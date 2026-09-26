@@ -8,6 +8,11 @@
  * re-tallied from the threat list, because the counts are part of the scored result
  * (CLAUDE.md rule 2), not a display convenience.
  *
+ * Two lines add context without changing those counts: "Including low-confidence" adds the
+ * server's counts of threats below 25% confidence (DashboardViewModel.hiddenCounts), and the
+ * carried-forward line says how many of the last run's threats were not re-found and not
+ * marked fixed. Neither feeds the tiles or Fix now.
+ *
  * The severity palette is exported because ThreatCard and ArchitectureGraph must colour
  * the same severity identically; it lives here rather than in a new shared module.
  */
@@ -69,7 +74,24 @@ type SeveritySummaryProps = {
   fixNowCount: number;
   /** The reader's own triage counts over the listed threats; omitted when not tracked. */
   statusCounts?: StatusCounts;
+  /** Counts of threats below 25% confidence; the extra line shows only when any exist. */
+  hiddenCounts?: SeverityCounts | null;
+  /** Threats from the last run not re-found and not marked fixed (src/client/carryForward.ts). */
+  carriedCount?: number;
 };
+
+/** "Including low-confidence: Critical a, High b, ..." (visible + hidden), or null when none are hidden. */
+export function includingLowConfidenceLine(
+  counts: SeverityCounts | undefined,
+  hiddenCounts: SeverityCounts | null | undefined,
+): string | null {
+  const hiddenTotal = SEVERITY_ORDER.reduce((sum, s) => sum + readCount(hiddenCounts ?? undefined, s), 0);
+  if (hiddenTotal === 0) return null;
+  const parts = SEVERITY_ORDER.map(
+    (s) => `${SEVERITY_TEXT[s]} ${readCount(counts, s) + readCount(hiddenCounts ?? undefined, s)}`,
+  );
+  return `Including low-confidence: ${parts.join(", ")}`;
+}
 
 function readCount(counts: SeverityCounts | undefined, severity: Severity): number {
   const value = counts?.[severity];
@@ -81,7 +103,10 @@ export default function SeveritySummary({
   basisCounts,
   fixNowCount,
   statusCounts,
+  hiddenCounts = null,
+  carriedCount = 0,
 }: SeveritySummaryProps) {
+  const including = includingLowConfidenceLine(counts, hiddenCounts);
   const total = SEVERITY_ORDER.reduce(
     (sum, severity) => sum + readCount(counts, severity),
     0,
@@ -117,6 +142,12 @@ export default function SeveritySummary({
         </div>
       </dl>
 
+      {including ? (
+        <p data-testid="including-low-confidence" className="mt-2 text-sm text-muted">
+          {including}
+        </p>
+      ) : null}
+
       {total > 0 ? (
         <div aria-hidden="true" className="mt-4 flex h-1.5 w-full overflow-hidden rounded-full bg-surface-3">
           {SEVERITY_ORDER.map((severity) => {
@@ -134,8 +165,14 @@ export default function SeveritySummary({
 
       <p className="mt-4 text-sm text-muted">
         {total} threat{total === 1 ? "" : "s"} shown. Threats below 25% confidence are
-        hidden by the analysis.
+        hidden by default.
       </p>
+
+      {carriedCount > 0 ? (
+        <p data-testid="carried-count" className="mt-1 text-sm text-muted">
+          {carriedCount} from the last run not re-found and not marked fixed.
+        </p>
+      ) : null}
 
       {statusCounts ? (
         <p data-testid="status-counts" className="mt-1 text-sm text-muted">
