@@ -342,6 +342,61 @@ describe("loadFixtureRepo -- filesystem security", () => {
   });
 });
 
+describe("loadFixtureRepo -- root parameter", () => {
+  const scratch: string[] = [];
+
+  afterEach(() => {
+    for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true });
+  });
+
+  it("loads a fixture from a subdirectory of the fixture root", async () => {
+    const root = join(FIXTURE_ROOT, "zz-root-sub");
+    scratch.push(root);
+    mkdirSync(join(root, "app", "src"), { recursive: true });
+    writeFileSync(join(root, "app", "src", "index.js"), "const ok = true;\n");
+
+    const loaded = await loadFixtureRepo(FIXTURE_OWNER, "app", undefined, root);
+    expect(loaded.files.map((f) => f.path)).toEqual(["src/index.js"]);
+    expect(loaded.summary.name).toBe("app");
+  });
+
+  it("still accepts the fixture root itself, which is the default", async () => {
+    const loaded = await loadFixtureRepo(FIXTURE_OWNER, "canary-repo", undefined, FIXTURE_ROOT);
+    expect(loaded.files.length).toBeGreaterThan(0);
+  });
+
+  it("rejects a root outside the fixture directory", async () => {
+    await expect(loadFixtureRepo(FIXTURE_OWNER, "server", undefined, "src")).rejects.toThrow(
+      IngestError,
+    );
+  });
+
+  it("rejects a root that climbs out with ..", async () => {
+    await expect(
+      loadFixtureRepo(FIXTURE_OWNER, "src", undefined, join(FIXTURE_ROOT, "..", "..")),
+    ).rejects.toThrow(IngestError);
+  });
+
+  it("rejects a root that is a symlink to a directory outside the fixture root", async () => {
+    const outside = join(tmpdir(), `attackcanvas-fixture-root-link-${process.pid}`);
+    mkdirSync(join(outside, "app"), { recursive: true });
+    writeFileSync(join(outside, "app", "secret.js"), "const leaked = true;\n");
+    const link = join(FIXTURE_ROOT, "zz-root-link");
+    symlinkSync(outside, link);
+    scratch.push(link, outside);
+
+    await expect(loadFixtureRepo(FIXTURE_OWNER, "app", undefined, link)).rejects.toThrow(
+      IngestError,
+    );
+  });
+
+  it("rejects a root that does not exist", async () => {
+    await expect(
+      loadFixtureRepo(FIXTURE_OWNER, "app", undefined, join(FIXTURE_ROOT, "zz-missing-root")),
+    ).rejects.toThrow(IngestError);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Reuse of the normal loader's classification / ignored-path / size policy
 // ---------------------------------------------------------------------------
