@@ -208,7 +208,7 @@ export function isScannable(path: string): boolean {
   const normalized = normalizeSeparators(path);
   return (
     /\.(?:ts|tsx|js|jsx|mjs|cjs)$/.test(normalized) &&
-    !/(^|\/)(?:tests?|__tests__|__mocks__|e2e|examples?|fixtures?|docs?|scripts|stories)\//i.test(
+    !/(^|\/)(?:tests?|__tests__|__mocks__|mocks?|e2e|examples?|fixtures?|docs?|scripts|stories|bin|tools)\//i.test(
       normalized,
     ) &&
     !/\.(?:test|spec|stories)\.[jt]sx?$/.test(normalized) &&
@@ -1136,9 +1136,33 @@ const DB_PORTS = new Set([5432, 3306, 27017, 6379]);
 
 /** Hosts that appear in `http://` URLs without being a network endpoint. */
 const NON_ENDPOINT_HOSTS =
-  /^(?:(?:www\.)?w3\.org|json-schema\.org|(?:www\.)?schema\.org|schemas\.[\w.-]+|xmlns\.com|purl\.org|maven\.apache\.org|www\.apache\.org|opensource\.org|unlicense\.org|(?:www\.)?sitemaps\.org|example\.(?:com|org|net))$/i;
+  /^(?:(?:www\.)?w3\.org|json-schema\.org|(?:www\.)?schema\.org|schemas\.[\w.-]+|xmlns\.com|purl\.org|maven\.apache\.org|www\.apache\.org|opensource\.org|unlicense\.org|(?:www\.)?sitemaps\.org|example\.(?:com|org|net)|ogp\.me|ns\.adobe\.com|(?:www\.)?iptc\.org|rdfs\.org|(?:www\.)?dublincore\.org|(?:www\.)?openarchives\.org)$/i;
 
-function isExternalHost(rawHost: string): boolean {
+/** Kubernetes service addressing: `name.namespace.svc`, `name.namespace.svc.cluster.local`. */
+const CLUSTER_HOST = /\.svc(?:\.|$)/;
+
+/**
+ * Service names declared under `services:` in loaded compose files. Inside the compose
+ * network they are hostnames, and one with a dot (`minio.storage`) would otherwise read
+ * as an external host.
+ */
+function composeServiceNames(files: readonly DetectorInput[]): Set<string> {
+  const names = new Set<string>();
+  for (const file of files) {
+    if (!isCompose(file.path)) continue;
+    const lines = maskYamlComments(file.content).split("\n");
+    const start = lines.findIndex((line) => /^services\s*:/.test(line));
+    if (start === -1) continue;
+    for (const line of lines.slice(start + 1)) {
+      if (/^\S/.test(line)) break; // next top-level key
+      const service = /^ {2}([\w.-]+)\s*:/.exec(line);
+      if (service) names.add(service[1].toLowerCase());
+    }
+  }
+  return names;
+}
+
+function isExternalHost(rawHost: string, internal: ReadonlySet<string> = new Set()): boolean {
   const host = rawHost.toLowerCase();
   if (/^[${%]/.test(host)) return false;
   if (!host.includes(".")) return false;
@@ -1147,22 +1171,30 @@ function isExternalHost(rawHost: string): boolean {
   if (/^172\.(?:1[6-9]|2\d|3[01])\./.test(host)) return false;
   if (/\.(?:local|localhost|internal|test|invalid|example)$/.test(host))
     return false;
+  if (CLUSTER_HOST.test(host) || internal.has(host)) return false;
   return !NON_ENDPOINT_HOSTS.test(host);
 }
 
-function firstInsecureUrl(text: string): number | undefined {
+function firstInsecureUrl(text: string, internal: ReadonlySet<string>): number | undefined {
   for (const match of text.matchAll(
     /\bhttp:\/\/([^\s'"`/:?#)\]]+|\[[^\]]+\])/gi,
   )) {
-    if (isExternalHost(match[1])) return match.index;
+    if (isExternalHost(match[1], internal)) return match.index;
   }
   return undefined;
 }
 
-function transportInFile(ctx: Ctx, file: DetectorInput): Finding | undefined {
+/** A compose file for development only: its published ports never face the internet. */
+const DEV_COMPOSE = /dev|local|test|override/i;
+
+function transportInFile(
+  ctx: Ctx,
+  file: DetectorInput,
+  internal: ReadonlySet<string>,
+): Finding | undefined {
   const text = ctx.uncommented(file);
   const tls = /rejectUnauthorized\s*:\s*false/.exec(text);
-  const url = firstInsecureUrl(text);
+  const url = firstInsecureUrl(text, internal);
   const offset = tls?.index ?? url;
   if (offset === undefined) return undefined;
 
@@ -1212,12 +1244,13 @@ function exposedDatabasePort(file: DetectorInput): Finding | undefined {
 
 function transportInsecure(ctx: Ctx): Finding[] {
   const found: Finding[] = [];
+  const internal = composeServiceNames(ctx.files);
   for (const file of ctx.source) {
-    const finding = transportInFile(ctx, file);
+    const finding = transportInFile(ctx, file, internal);
     if (finding) found.push(finding);
   }
   for (const file of ctx.files) {
-    if (!isCompose(file.path)) continue;
+    if (!isCompose(file.path) || DEV_COMPOSE.test(basename(file.path))) continue;
     const finding = exposedDatabasePort(file);
     if (finding) found.push(finding);
   }

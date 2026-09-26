@@ -1124,3 +1124,38 @@ describe("adversarial: input_validation_missing", () => {
     expect(kindsOf(CASES[5].absent)).toContain("input_validation_missing");
   });
 });
+
+describe("adversarial: transport_insecure", () => {
+  it.each([
+    ["a Kubernetes service address", `fetch("http://payments.default.svc/pay");`],
+    ["a cluster-local address", `fetch("http://api.default.svc.cluster.local/x");`],
+    ["an Open Graph namespace", `const prefix = "og: http://ogp.me/ns#";`],
+    ["an Adobe XMP namespace", `const NS = "http://ns.adobe.com/xap/1.0/";`],
+  ])("7a/7b: %s is not an external endpoint", (_name, code) => {
+    expect(kindsOf([file("src/c.js", code)])).not.toContain("transport_insecure");
+  });
+
+  it("7a: a compose service name with a dot is an internal host", () => {
+    const repo = [
+      file("docker-compose.yml", `services:\n  minio.storage:\n    image: minio/minio\n  api:\n    build: .\n`),
+      file("src/c.js", `fetch("http://minio.storage:9000/bucket");`),
+    ];
+    expect(kindsOf(repo)).not.toContain("transport_insecure");
+  });
+
+  it("7d: a database port published only in a development compose file is not exposure", () => {
+    const repo = [file("docker-compose.dev.yml", `services:\n  db:\n    image: postgres:16\n    ports:\n      - "5432:5432"\n`)];
+    expect(kindsOf(repo)).not.toContain("transport_insecure");
+  });
+
+  it("7e: tooling directories are not application source", () => {
+    expect(kindsOf([file("tools/proxy.js", `fetch("http://api.acme-corp.com/v1");`)])).not.toContain("transport_insecure");
+    expect(isScannable("bin/dev-proxy.js")).toBe(false);
+  });
+
+  it("still reports a plaintext request to a real host and a production compose port", () => {
+    expect(kindsOf(CASES[6].absent)).toContain("transport_insecure");
+    const compose = [file("docker-compose.yml", `services:\n  db:\n    ports:\n      - "5432:5432"\n`)];
+    expect(kindsOf(compose)).toContain("transport_insecure");
+  });
+});
