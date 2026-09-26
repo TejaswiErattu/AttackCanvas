@@ -269,17 +269,15 @@ function isNotText(cause: unknown, path: string): boolean {
 }
 
 /**
- * A lockfile the client refused as too large. The classifier keeps a lockfile out of the
- * fetch when its tree size is over the cap, but the tree size can be missing or wrong,
- * and a lockfile is optional: the dependency scan falls back to version ranges without
- * it. So this one file is skipped instead of failing the whole load.
+ * A file the client refused as too large (over its 1 MiB response cap). The classifier
+ * keeps such a file out of the fetch when the tree reports its size, but the tree size
+ * can be missing or wrong. The per-file cap is a policy about that one file, exactly as
+ * it is when the size is known, so the file is skipped and counted as ignored instead of
+ * failing the whole load. A lockfile is the same case with the same answer: the
+ * dependency scan falls back to version ranges without it.
  */
-function isLockfileTooLarge(cause: unknown, reason: string): boolean {
-  return (
-    reason === LOCKFILE_REASON &&
-    cause instanceof GitHubMcpError &&
-    cause.code === "REPO_TOO_LARGE"
-  );
+function isTooLarge(cause: unknown): boolean {
+  return cause instanceof GitHubMcpError && cause.code === "REPO_TOO_LARGE";
 }
 
 export async function loadRepositoryWith(
@@ -315,7 +313,7 @@ export async function loadRepositoryWith(
         );
         return { file, content };
       } catch (cause) {
-        if (isNotText(cause, file.path) || isLockfileTooLarge(cause, file.reason)) {
+        if (isNotText(cause, file.path) || isTooLarge(cause)) {
           return { file, content: undefined };
         }
         throw cause;
@@ -324,12 +322,12 @@ export async function loadRepositoryWith(
   );
 
   // Real UTF-8 byte length against the shared per-file/total-budget policy (see
-  // applySizePolicy). "not text" is a fetch-layer concept the shared policy doesn't
-  // know about, so it is filtered out here first.
+  // applySizePolicy). "not text" and "too large to fetch" are fetch-layer outcomes the
+  // shared policy doesn't know about, so they are filtered out here first.
   const sized: SizedCandidate[] = [];
   for (const { file, content } of fetched) {
     if (content === undefined) {
-      ignored += 1; // not text
+      ignored += 1; // not text, or over the client's response cap
       continue;
     }
     sized.push({

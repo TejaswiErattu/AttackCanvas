@@ -477,8 +477,10 @@ describe("the 1 MiB hard limit: graceful, and stated", () => {
     expect(note).toContain("larger than the 1 MiB that can be fetched");
   });
 
-  it("does not swallow other failures: a too-large source file still fails the load", async () => {
-    const entries = [file("package.json"), ...SOURCE_ENTRIES];
+  it("skips a too-large source file the same way, counting it as ignored (bug bash case 4)", async () => {
+    // The per-file cap is a policy about that one file, as it is when the tree reports
+    // the size; a size the tree omitted must not turn it into a whole-load failure.
+    const entries = [file("package.json"), ...SOURCE_ENTRIES, file("src/d.ts")];
     const deps = githubDeps(
       entries,
       { "package.json": PACKAGE_JSON },
@@ -488,9 +490,9 @@ describe("the 1 MiB hard limit: graceful, and stated", () => {
           : undefined,
     );
 
-    await expect(loadRepositoryWith(deps, "o", "r")).rejects.toMatchObject({
-      code: "REPO_TOO_LARGE",
-    });
+    const result = await loadRepositoryWith(deps, "o", "r");
+    expect(result.files.map((f) => f.path)).not.toContain("src/a.ts");
+    expect(result.skipped.ignored).toBe(1);
   });
 
   it("does not swallow a rate limit on the lockfile either", async () => {
