@@ -9,6 +9,7 @@
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run --passWithNoTests",
+    "bench": "NODE_ENV=development tsx scripts/eval/bench.ts",
     "try": "tsx"
   },
   "dependencies": {
