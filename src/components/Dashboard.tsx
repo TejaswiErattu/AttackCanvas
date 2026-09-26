@@ -18,7 +18,7 @@
  * clears the node's highlight.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { DashboardViewModel } from "@/shared/viewModel";
 import { assignBoundaries } from "@/client/layoutGraph";
 import {
@@ -32,6 +32,16 @@ import {
   filterThreats,
   type ThreatFilters,
 } from "@/client/filterThreats";
+import {
+  loadStatuses,
+  orderByStatus,
+  setStatus,
+  splitFullName,
+  statusStorageKey,
+  summarise,
+  type FindingStatus,
+  type StatusMap,
+} from "@/client/findingStatus";
 import type { BasisCounts, HiddenSummary } from "@/client/useAnalysis";
 import ArchitectureGraph from "@/components/ArchitectureGraph";
 import ArchitectureLegend from "@/components/ArchitectureLegend";
@@ -56,6 +66,15 @@ type DashboardProps = {
   hiddenSummary?: HiddenSummary | null;
 };
 
+/** Reading window.localStorage itself can throw when storage is blocked. */
+function safeLocalStorage(): Storage | null {
+  try {
+    return typeof window === "undefined" ? null : window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
 /** Date only, and never locale-dependent, so the markup is stable between renders. */
 function formatAnalyzedAt(value: string): string {
   const parsed = new Date(value);
@@ -70,7 +89,30 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
   const [diagramView, setDiagramView] = useState<DiagramView>("overall");
 
   const threats = useMemo(() => view.threats ?? [], [view.threats]);
-  const visible = useMemo(() => filterThreats(threats, filters), [threats, filters]);
+
+  // Triage statuses live in this browser only. Read after mount so the first render
+  // matches the server's, and re-read if the repo or ref changes.
+  const statusKey = useMemo(() => {
+    const name = splitFullName(view.repo?.fullName ?? "");
+    return name && view.repo?.ref ? statusStorageKey(name.owner, name.repo, view.repo.ref) : null;
+  }, [view.repo?.fullName, view.repo?.ref]);
+  const [statuses, setStatuses] = useState<StatusMap>({});
+  useEffect(() => {
+    setStatuses(statusKey ? loadStatuses(safeLocalStorage(), statusKey) : {});
+  }, [statusKey]);
+  const handleStatusChange = (id: string, status: FindingStatus) => {
+    if (!statusKey) return;
+    setStatuses((current) => setStatus(safeLocalStorage(), statusKey, current, id, status));
+  };
+  const statusCounts = useMemo(
+    () => summarise(threats.map((t) => t.id), statuses),
+    [threats, statuses],
+  );
+
+  const visible = useMemo(
+    () => orderByStatus(filterThreats(threats, filters, statuses), statuses),
+    [threats, filters, statuses],
+  );
 
   const selectedThreat = useMemo(
     () => threats.find((threat) => threat.id === selectedThreatId) ?? null,
@@ -289,6 +331,7 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
             basisCounts={basisCounts}
             // The server's total, not the length of the (capped) list below.
             fixNowCount={fixNowTotal}
+            statusCounts={statusCounts}
           />
 
           <section
@@ -361,6 +404,8 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
                   threat={threat}
                   selected={selectedThreatId === threat.id}
                   onSelect={handleSelectThreat}
+                  status={statuses[threat.id] ?? "open"}
+                  onStatusChange={statusKey ? handleStatusChange : undefined}
                 />
               </li>
             ))}
@@ -387,6 +432,8 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
               onSelect={handleSelectThreat}
               totalCount={threats.length}
               hiddenSummary={hiddenSummary}
+              statuses={statuses}
+              onStatusChange={statusKey ? handleStatusChange : undefined}
             />
           </div>
         </div>

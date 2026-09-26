@@ -22,6 +22,12 @@
  */
 
 import type { ThreatCardData } from "@/shared/viewModel";
+import {
+  FINDING_STATUSES,
+  FINDING_STATUS_LABELS,
+  isFindingStatus,
+  type FindingStatus,
+} from "@/client/findingStatus";
 import EvidencePanel from "@/components/EvidencePanel";
 import { SEVERITY_BADGE_CLASS, SEVERITY_TEXT } from "@/components/SeveritySummary";
 
@@ -48,6 +54,9 @@ type ThreatCardProps = {
   threat: ThreatCardData;
   selected: boolean;
   onSelect: (id: string) => void;
+  /** The reader's triage status. Omitted where statuses are not tracked; then no selector. */
+  status?: FindingStatus;
+  onStatusChange?: (id: string, status: FindingStatus) => void;
 };
 
 function Chip({ children, title }: { children: React.ReactNode; title?: string }) {
@@ -67,7 +76,14 @@ function DetailHeading({ children }: { children: React.ReactNode }) {
   );
 }
 
-export default function ThreatCard({ threat, selected, onSelect }: ThreatCardProps) {
+export default function ThreatCard({
+  threat,
+  selected,
+  onSelect,
+  status = "open",
+  onStatusChange,
+}: ThreatCardProps) {
+  const statusId = `threat-${threat.id}-status`;
   const headingId = `threat-${threat.id}-title`;
   const detailsId = `threat-${threat.id}-details`;
   const severityClass =
@@ -105,6 +121,14 @@ export default function ThreatCard({ threat, selected, onSelect }: ThreatCardPro
             {threat.confidence}% &middot;{" "}
             {CONFIDENCE_TEXT[threat.confidenceLabel] ?? threat.confidenceLabel}
           </span>
+          {status !== "open" ? (
+            <span
+              data-testid={`status-badge-${threat.id}`}
+              className="rounded-full border border-line-strong bg-ink-2 px-2.5 py-0.5 text-[11px] font-semibold text-fg"
+            >
+              {FINDING_STATUS_LABELS[status]}
+            </span>
+          ) : null}
           <span aria-hidden="true" className="ml-auto text-subtle">
             {selected ? "\u2212" : "+"}
           </span>
@@ -137,6 +161,31 @@ export default function ThreatCard({ threat, selected, onSelect }: ThreatCardPro
           ))}
         </div>
       </button>
+
+      {onStatusChange ? (
+        // Outside the header button: a control nested in a button is invalid and would
+        // toggle the card as well.
+        <div className="flex items-center gap-2 pb-3 pl-6 pr-4 sm:pr-5">
+          <label htmlFor={statusId} className="text-xs text-muted">
+            Status
+          </label>
+          <select
+            id={statusId}
+            value={status}
+            onChange={(event) => {
+              const value = event.target.value;
+              if (isFindingStatus(value)) onStatusChange(threat.id, value);
+            }}
+            className="rounded-full border border-line-strong bg-ink px-3 py-1 text-xs text-fg focus-visible:border-mint"
+          >
+            {FINDING_STATUSES.map((value) => (
+              <option key={value} value={value}>
+                {FINDING_STATUS_LABELS[value]}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
 
       {selected ? (
         <div id={detailsId} className="space-y-6 border-t border-line py-5 pl-6 pr-4 sm:pr-5">

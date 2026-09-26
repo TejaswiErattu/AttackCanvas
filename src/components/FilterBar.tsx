@@ -25,6 +25,7 @@ import {
   EMPTY_FILTERS,
   type ThreatFilters,
 } from "@/client/filterThreats";
+import { FINDING_STATUSES, FINDING_STATUS_LABELS } from "@/client/findingStatus";
 import { SEVERITY_TEXT } from "@/components/SeveritySummary";
 
 const PRIORITY_VALUES: readonly Priority[] = ["fix_now", "fix_soon", "monitor"];
@@ -178,6 +179,19 @@ export default function FilterBar({ options, filters, onChange }: FilterBarProps
           selected={filters.basis}
           onToggle={(value) =>
             onChange(toggleFilterValue(filters, "basis", value as never))
+          }
+        />
+
+        <CheckboxGroup
+          legend="Status"
+          name="status"
+          options={FINDING_STATUSES.map((value) => ({
+            value,
+            label: FINDING_STATUS_LABELS[value],
+          }))}
+          selected={filters.statuses}
+          onToggle={(value) =>
+            onChange(toggleFilterValue(filters, "statuses", value as never))
           }
         />
 

@@ -6,11 +6,14 @@
  * DashboardViewModel.threats is already sorted by priority, then risk, then confidence,
  * then id (src/client/adapter.ts). That ordering is part of the scored result, so this
  * component never re-sorts — filtering narrows the list but leaves the sequence intact.
+ * (The dashboard alone moves handled findings after open ones within a priority band; see
+ * orderByStatus in src/client/findingStatus.ts.)
  */
 
 import type { ThreatCardData } from "@/shared/viewModel";
 import type { HiddenReason, HiddenSummary } from "@/client/useAnalysis";
 import ThreatCard from "@/components/ThreatCard";
+import { statusOf, type FindingStatus, type StatusMap } from "@/client/findingStatus";
 
 type ThreatListProps = {
   threats: readonly ThreatCardData[];
@@ -20,6 +23,8 @@ type ThreatListProps = {
   totalCount: number;
   /** Scored and hidden counts over the whole model, for an honest empty state. */
   hiddenSummary?: HiddenSummary | null;
+  statuses?: StatusMap;
+  onStatusChange?: (id: string, status: FindingStatus) => void;
 };
 
 const REASON_TEXT: Record<HiddenReason, string> = {
@@ -57,6 +62,8 @@ export default function ThreatList({
   onSelect,
   totalCount,
   hiddenSummary = null,
+  statuses = {},
+  onStatusChange,
 }: ThreatListProps) {
   const items = Array.isArray(threats) ? threats : [];
 
@@ -80,6 +87,8 @@ export default function ThreatList({
               threat={threat}
               selected={selectedId === threat.id}
               onSelect={onSelect}
+              status={statusOf(statuses, threat.id)}
+              onStatusChange={onStatusChange}
             />
           </li>
         ))}
