@@ -189,7 +189,7 @@ type Ctx = {
   code: (file: DetectorInput) => string;
   uncommented: (file: DetectorInput) => string;
   body: (route: Route) => string;
-  /** Every `.use(...)` call in loaded source (useCalls), read once. */
+  /** Every `.use(...)` call in loaded source (collectUseCalls), read once. */
   useCalls: UseCall[];
   appLevelAuth: AppLevelAuth;
 };
@@ -267,7 +267,7 @@ function buildContext(
     useCalls: [],
     appLevelAuth: { global: false, prefixes: [] },
   };
-  ctx.useCalls = useCalls(ctx);
+  ctx.useCalls = collectUseCalls(ctx);
   ctx.appLevelAuth = appLevelAuth(ctx);
   return ctx;
 }
@@ -506,7 +506,7 @@ function useArgumentName(argument: string): string | undefined {
  * a string; the `.use(` itself is found on the code-masked text, so a call inside a string
  * does not count.
  */
-function useCalls(ctx: Ctx): UseCall[] {
+function collectUseCalls(ctx: Ctx): UseCall[] {
   const calls: UseCall[] = [];
   for (const file of ctx.source) {
     const text = ctx.uncommented(file);
