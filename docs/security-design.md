@@ -96,3 +96,42 @@ in what landed, worth stating rather than implying away:
   `awaiting_answers` as active (see `countActiveAnalyses`' doc comment): a stuck slot
   is bounded and self-clearing, whereas not counting it would let a caller park
   analyses to free slots and then resume them all at once, exceeding the cap.
+
+## Responsible use
+
+AttackCanvas analyses other people's code, so how it may be used is part of its design and
+not only its README. What it does and does not do:
+
+- **Read-only.** It reads a public repository through the GitHub API and never clones it,
+  runs it, installs it or writes to it. The token is public-read-only and the MCP server runs
+  read-only with a fixed tool list (rows 5 and 6 above).
+- **Mitigations, not exploit code.** A finding is a prose attack scenario, the evidence that
+  supports it (a file and line, never a source snippet), and a mitigation. The prompts do not
+  ask for exploit code or payloads, and the result has no field to carry them.
+- **Rate limited.** Each address may start 5 analyses an hour, and at most 2 real analyses run
+  at once (row 7). These limits are per process, in memory.
+- **An owner allowlist for hosted deployments.** A deployment that spends its own model and
+  GitHub credentials can restrict who it analyses by setting `ATTACKCANVAS_ALLOWED_OWNERS`
+  to a comma-separated list of GitHub owners, for example `acme,widgets-inc`. A request for
+  a repository whose owner is not on the list gets HTTP 403 with the error code
+  `OWNER_NOT_ALLOWED`, before a job is created, a rate-limit attempt is recorded, or GitHub or
+  a model is contacted.
+  - It is **opt-in**. Unset, empty, or only commas and spaces, every owner is allowed, as
+    before it existed.
+  - Owner names are compared case-insensitively, as GitHub does, and must match exactly: `acme`
+    does not allow `acme-corp`.
+  - **A setting that is set but wrong fails closed.** An entry that is not a valid GitHub owner
+    name (`acme/shop`, `@acme`, a stray space) is dropped, which can only make the list
+    stricter. If no valid entry is left, every owner is refused, because someone who wrote a
+    list meant to restrict, and a typo must not turn into no restriction. The number of dropped
+    entries is logged once per distinct value, never the entries.
+  - The golden demo repository (`GOLDEN_REPO_URL` with `DEMO_FALLBACK=1`) is exempt: it serves
+    a canned result and reads nothing, so it works on a deployment whose list does not include
+    its owner.
+  - It is not authentication. It compares the owner named in the submitted URL; it does not
+    prove who is asking. Like the rate limits, it is checked per request in one process.
+- **A public repository is readable by anyone, and this tool does not change that.** Anything
+  AttackCanvas reads is already available to every visitor of that repository. It adds no
+  access, and it cannot analyse a private repository. Running it against a repository is not
+  an authorisation to test the software that repository describes, and a finding is a starting
+  point for review, not proof of a vulnerability.
