@@ -113,10 +113,11 @@ access control (A01), security misconfiguration (A02), vulnerable and outdated c
 from deterministic detector code, not from the model, so text in the repository cannot argue
 them away.
 
-**Gap precision has not been measured yet.** It is the share of gap-only threats whose
-control is really missing. The NodeGoat gaps sheet has 39 rows, and 0 are labelled. It will
-be reported in [docs/evaluation.md](docs/evaluation.md) once every row has a label. On the
-seeded benchmark, the detectors produced 1 false gap in 17 planted controls.
+**Gap precision on NodeGoat: 39/39 rows (15/15 visible).** Read this with care: the 39 rows
+represent only **four distinct gap claims** in **one intentionally vulnerable repository**, where
+each control is missing by design. It is not evidence that gap predictions are generally 100%
+accurate. The seeded benchmark, where controls are planted so the detectors can be wrong, found
+1 false gap in 17 planted controls (5.9%). See [docs/evaluation.md](docs/evaluation.md).
 
 ## Evaluation
 

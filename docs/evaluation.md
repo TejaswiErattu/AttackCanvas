@@ -33,6 +33,24 @@ Classes come from the answer key's `owasp2013` note; an item in several classes 
 | ReDoS | 1 | 1 | 0 | none |
 | SSRF | 1 | 1 | 0 | none |
 
+## Gap precision: nodegoat-a3118b6
+
+Threats whose cited evidence is only control gaps, labelled by a person as predicted_correct (the control really is missing) or predicted_wrong. **gap_precision** = predicted_correct / (predicted_correct + predicted_wrong). Visible means confidence at or above the 0.25 dashboard cutoff.
+
+| Threats | n | predicted_correct | predicted_wrong | Gap precision |
+| --- | ---: | ---: | ---: | ---: |
+| All | 39 | 39 | 0 | 100.0% |
+| Visible only | 15 | 15 | 0 | 100.0% |
+
+predicted_wrong by gap kind (a threat citing several kinds counts under each):
+
+| Gap kind | predicted_wrong | Threats |
+| --- | ---: | ---: |
+| authz_missing | 0 | 3 |
+| csrf_missing | 0 | 15 |
+| input_validation_missing | 0 | 3 |
+| security_headers_missing | 0 | 20 |
+
 ## Second labeler agreement: nodegoat-a3118b6
 
 A second labeller, a separate model session rather than a person, labelled 20 threats from the primary sheet without seeing its labels. That is a weaker check than a second human. Agreement is the share of threats with the same label.
@@ -90,12 +108,24 @@ per prompt.
 Visible recall is from the review report. `score.ts` does not compute it yet
 (requirement R2 in `eval/review/pending-evaluation-requirements.md`).
 
-## Gap precision: not yet measured
+## Gap precision: how to read it
 
-`eval/labels/nodegoat-a3118b6.gaps.csv` has 39 rows (threats whose cited evidence is only
-control gaps), and 0 of them are labelled. Gap precision is
-predicted_correct / (predicted_correct + predicted_wrong), overall and visible only. It
-will be reported here once every row has a `gapLabel`. No number is given until then.
+**Gap precision is 39/39 rows (15/15 visible), and this is not evidence that gap predictions are
+generally 100% accurate.** The 39 rows rest on only **four distinct gap claims**
+(`authz_missing` on `GET /allocations/:userId`, `csrf_missing`, `security_headers_missing`,
+`input_validation_missing` on `GET /learn`), in **one intentionally vulnerable repository**
+(NodeGoat), where those controls are missing by design. Each claim was checked once against the
+whole pinned tree (`server.js`, `package.json`, views and route handlers), and every row inherits
+that result. The visible-only n (15) is a subset of the same four claims, not an independent
+sample.
+
+The counter-evidence is the seeded benchmark, where controls are planted so a detector can be
+wrong: 1 false gap in 17 planted controls (5.9%), with the gap detector at 15/1/0 TP/FP/FN.
+
+Labels were entered from a person's decisions. Rows whose own claim differs from the cited gap
+carry a note: threat-59 (autoescape, not headers), threat-65, 118, 119 and 124 (plaintext HTTP,
+beyond the headers gap) and threat-110 (allocations framing is a headers claim on a GET). Their
+six-way threat labels are unchanged.
 
 ## Second-labeller disagreements (supported)
 
