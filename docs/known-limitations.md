@@ -41,6 +41,16 @@ certainty for exactly this reason.
   count. React Native `AsyncStorage` and encrypted wrappers (`secure-ls`, `secureStorage`)
   are out of scope. Writes in test, mock and storybook files are filtered by the
   source-file rule (`isScannable`), which is what keeps fixtures from reporting.
+- **Seeded bench (2026-09-25).** Two results from `pnpm bench` (`eval/bench/report.md`):
+  - *authz_missing, cross-package guard, package loaded.* `requireAuth, guard` from a loaded
+    workspace package (`@acme/auth`) is still reported at 0.7. Role and ownership checks
+    are read only from the route's own text and middleware names, never from an imported
+    definition. So 1d applies whether or not the package was loaded.
+  - *authz_missing, fragile pass.* A route whose last middleware is named `can…`
+    (`requireLogin, canReadReport`) is credited with a "permission call". This only happens
+    because the joined middleware names and the handler text put `canReadReport` next to
+    the handler's `(`. Reorder the middleware, or name it `ownsReport`, and the same route
+    is reported.
 - **General.** Every "absent" finding is bounded by what was loaded. A repository over the
   300-file or 2 MiB caps can have its control in a file that was never fetched.
 
