@@ -101,12 +101,16 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
 
   // Triage statuses live in this browser only. Read after mount so the first render
   // matches the server's, and re-read if the repo or ref changes.
+  const repoFullName = view.repo?.fullName ?? "";
+  const repoRef = view.repo?.ref;
   const statusKey = useMemo(() => {
-    const name = splitFullName(view.repo?.fullName ?? "");
-    return name && view.repo?.ref ? statusStorageKey(name.owner, name.repo, view.repo.ref) : null;
-  }, [view.repo?.fullName, view.repo?.ref]);
+    const name = splitFullName(repoFullName);
+    return name && repoRef ? statusStorageKey(name.owner, name.repo, repoRef) : null;
+  }, [repoFullName, repoRef]);
   const [statuses, setStatuses] = useState<StatusMap>({});
   useEffect(() => {
+    // Deliberate: localStorage is only readable after mount, so hydration stays stable.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setStatuses(statusKey ? loadStatuses(safeLocalStorage(), statusKey) : {});
   }, [statusKey]);
   const handleStatusChange = (id: string, status: FindingStatus) => {
@@ -123,6 +127,8 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
   const [prevRun, setPrevRun] = useState<DriftModel | null | undefined>(undefined);
   useEffect(() => {
     const name = splitFullName(view.repo?.fullName ?? "");
+    // Deliberate: recording the run reads and writes localStorage, which needs the client.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPrevRun(name ? recordRun(safeLocalStorage(), name.owner, name.repo, view) : null);
   }, [view]);
   const drift = useMemo(() => (prevRun ? diffThreatModels(prevRun, view) : null), [prevRun, view]);

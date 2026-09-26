@@ -120,6 +120,7 @@ function stable(value: unknown): string {
 export function deterministicEvidence(model: ThreatModel): string[] {
   return model.evidence
     .filter((e) => DETERMINISTIC_SOURCES.includes(e.source))
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     .map(({ id: _id, ...rest }) => stable(rest))
     .sort();
 }

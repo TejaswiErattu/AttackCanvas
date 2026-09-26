@@ -153,9 +153,9 @@ All four disagreements are listed in docs/evaluation.md.
 planned. What is fixed and what varies between runs is described in
 [docs/reproducibility.md](docs/reproducibility.md).
 
-**Tests.** 92 test files, 3,769 tests (3,768 passed, 1 skipped: a live test that needs an
-API key). Coverage over `src/`: 96.01% statements, 89.49% branches, 94.75% functions, 96.83%
-lines. Both figures were measured at `1d3237a`; see [docs/testing.md](docs/testing.md).
+**Tests.** 100 test files, 3,954 tests (3,953 passed, 1 skipped: a live test that needs an
+API key). Coverage over `src/`: 96.05% statements, 89.53% branches, 94.83% functions, 96.85%
+lines. Both figures were measured on `final-sprint` after the lint fixes; see [docs/testing.md](docs/testing.md).
 
 ## Cost
 

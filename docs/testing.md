@@ -20,11 +20,11 @@ pnpm bench            # the seeded bench (not a Vitest run): eval/bench/report.m
 From `pnpm test:coverage`:
 
 ```
- Test Files  92 passed (92)
-      Tests  3768 passed | 1 skipped (3769)
+ Test Files  100 passed (100)
+      Tests  3953 passed | 1 skipped (3954)
 ```
 
-- **92 test files, 3,769 tests**: 3,768 passed and 1 skipped.
+- **100 test files, 3,954 tests**: 3,953 passed and 1 skipped.
 - The skipped test is in `canary.live.test.ts`. It makes paid model calls and runs only when
   `ANTHROPIC_API_KEY` is set.
 - `semgrepRules.test.ts` skips itself when `semgrep` is not installed. It ran here.
@@ -35,14 +35,14 @@ The coverage summary for everything under `src/` is pasted as printed:
 
 ```
 =============================== Coverage summary ===============================
-Statements   : 96.01% ( 6586/6859 )
-Branches     : 89.49% ( 4243/4741 )
-Functions    : 94.75% ( 1553/1639 )
-Lines        : 96.83% ( 5723/5910 )
+Statements   : 96.05% ( 6669/6943 )
+Branches     : 89.53% ( 4297/4799 )
+Functions    : 94.83% ( 1578/1664 )
+Lines        : 96.85% ( 5799/5987 )
 ================================================================================
 ```
 
-These are the directory rows from the same report, with the covered/total counts from
+The totals above were re-measured after the lint fixes (100 files, 3,954 tests). The per-directory table, the per-group table and the weakest-branch list below were measured earlier (92 files, 3,769 tests, commit `1d3237a`) and have not been regenerated, so they do not add up to the new totals. These are the directory rows from that earlier report, with the covered/total counts from
 `coverage/coverage-summary.json`:
 
 | Directory | Files | Lines | Branches | Statements | Functions |
@@ -99,7 +99,7 @@ reporter for the same run.
 | UI components (jsdom) | 9 | 98 | The dashboard, threat card, question panel, analysis view and home page render and respond to input. The UI never recomputes severity, priority or confidence (`noRecompute.test.tsx`). |
 | Evaluation scripts | 5 | 67 | Label-sheet CSV handling, metric formulas, the eval runner's argument parsing, stage tracking and overwrite guard, and the try-script formatting. |
 
-Total: 92 files and 3,769 tests. The groups add up exactly.
+Total at the earlier run: 92 files and 3,769 tests. The groups add up to that figure, not to the current totals.
 
 ## Seeded bench
 
