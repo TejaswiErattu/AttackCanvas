@@ -54,10 +54,10 @@ export default function SinceLastRun({ drift }: SinceLastRunProps) {
       ) : (
         <div className="mt-3 space-y-4">
           <p className="text-sm text-muted">
-            {drift.threats.new.length} new, {drift.threats.persisting.length} persisting and{" "}
-            {drift.threats.resolved.length} resolved threats; {drift.components.added.length}{" "}
-            components and {drift.flows.added.length} flows added,{" "}
-            {drift.components.removed.length} and {drift.flows.removed.length} removed.
+            Threats: {drift.threats.new.length} new, {drift.threats.persisting.length} persisting,{" "}
+            {drift.threats.resolved.length} resolved. Components: {drift.components.added.length}{" "}
+            added, {drift.components.removed.length} removed. Flows: {drift.flows.added.length}{" "}
+            added, {drift.flows.removed.length} removed.
           </p>
           <div className="grid gap-4 md:grid-cols-2">
             <Group title="New threats" items={drift.threats.new.map((t) => t.title)} />

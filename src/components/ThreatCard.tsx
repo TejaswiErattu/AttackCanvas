@@ -21,7 +21,7 @@
  * ever rendered as text (CLAUDE.md rule 3).
  */
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import type { ThreatCardData } from "@/shared/viewModel";
 import { buildIssue, type IssueRepo } from "@/client/issueBody";
 import {
@@ -92,6 +92,8 @@ export default function ThreatCard({
   isNew = false,
 }: ThreatCardProps) {
   const [copied, setCopied] = useState<"idle" | "copied" | "failed">("idle");
+  // The same threat can be on the page twice (Fix now and the list), so ids need to be unique.
+  const uid = useId();
   const issue = repo ? buildIssue(threat, repo) : null;
   const copyMarkdown = async () => {
     try {
@@ -101,7 +103,7 @@ export default function ThreatCard({
       setCopied("failed");
     }
   };
-  const statusId = `threat-${threat.id}-status`;
+  const statusId = `${uid}-status`;
   const headingId = `threat-${threat.id}-title`;
   const detailsId = `threat-${threat.id}-details`;
   const severityClass =
@@ -188,6 +190,23 @@ export default function ThreatCard({
         </div>
       </button>
 
+      {copied === "failed" && issue ? (
+        // The browser refused clipboard access; let the reader copy by hand.
+        <div className="pb-3 pl-6 pr-4 sm:pr-5">
+          <label htmlFor={`${uid}-md`} className="text-xs text-muted">
+            Couldn&apos;t copy automatically. Select all and copy:
+          </label>
+          <textarea
+            id={`${uid}-md`}
+            readOnly
+            rows={6}
+            value={issue.body}
+            onFocus={(event) => event.currentTarget.select()}
+            className="mt-1 w-full rounded-xl border border-line-strong bg-ink p-2 font-mono text-xs text-fg"
+          />
+        </div>
+      ) : null}
+
       {onStatusChange || issue ? (
         // Outside the header button: a control nested in a button is invalid and would
         // toggle the card as well.
@@ -216,6 +235,11 @@ export default function ThreatCard({
           ) : null}
           {issue ? (
             <div className="ml-auto flex items-center gap-2">
+              {issue.tooLong ? (
+                <span role="note" className="text-xs text-muted">
+                  Too long for a link. Copy as Markdown and paste it into a new issue.
+                </span>
+              ) : null}
               {issue.url ? (
                 <a
                   href={issue.url}

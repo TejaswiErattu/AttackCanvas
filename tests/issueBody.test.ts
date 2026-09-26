@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ISSUE_BODY_LIMIT,
+  ISSUE_URL_LIMIT,
   blobUrl,
   buildIssue,
   buildIssueBody,
@@ -138,6 +139,23 @@ describe("buildIssue", () => {
     expect(new URL(issue.url).searchParams.get("title")).toBe("XSS via <script>alert(1)</script>");
     // And it is not copied into the body as markup.
     expect(issue.body).not.toContain("<script>");
+  });
+
+  it("offers no link, and says so, when the encoded URL is too long", () => {
+    // Percent-encoding triples non-ASCII text, so a body under the 6,000 character cap
+    // can still make an over-long link.
+    const long = buildIssue(threat({ attackScenario: "\u2192".repeat(3000) }), REPO);
+    expect(long.body.length).toBeLessThanOrEqual(ISSUE_BODY_LIMIT);
+    expect(long.tooLong).toBe(true);
+    expect(long.url).toBe("");
+    // The full body is still there for Copy as Markdown.
+    expect(long.body).toContain("\u2192");
+  });
+
+  it("keeps a normal link under the limit", () => {
+    const issue = buildIssue(threat(), REPO);
+    expect(issue.tooLong).toBe(false);
+    expect(issue.url.length).toBeLessThanOrEqual(ISSUE_URL_LIMIT);
   });
 
   it("returns no link for a repository name that is not owner/repo", () => {

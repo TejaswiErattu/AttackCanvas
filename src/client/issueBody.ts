@@ -19,11 +19,20 @@ export const ISSUE_BODY_LIMIT = 6000;
 
 export type IssueRepo = { fullName: string; ref: string };
 
+/**
+ * Longest pre-filled link offered. GitHub refuses very long request URLs (roughly 8 KB), and
+ * a 6,000-character body can encode to well over that, so a longer link is not offered and
+ * the reader is sent to "Copy as Markdown" instead. Deliberately below the real limit.
+ */
+export const ISSUE_URL_LIMIT = 7000;
+
 export type IssueDraft = {
   title: string;
   body: string;
-  /** Empty when the repository name is not "owner/repo". */
+  /** Empty when the repository name is not "owner/repo", or when the link is too long. */
   url: string;
+  /** True when a valid link exists but exceeds ISSUE_URL_LIMIT; the body still works. */
+  tooLong: boolean;
 };
 
 const CONFIDENCE_TEXT: Record<string, string> = {
@@ -165,9 +174,10 @@ export function buildIssue(threat: ThreatCardData, repo: IssueRepo): IssueDraft 
   const body = buildIssueBody(threat, repo);
   const parts = repo.fullName.split("/");
   const valid = parts.length === 2 && parts[0] !== "" && parts[1] !== "";
-  const url = valid
+  const full = valid
     ? `https://github.com/${encodeURIComponent(parts[0])}/${encodeURIComponent(parts[1])}/issues/new` +
       `?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`
     : "";
-  return { title, body, url };
+  const tooLong = full.length > ISSUE_URL_LIMIT;
+  return { title, body, url: tooLong ? "" : full, tooLong };
 }
