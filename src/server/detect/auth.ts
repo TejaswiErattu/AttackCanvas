@@ -48,7 +48,7 @@ const AUTH_CALL = /\bauth\s*\(/;
  * uses); it never matches a login *handler* such as handleLoginRequest.
  */
 export const GUARD_NAME =
-  /auth|protect|require(?:User|Login|Role)|isAdmin|verify(?:Token|Jwt)|logged_?in/i;
+  /auth|protect|require(?:User|Login|Role|Admin|Permission)|isAdmin|verify(?:Token|Jwt)|logged_?in|with(?:Role|Permission)/i;
 
 /** `authLimiter`, `loginRateLimiter`: a rate limiter names what it slows, not a check. */
 const LIMITER_NAME = /limit/i;
@@ -73,6 +73,12 @@ const ROLE_PATTERNS: [string, RegExp][] = [
   ["role comparison", /\brole\s*===?\s*['"`]/],
   ["roles.includes", /\broles?\s*\.\s*includes\s*\(/],
   ["scope check", /\bscopes?\s*\.\s*includes\s*\(/],
+  // Ownership is authorization too: the record must belong to the caller.
+  ["owner comparison", /\b(?:owner|ownerId|authorId|createdBy)\s*[!=]==?/],
+  ["user id comparison", /\breq\s*\.\s*user\s*\.\s*(?:id|_id|userId)\s*[!=]==?|[!=]==?\s*req\s*\.\s*user\s*\.\s*(?:id|_id|userId)\b/],
+  ["owner-scoped query", /\b(?:userId|user_id|ownerId|owner|authorId)\s*:\s*(?:req\s*\.\s*user|session\s*\.\s*user|user\s*\.\s*id|currentUser)/],
+  ["permission call", /\b(?:can|authorize|checkPermission|hasPermission|assertPermission|requirePermission|ability)\w*\s*\(/],
+  ["role wrapper", /\bwith(?:Role|Permission)\w*\s*\(/],
 ];
 
 /**

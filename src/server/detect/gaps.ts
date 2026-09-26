@@ -189,6 +189,8 @@ type Ctx = {
   code: (file: DetectorInput) => string;
   uncommented: (file: DetectorInput) => string;
   body: (route: Route) => string;
+  /** Every `.use(...)` call in loaded source (useCalls), read once. */
+  useCalls: UseCall[];
   appLevelAuth: AppLevelAuth;
 };
 
@@ -262,8 +264,10 @@ function buildContext(
       }
       return hit;
     },
+    useCalls: [],
     appLevelAuth: { global: false, prefixes: [] },
   };
+  ctx.useCalls = useCalls(ctx);
   ctx.appLevelAuth = appLevelAuth(ctx);
   return ctx;
 }
@@ -445,32 +449,59 @@ function mountPathOf(firstArgument: string | undefined): string | undefined {
  * catch-all matcher that Clerk and next-auth apps use, turning every route into a
  * confident false gap, so the broad reading is kept on purpose.
  */
-function appLevelAuth(ctx: Ctx): AppLevelAuth {
-  const scope: AppLevelAuth = { global: false, prefixes: [] };
+/** One `.use(...)` call: the names its arguments refer to and the mount path, if any. */
+type UseCall = { file: string; names: string[]; prefix: string | undefined };
 
+/** The name a `.use()` argument refers to. */
+function useArgumentName(argument: string): string | undefined {
+  return middlewareName(argument);
+}
+
+/**
+ * Every `x.use(...)` call in loaded source, read once and shared by the checks that ask
+ * "is this control applied at the app or router level?" (auth, authorization, validation,
+ * logging). The arguments are split on the comment-masked text, because the mount path is
+ * a string; the `.use(` itself is found on the code-masked text, so a call inside a string
+ * does not count.
+ */
+function useCalls(ctx: Ctx): UseCall[] {
+  const calls: UseCall[] = [];
   for (const file of ctx.source) {
     const text = ctx.uncommented(file);
-    for (const match of ctx
-      .code(file)
-      .matchAll(/\b[A-Za-z_$][\w$]*\.use\s*\(/g)) {
-      const { args } = splitCallArguments(
-        text,
-        (match.index ?? 0) + match[0].length,
-      );
-      const guarded = args
-        .map(middlewareName)
-        .some((name) => name && isGuardName(name) && !ROUTER_NAME.test(name));
-      if (!guarded) continue;
-
-      const prefix = mountPathOf(args[0]);
-      if (prefix === undefined) scope.global = true;
-      else scope.prefixes.push(prefix);
+    for (const match of ctx.code(file).matchAll(/\b[A-Za-z_$][\w$]*\.use\s*\(/g)) {
+      const { args } = splitCallArguments(text, (match.index ?? 0) + match[0].length);
+      const names = args
+        .map(useArgumentName)
+        .filter((name): name is string => name !== undefined);
+      calls.push({ file: file.path, names, prefix: mountPathOf(args[0]) });
     }
   }
+  return calls;
+}
+
+/** The scope `.use()` calls with a matching argument name establish. */
+function scopeOfUseCalls(calls: readonly UseCall[], matches: (name: string) => boolean): AppLevelAuth {
+  const scope: AppLevelAuth = { global: false, prefixes: [] };
+  for (const call of calls) {
+    if (!call.names.some(matches)) continue;
+    if (call.prefix === undefined) scope.global = true;
+    else scope.prefixes.push(call.prefix);
+  }
+  return scope;
+}
+
+/** Next.js request middleware. A file of this name that mentions auth is a global guard. */
+const NEXT_MIDDLEWARE_FILE = /(^|\/)middleware\.(?:ts|js)$/;
+
+function appLevelAuth(ctx: Ctx): AppLevelAuth {
+  const scope = scopeOfUseCalls(
+    ctx.useCalls,
+    (name) => isGuardName(name) && !ROUTER_NAME.test(name),
+  );
 
   const middleware = ctx.source.some(
     (file) =>
-      /(^|\/)middleware\.(?:ts|js)$/.test(normalizeSeparators(file.path)) &&
+      NEXT_MIDDLEWARE_FILE.test(normalizeSeparators(file.path)) &&
       /auth|clerk|session/i.test(ctx.code(file)),
   );
   if (middleware) scope.global = true;
@@ -491,13 +522,25 @@ function coveredByAppAuth(scope: AppLevelAuth, path: string): boolean {
 // 1. authz_missing
 // ---------------------------------------------------------------------------
 
+/**
+ * A `.use()` argument that decides authorization, not just authentication:
+ * `app.use("/admin", requireAdmin)`, `router.use(checkPermission("orders"))`. The route
+ * text never sees it, so authzMissing asks here before reporting.
+ */
+const ROLE_GUARD_NAME = /admin|role|permission|policy|authoriz|ability|acl|rbac/i;
+const CAN_GUARD_NAME = /^can[A-Z]/;
+const isRoleGuardName = (name: string): boolean =>
+  (ROLE_GUARD_NAME.test(name) || CAN_GUARD_NAME.test(name)) && !ROUTER_NAME.test(name);
+
 function authzMissing(ctx: Ctx): Finding[] {
   const found: Finding[] = [];
+  const roleScope = scopeOfUseCalls(ctx.useCalls, isRoleGuardName);
 
   for (const route of ctx.routes) {
     const fact = ctx.authOf(route);
     if (!fact || fact.status !== "authenticated" || fact.roleChecks.length > 0)
       continue;
+    if (coveredByAppAuth(roleScope, route.normalizedPath)) continue;
 
     const hasParam = route.normalizedPath.includes(":");
     if (!hasParam && !fact.adminPath) continue;

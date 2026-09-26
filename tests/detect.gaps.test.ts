@@ -858,3 +858,48 @@ describe("detectGaps: NodeGoat-style routes", () => {
     expect(input?.summary).toMatch(/^GET \/learn reads request input/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Adversarial review (docs/gap-adversarial-review.md): controls that ARE present
+// ---------------------------------------------------------------------------
+
+describe("adversarial: authz_missing", () => {
+  it("1a: an ownership comparison in the handler is an authorization check", () => {
+    const repo = expressRepo(
+      `app.get("/posts/:id", requireAuth, async (req, res) => {\n  const post = await db.find(req.params.id);\n  if (post.ownerId !== req.user.id) return res.status(403).end();\n  res.json(post);\n});`,
+    );
+    expect(kindsOf(repo)).not.toContain("authz_missing");
+  });
+
+  it("1a: an owner-scoped query counts too", () => {
+    const repo = expressRepo(
+      `app.delete("/posts/:id", requireAuth, async (req, res) => {\n  await db.post.delete({ where: { id: req.params.id, userId: req.user.id } });\n  res.end();\n});`,
+    );
+    expect(kindsOf(repo)).not.toContain("authz_missing");
+  });
+
+  it("1b: a role guard mounted with app.use covers the routes under its prefix", () => {
+    const repo = expressRepo(
+      `app.use("/admin", requireAdmin);\napp.get("/admin/users", requireAuth, ${HANDLER});\napp.get("/users/:id", requireAuth, ${HANDLER});`,
+    );
+    const gaps = gapsOf(repo).filter((gap) => gap.kind === "authz_missing");
+    expect(gaps.map((gap) => gap.routePath)).toEqual(["/users/:id"]);
+  });
+
+  it("1c: a Next App Router export wrapped in withRole is authenticated and authorized", () => {
+    const repo = [
+      manifest({ next: "^15.0.0" }),
+      LOCKFILE,
+      file(
+        "app/api/admin/users/route.ts",
+        `import { withRole } from "@/lib/auth";\nexport const GET = withRole("admin", async () => Response.json([]));\n`,
+      ),
+    ];
+    expect(kindsOf(repo)).not.toContain("authz_missing");
+    expect(kindsOf(repo)).not.toContain("authn_missing");
+  });
+
+  it("still reports a parameterised route with nothing but a login check", () => {
+    expect(kindsOf(CASES[0].absent)).toContain("authz_missing");
+  });
+});
