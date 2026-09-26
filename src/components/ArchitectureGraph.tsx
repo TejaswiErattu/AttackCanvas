@@ -26,26 +26,10 @@ import ReactFlow, {
   type Node,
 } from "reactflow";
 import "reactflow/dist/style.css";
-import type { ComponentType, Severity } from "@/shared/schema";
 import type { GraphEdge, GraphNode } from "@/shared/viewModel";
 import { layoutGraph, NODE_HEIGHT, NODE_WIDTH } from "@/client/layoutGraph";
 import { edgeColor, edgeMarker, edgeRoutes, reverseEdgeShape } from "@/client/graphEdges";
-import { SEVERITY_ACCENT, SEVERITY_TEXT } from "@/components/SeveritySummary";
-
-const COMPONENT_TYPE_TEXT: Record<ComponentType, string> = {
-  actor: "Actor",
-  frontend: "Frontend",
-  backend: "Backend",
-  api: "API",
-  database: "Database",
-  storage: "Storage",
-  external_service: "External service",
-  auth_provider: "Auth provider",
-  worker: "Worker",
-  queue: "Queue",
-};
-
-const NEUTRAL_ACCENT = "var(--color-line-strong)";
+import ArchitectureNode, { type ArchitectureNodeData } from "@/components/ArchitectureNode";
 
 /**
  * Wider than layoutGraph's defaults: edge labels sit at edge midpoints, and dagre does not
@@ -74,36 +58,8 @@ type ArchitectureGraphProps = {
   onSelectNode: (id: string | null) => void;
 };
 
-function accentFor(severity: Severity | null): string {
-  return severity ? (SEVERITY_ACCENT[severity] ?? NEUTRAL_ACCENT) : NEUTRAL_ACCENT;
-}
-
-function sideBorders(width: number, color: string) {
-  return {
-    borderTopWidth: width,
-    borderRightWidth: width,
-    borderBottomWidth: width,
-    borderTopColor: color,
-    borderRightColor: color,
-    borderBottomColor: color,
-  };
-}
-
-function NodeBody({ node }: { node: GraphNode }) {
-  const severity = node.maxSeverity;
-  return (
-    <div className="w-full text-left">
-      <div className="truncate font-display text-sm font-semibold text-fg">{node.label}</div>
-      <div className="mt-0.5 truncate text-[10px] uppercase tracking-wider text-subtle">
-        {COMPONENT_TYPE_TEXT[node.type] ?? node.type}
-      </div>
-      <div className="mt-1 text-[11px] text-muted">
-        {node.threatCount} threat{node.threatCount === 1 ? "" : "s"}
-        {severity ? ` \u00b7 ${SEVERITY_TEXT[severity] ?? severity} max` : ""}
-      </div>
-    </div>
-  );
-}
+/** Defined once, outside render: React Flow warns when nodeTypes changes identity. */
+const NODE_TYPES = { component: ArchitectureNode };
 
 export default function ArchitectureGraph({
   nodes,
@@ -127,37 +83,17 @@ export default function ArchitectureGraph({
   );
   const dimming = highlightedNodes.size > 0 || highlightedEdges.size > 0;
 
-  const flowNodes = useMemo<Node[]>(
+  const flowNodes = useMemo<Node<ArchitectureNodeData>[]>(
     () =>
       layout.nodes.map((node) => {
         const on = highlightedNodes.has(node.id);
-        const selected = selectedNodeId === node.id;
         return {
           id: node.id,
+          type: "component",
           position: node.position,
-          data: { label: <NodeBody node={node} /> },
-          style: {
-            width: NODE_WIDTH,
-            height: NODE_HEIGHT,
-            padding: "8px 10px",
-            borderRadius: 12,
-            background: selected ? "var(--color-mint-deep)" : "var(--color-surface)",
-            color: "var(--color-fg)",
-            borderStyle: "solid",
-            // Sides are set one by one (React warns when a shorthand is mixed with a
-            // per-side value). The severity accent is a strip down the left edge, so a
-            // selected or highlighted node keeps its severity colour.
-            ...sideBorders(
-              selected || on ? 2 : 1,
-              selected || on ? "var(--color-mint)" : "var(--color-line-strong)",
-            ),
-            borderLeftWidth: 5,
-            borderLeftColor: accentFor(node.maxSeverity),
-            boxShadow: selected
-              ? "0 0 0 4px rgba(42, 84, 217, 0.16)"
-              : "0 8px 18px -12px rgba(18, 33, 63, 0.35)",
-            opacity: dimming && !on ? 0.3 : 1,
-          },
+          data: { node, on, selected: selectedNodeId === node.id, dimmed: dimming && !on },
+          // The custom node draws its own outline; the wrapper adds no box of its own.
+          style: { width: NODE_WIDTH, height: NODE_HEIGHT, background: "transparent", border: 0, padding: 0 },
         };
       }),
     [layout.nodes, highlightedNodes, dimming, selectedNodeId],
@@ -222,6 +158,7 @@ export default function ArchitectureGraph({
       <ReactFlow
         nodes={flowNodes}
         edges={flowEdges}
+        nodeTypes={NODE_TYPES}
         onNodeClick={(_event, node) => onSelectNode(node.id)}
         onPaneClick={() => onSelectNode(null)}
         fitView

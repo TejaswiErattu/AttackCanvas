@@ -27,6 +27,7 @@ import {
 } from "@/client/filterThreats";
 import type { BasisCounts, HiddenSummary } from "@/client/useAnalysis";
 import ArchitectureGraph from "@/components/ArchitectureGraph";
+import ArchitectureLegend from "@/components/ArchitectureLegend";
 import SectionLabel from "@/components/SectionLabel";
 import FilterBar from "@/components/FilterBar";
 import SeveritySummary from "@/components/SeveritySummary";
@@ -126,21 +127,9 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
         <section aria-labelledby="architecture-heading" className="min-w-0">
-          <div className="flex flex-wrap items-end justify-between gap-2">
-            <h2 id="architecture-heading" className="font-display text-xl font-semibold text-fg">
-              Architecture
-            </h2>
-            <p className="flex items-center gap-3 text-xs text-subtle">
-              <span className="flex items-center gap-1.5">
-                <span aria-hidden="true" className="h-0.5 w-4 bg-boundary" />
-                Crosses a trust boundary
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span aria-hidden="true" className="h-0.5 w-4 bg-flow" />
-                Internal flow
-              </span>
-            </p>
-          </div>
+          <h2 id="architecture-heading" className="font-display text-xl font-semibold text-fg">
+            Architecture
+          </h2>
           <p className="mt-1 text-sm text-muted">
             Select a component to see the threats that involve it, or select a threat to
             highlight what it touches.
@@ -154,6 +143,7 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
               selectedNodeId={selectedNodeId}
               onSelectNode={handleSelectNode}
             />
+            <ArchitectureLegend nodes={nodes} />
           </div>
 
           {nodes.length > 0 ? (
