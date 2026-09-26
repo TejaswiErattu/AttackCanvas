@@ -25,6 +25,7 @@ import { readApiError } from "@/client/useAnalysis";
 import ErrorState from "@/components/ErrorState";
 import HeroIllustration from "@/components/HeroIllustration";
 import SectionLabel from "@/components/SectionLabel";
+import ComingSoon from "@/components/ComingSoon";
 
 const LEVELS = [0, 1, 2, 3, 4] as const;
 
@@ -249,6 +250,7 @@ export default function HomePage() {
           </ol>
         </div>
       </section>
+      <ComingSoon />
     </main>
   );
 }

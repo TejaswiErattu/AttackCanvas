@@ -18,6 +18,7 @@
  * clears the node's highlight.
  */
 
+import ComingSoon from "@/components/ComingSoon";
 import { useEffect, useMemo, useState } from "react";
 import type { DashboardViewModel } from "@/shared/viewModel";
 import { assignBoundaries } from "@/client/layoutGraph";
@@ -469,6 +470,8 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
           </div>
         </div>
       </section>
+
+      <ComingSoon />
     </div>
   );
 }
