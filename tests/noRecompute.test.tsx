@@ -79,6 +79,7 @@ function threat(id: string, overrides: Partial<ThreatCardData>): ThreatCardData 
     basis: "evidence_backed",
     basisLabel: "Confirmed by evidence",
     componentNames: ["API"],
+    affectedNames: ["API"],
     componentIds: ["api"],
     dataFlowIds: [],
     confidenceReasons: [],
@@ -115,6 +116,7 @@ const LOUD_CRITICAL = threat("loud-critical", {
   confidence: 95,
   confidenceLabel: "high",
   componentNames: ["Database"],
+  affectedNames: ["Database"],
   componentIds: ["db"],
 });
 

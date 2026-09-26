@@ -88,6 +88,12 @@ export type ThreatCardData = {
   basisLabel: string;
   componentNames: string[];
   /**
+   * Everything the threat affects, as a reader names it: its components, then each data
+   * flow as "Source → Target". A threat about a flow alone would otherwise show no
+   * affected location at all.
+   */
+  affectedNames: string[];
+  /**
    * Component ids (graph nodes), in the same order as componentNames. Kept apart from
    * dataFlowIds because the schema only makes ids unique within one collection: a flow
    * may share an id with a component, and one merged list would let that flow match a

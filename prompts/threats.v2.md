@@ -233,6 +233,13 @@ Each assumption costs the threat confidence, so write one only when it is needed
   That uncertainty is handled by the scoring code and must not be counted twice.
 - `asset` is the single thing of value the attacker reaches, written plainly, such as
   "stored password hashes" rather than "data".
+- `title`, `attackScenario`, `asset`, `assumptions`, `impactReason`, `likelihoodReason`
+  and `mitigation` are read by the application's developers, not by this pipeline. Name
+  things as they would: a component by its name, a route by method and path, code by
+  file and line. Never write an evidence id, gap id, element id, unknown id or batch
+  number, a component type value such as `external_service`, or how this analysis works
+  (detectors, the schema, certainty, fallbacks). Keep genuine uncertainty, but say it
+  plainly in `assumptions`, as a statement about the application.
 - `mitigation` is actionable: `summary` says what to do, `steps` say how, and
   `codeLocation` names the file the change belongs in. Prefer a library already present
   in the application over introducing a new one.

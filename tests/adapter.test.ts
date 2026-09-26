@@ -354,7 +354,7 @@ describe("toDashboardViewModel", () => {
         summary: "String-concatenated SQL query.",
         location: "src/server/db.ts:42-44",
         snippet: "db.query(`SELECT * FROM users WHERE id = ${id}`)",
-        sourceLabel: "Deterministic detector",
+        sourceLabel: "Code analysis",
       },
       {
         kind: "scanner",
@@ -910,10 +910,10 @@ describe("confidenceReasons", () => {
 
   it("is qualitative, with no point values, when a missing control backs the threat", () => {
     const lines = reasonsFor({ evidenceIds: ["e-gap"], confidence: 0.4, confidenceLabel: "medium" });
-    expect(lines[0]).toContain("missing-control finding");
+    expect(lines[0]).toContain("a security control is missing");
     expect(lines.join("\n")).not.toMatch(/[+-]\d\.\d\d/);
     expect(lines.at(-1)).toBe(
-      "Confidence 40% (medium). Point values for these reasons are not shown, so they do not add up to it.",
+      "Confidence 40% (medium). These reasons explain the figure; they are not separate scores that add up to it.",
     );
   });
 
@@ -926,7 +926,7 @@ describe("confidenceReasons", () => {
   it("falls back to qualitative when the stored confidence is not what the evidence gives", () => {
     const lines = reasonsFor({ evidenceIds: ["e-raw-query"], confidence: 0.9, confidenceLabel: "high" });
     expect(lines.join("\n")).not.toMatch(/[+-]\d\.\d\d/);
-    expect(lines.at(-1)).toContain("do not add up");
+    expect(lines.at(-1)).toContain("not separate scores that add up");
   });
 
   it("does not count an inference beside other evidence", () => {
@@ -1093,6 +1093,28 @@ describe("toDashboardViewModel: node assets and exposure", () => {
       const node = view.nodes.find((n) => n.id === component.id)!;
       expect(node.assets).toEqual(component.assets);
       expect(node.exposure).toBe(expected.get(component.id));
+    }
+  });
+});
+
+describe("toDashboardViewModel: a finding names what it affects", () => {
+  it("names a threat's data flows as Source → Target when it names no component", () => {
+    const model = buildModel();
+    const flow = model.dataFlows[0];
+    const flowOnly = { ...model.threats[0], id: "threat-flow-only", componentIds: [], dataFlowIds: [flow.id] };
+    const view = toDashboardViewModel({ ...model, threats: [...model.threats, flowOnly] });
+    const card = view.threats.find((t) => t.id === "threat-flow-only");
+    const name = (id: string) => model.components.find((c) => c.id === id)!.name;
+    expect(card?.componentNames).toEqual([]);
+    expect(card?.affectedNames).toEqual([`${name(flow.sourceId)} → ${name(flow.targetId)}`]);
+  });
+
+  it("lists components first, then flows, each once, and never an internal id", () => {
+    const view = toDashboardViewModel(buildModel());
+    for (const card of view.threats) {
+      expect(card.affectedNames.slice(0, card.componentNames.length)).toEqual(card.componentNames);
+      expect(new Set(card.affectedNames).size).toBe(card.affectedNames.length);
+      for (const id of card.dataFlowIds) expect(card.affectedNames).not.toContain(id);
     }
   });
 });

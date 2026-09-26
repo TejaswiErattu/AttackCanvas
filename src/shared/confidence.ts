@@ -235,7 +235,7 @@ export type ConfidenceExplanation = {
 
 const QUALITATIVE: Record<Category, string> = {
   code: "Backed by code or configuration evidence",
-  gap: "Supported by a missing-control finding; how much it adds depends on the detector's certainty",
+  gap: "Supported by a finding that a security control is missing; it counts for more the surer the code analysis is that the control is absent",
   semgrep: "Confirmed by a Semgrep finding",
   osv: "Confirmed by a known vulnerable dependency (OSV)",
   developer: "Confirmed by a developer answer",

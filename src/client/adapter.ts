@@ -162,7 +162,7 @@ function confidenceReasonsFor(threat: Threat, cited: readonly Evidence[]): strin
   const total = `Confidence ${Math.round(threat.confidence * 100)}% (${threat.confidenceLabel})`;
   return exact
     ? [...lines, total]
-    : [...lines, `${total}. Point values for these reasons are not shown, so they do not add up to it.`];
+    : [...lines, `${total}. These reasons explain the figure; they are not separate scores that add up to it.`];
 }
 
 function toEvidenceItem(evidence: Evidence): EvidenceItem {
@@ -186,12 +186,19 @@ function toMitigationData(mitigation: Mitigation): MitigationData {
 
 type Lookups = {
   componentNames: ReadonlyMap<string, string>;
+  flowNames: ReadonlyMap<string, string>;
   evidence: ReadonlyMap<string, Evidence>;
 };
 
 function buildLookups(model: ThreatModel): Lookups {
   return {
     componentNames: new Map(model.components.map((c) => [c.id, c.name])),
+    flowNames: new Map(
+      model.dataFlows.map((f) => {
+        const name = (id: string) => model.components.find((c) => c.id === id)?.name ?? id;
+        return [f.id, `${name(f.sourceId)} \u2192 ${name(f.targetId)}`];
+      }),
+    ),
     evidence: new Map(model.evidence.map((e) => [e.id, e])),
   };
 }
@@ -214,6 +221,15 @@ function toThreatCard(threat: Threat, lookups: Lookups): ThreatCardData {
     componentNames: threat.componentIds.map(
       (id) => lookups.componentNames.get(id) ?? id,
     ),
+    affectedNames: [
+      ...new Set([
+        ...threat.componentIds.map((id) => lookups.componentNames.get(id) ?? id),
+        ...threat.dataFlowIds.flatMap((id) => {
+          const name = lookups.flowNames.get(id);
+          return name ? [name] : [];
+        }),
+      ]),
+    ],
     componentIds: [...threat.componentIds],
     dataFlowIds: [...threat.dataFlowIds],
     confidenceReasons: confidenceReasonsFor(

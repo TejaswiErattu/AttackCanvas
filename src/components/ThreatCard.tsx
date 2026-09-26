@@ -116,8 +116,8 @@ export default function ThreatCard({ threat, selected, onSelect }: ThreatCardPro
 
         <p className="mt-1 text-xs text-subtle">
           {threat.basisLabel}
-          {threat.componentNames?.length
-            ? ` \u00b7 ${threat.componentNames.join(", ")}`
+          {(threat.affectedNames ?? threat.componentNames)?.length
+            ? ` \u00b7 Affects ${(threat.affectedNames ?? threat.componentNames).join(", ")}`
             : ""}
         </p>
 
