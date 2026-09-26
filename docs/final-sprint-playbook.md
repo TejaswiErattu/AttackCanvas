@@ -144,21 +144,28 @@ visible unsupported 4/37, evidence accuracy 127/146.
 | W5 | 50 | Opus 5.5, plan mode | E. Proof pack: seeded benchmark, test report |
 | W6 | 55 | Sonnet 5, Fable 5.1 for blind labelling, + you | F. NodeGoat gap precision, second labeller, evaluation doc, golden demo |
 | W7 | 40 | Opus 5.5, plan mode | H. Analysis levels that control cost |
-| W8 | 25 | Sonnet 5 | I. Consistency script, then start the paid runs and go to sleep |
+| W8 | 25 | Sonnet 5 | I-1. Consistency script and level runner, typecheck, focused offline tests. **Stopping point for tonight.** |
 
-About 6 hours 15 minutes of active work. The five paid runs in Prompt I take about
-100 minutes and need nobody watching.
+About 6 hours 15 minutes of active work. **You can stop after W8** with honestly
+labelled slide data from the saved NodeGoat and seeded-bench results; run-to-run
+consistency is not yet measured at that point.
 
-**Tomorrow morning**
+**Later tonight, optional**
 
 | Window | Min | Model | Prompt |
 |---|---|---|---|
-| W9 | 15 | Sonnet 5 | I, part 2. Score consistency and fill the cost table |
+| Overnight | about 100 | none, paid | I-2. Five sequential runs, only after a cost estimate and your explicit go-ahead |
+
+**After the runs finish, then the release checkpoint**
+
+| Window | Min | Model | Prompt |
+|---|---|---|---|
+| W9 | 15 | Sonnet 5 | I-3. Score consistency, fill the cost table |
 | W10 | 30 | Sonnet 5 | G. Coming soon, README, release |
 | Buffer | 30 | | Fixes, hosted end-to-end check |
 
 **Cut order if you fall behind:** B's sub-views, then C's drift, then D's owner
-allowlist, then H's levels 3 and 4. Never cut E, F, I or G. The proof and the write-up
+allowlist, then H's levels 3 and 4. Never cut E, F, I-1 or the eventual I-3 and G. The proof and the write-up
 are what get judged.
 
 **Why these models.** Fable 5.1 takes the two jobs where being wrong is expensive and
@@ -894,23 +901,32 @@ guessing.
 
 ## Prompt I. Run-to-run Consistency and Level Cost Check
 
-| Day / window | Model | Plan mode | Usage | Time | Depends on | Handoff |
+| Part | Model | Plan mode | Usage | Time | Depends on | Handoff |
 |---|---|---|---|---|---|---|
-| Final · W8, then Tomorrow · W9 | Sonnet 5 | No | Light | 25 min tonight, 15 min tomorrow, about 100 min of unattended runs | H committed | Numbers to G |
+| I-1 Short checkpoint (tonight, W8) | Sonnet 5 | No | Light | 25 min | H committed | Code ready, slide data from saved results |
+| I-2 Overnight runs (optional, later tonight) | none (you launch) | n/a | Paid | about 100 min unattended | I-1 and your go-ahead | Five result files |
+| I-3 Scoring and docs (after the runs finish) | Sonnet 5 | No | Light | 15 min | I-2 | Measured numbers to G |
 
 ### Overview
 
 The same repository run three times at the same code should give roughly the same
 architecture and the same important threats. This measures how rough "roughly" is. It
 also runs levels 0 and 1 once each, so the cost table has real numbers for the cheap
-options. Start the runs before bed and score them in the morning.
+options.
 
-### The Prompt (tonight)
+Prompt I is three separate parts. **You can stop after I-1 with useful, honestly
+labelled slide data** and resume I-2, I-3 and then Prompt G later. Until I-3 is done,
+run-to-run consistency has not been measured, and no slide, doc or answer may claim it
+has.
+
+### I-1. Short checkpoint (tonight)
+
+Goal: the code and runner exist and are tested offline. No model call, no paid run.
 
 ```
 Read scripts/eval/run.ts, scripts/eval/lib.ts, eval/repos.yaml,
 src/client/drift.ts, docs/reproducibility.md and docs/cost.md.
-No model runs until I say go.
+No model runs. Do not launch anything paid.
 
 1. Let scripts/eval/run.ts take --level <0-4> and record the level in
    the saved result. Default stays 2.
@@ -935,17 +951,55 @@ No model runs until I say go.
        Semgrep, OSV items) is identical across runs; it should be
      - calls, cost and duration per run: min, max, mean
    Write eval/consistency/report.md and eval/consistency/results.json.
-   Tests with three small hand-built results.
+   Add a small set of focused offline unit tests, around 20 meaningful
+   cases if that is what the logic needs (three small hand-built
+   results; Jaccard edge cases; matching; agreement; the identical-
+   evidence check; --level parsing). This is a guide, not a target:
+   cover the logic, do not pad, and none of these tests may call a
+   model.
 
-4. Print the exact command to launch all five runs one after another
-   with a 25-minute timeout each, and the expected total cost from
-   docs/cost.md. Then stop.
+4. Run pnpm typecheck and the new tests only. Then print the exact
+   command that would launch all five runs one after another with a
+   25-minute timeout each, and the expected total cost from
+   docs/cost.md. Do not run it. Then stop.
 ```
 
-When it stops, check the printed cost, then launch the command yourself. Before you go
-to sleep, confirm the first run has started writing to the log.
+**Presentation data tonight.** Use only the saved NodeGoat results and the seeded-bench
+results (eval/bench/report.md), quoted with their actual sample sizes and limitations
+(NodeGoat is one repository, labelled by one person plus a second-labeller sample; the
+seeded bench is a small synthetic set). The cost table keeps levels 0 and 1 as
+"Estimated", not measured. Label run-to-run consistency on slides as "not yet measured;
+three-run check planned".
 
-### The Prompt (tomorrow morning)
+**Stopping point.** After I-1 is committed and the printed command and cost estimate are
+in front of you, you may stop. Nothing else in Prompt I or G is needed for tonight.
+
+### I-2. Overnight runs (optional, later tonight)
+
+Only start this if you want the consistency claim measured. It is paid.
+
+Before launching: read the cost estimate printed by I-1 and give an explicit go-ahead
+in chat. Claude does not launch these runs on its own, and no run starts without that
+go-ahead. The design is unchanged:
+
+- Three level 2 runs (nodegoat-final-r1, r2, r3) at one pinned AttackCanvas code commit.
+  Nothing is committed to the code between them.
+- One level 0 run (nodegoat-final-l0) and one level 1 run (nodegoat-final-l1).
+- Strictly sequential, 25-minute timeout each, about 100 minutes in total.
+
+**Why three level 2 runs.** Run-to-run consistency needs at least three runs at the same
+level and code to say anything about how often a threat comes back (all, two of three,
+one only). With one or two runs, no consistency claim can be produced. If you cannot
+afford or finish all three, skip the consistency claim entirely; the level 0 and 1 runs
+still stand alone as cost measurements.
+
+You launch the printed command yourself. Confirm the first run has started writing to
+the log before you leave it.
+
+### I-3. After the runs finish
+
+Run this when all five runs have finished, whenever that is, including later the same
+day.
 
 ```
 The five runs have finished. If any failed, list which and why from
@@ -978,6 +1032,11 @@ without deciding it is worth the cost.
 
 ### Verify
 
+After I-1:
+- `pnpm typecheck` and the new consistency and level tests pass, offline.
+- The five entries exist in `eval/repos.yaml`; no file named `nodegoat-final-*` exists in `eval/results/` yet.
+
+After I-3:
 - `eval/results/nodegoat-final-*.json` has five files.
 - `pnpm try scripts/eval/consistency.ts nodegoat-final-r1 nodegoat-final-r2 nodegoat-final-r3` prints every table.
 - The deterministic evidence line says identical.
@@ -987,19 +1046,25 @@ without deciding it is worth the cost.
 
 Q: If I run it twice, do I get the same answer?
 A: The deterministic findings are identical every time. The model part varies, so I
-measured it: three runs of the same repository at the same code, with component
+built a check for it: three runs of the same repository at the same code, with component
 agreement, the share of threats that came back in every run, and how often their severity
-agreed. I report those with n = 3 and say it is a small sample.
+agreed. Until those runs finish I say it is not yet measured; after, I report it with
+n = 3 and say it is a small sample.
 
 ---
 
-## Prompt G. Coming Soon, README, Release
+## Prompt G. Coming Soon, README, Release (later release checkpoint)
 
 | Day / window | Model | Plan mode | Usage | Time | Depends on | Handoff |
 |---|---|---|---|---|---|---|
-| Tomorrow · W10 | Sonnet 5 | No | Light | 30 min | Everything, including I | None |
+| Later release checkpoint (W10) | Sonnet 5 | No | Light | 30 min | Everything, including I-3 measured results | None |
 
 ### Overview
+
+This is the release checkpoint. Do it after Prompt I-3 has produced measured results
+(or after you have decided, in writing, to release without the consistency claim, in
+which case the README says run-to-run consistency is not measured). It is not part of
+tonight's stopping point.
 
 Puts the Coming soon list into the app and the README from one source, rewrites the
 README from the docs folder, then you do the fresh-clone test, merge and tag.
