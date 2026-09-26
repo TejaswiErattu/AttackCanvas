@@ -452,8 +452,14 @@ function mountPathOf(firstArgument: string | undefined): string | undefined {
 /** One `.use(...)` call: the names its arguments refer to and the mount path, if any. */
 type UseCall = { file: string; names: string[]; prefix: string | undefined };
 
-/** The name a `.use()` argument refers to. */
+/**
+ * The name a `.use()` argument refers to. `middlewareName` handles identifiers and
+ * member calls; an inline `require("./middleware/requireAuth")` or `import("...")` is
+ * judged by the basename of its specifier, since that is the only name it has.
+ */
 function useArgumentName(argument: string): string | undefined {
+  const inline = /^(?:require|import)\s*\(\s*(['"`])([^'"`\n]+)\1\s*\)/.exec(argument.trim());
+  if (inline) return basename(inline[2]).replace(/\.[cm]?[jt]sx?$/, "");
   return middlewareName(argument);
 }
 
@@ -490,8 +496,11 @@ function scopeOfUseCalls(calls: readonly UseCall[], matches: (name: string) => b
   return scope;
 }
 
-/** Next.js request middleware. A file of this name that mentions auth is a global guard. */
-const NEXT_MIDDLEWARE_FILE = /(^|\/)middleware\.(?:ts|js)$/;
+/**
+ * Next.js request middleware: `middleware.ts` up to Next 15, `proxy.ts` from Next 16. A
+ * file of either name that mentions auth is read as a global guard (see appLevelAuth).
+ */
+const NEXT_MIDDLEWARE_FILE = /(^|\/)(?:middleware|proxy)\.(?:ts|js)$/;
 
 function appLevelAuth(ctx: Ctx): AppLevelAuth {
   const scope = scopeOfUseCalls(

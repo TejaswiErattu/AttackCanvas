@@ -48,7 +48,7 @@ const AUTH_CALL = /\bauth\s*\(/;
  * uses); it never matches a login *handler* such as handleLoginRequest.
  */
 export const GUARD_NAME =
-  /auth|protect|require(?:User|Login|Role|Admin|Permission)|isAdmin|verify(?:Token|Jwt)|logged_?in|with(?:Role|Permission)/i;
+  /auth|protect|require(?:User|Login|Role|Admin|Permission)|isAdmin|verify(?:Token|Jwt|Session|User)|logged_?in|with(?:Role|Permission)|jwt|clerk|guard|session(?:Guard|Required)/i;
 
 /** `authLimiter`, `loginRateLimiter`: a rate limiter names what it slows, not a check. */
 const LIMITER_NAME = /limit/i;

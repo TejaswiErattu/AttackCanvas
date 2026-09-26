@@ -903,3 +903,42 @@ describe("adversarial: authz_missing", () => {
     expect(kindsOf(CASES[0].absent)).toContain("authz_missing");
   });
 });
+
+describe("adversarial: authn_missing", () => {
+  it("2a: a Next 16 proxy.ts that calls auth() guards every route handler", () => {
+    const repo = [
+      manifest({ next: "^16.0.0" }),
+      LOCKFILE,
+      file(
+        "proxy.ts",
+        `import { auth } from "@/auth";\nexport default auth((req) => { if (!req.auth) return Response.redirect("/login"); });\nexport const config = { matcher: ["/api/:path*"] };\n`,
+      ),
+      file("app/api/orders/route.ts", `export async function POST() { return Response.json({}); }\n`),
+    ];
+    expect(kindsOf(repo)).not.toContain("authn_missing");
+  });
+
+  it.each([
+    ["express-jwt", `const { expressjwt } = require("express-jwt");\napp.use(expressjwt({ secret, algorithms: ["HS256"] }));`],
+    ["Auth0 checkJwt", `const checkJwt = require("./jwt");\napp.use(checkJwt);`],
+    ["Clerk", `const { clerkMiddleware } = require("@clerk/express");\napp.use(clerkMiddleware());`],
+    ["verifySession", `const verifySession = require("./session");\nrouter.use(verifySession);`],
+  ])("2b: %s applied with .use() is a guard", (_name, setup) => {
+    const repo = expressRepo(`${setup}\napp.post("/orders", ${HANDLER});`);
+    expect(kindsOf(repo)).not.toContain("authn_missing");
+  });
+
+  it("2c: an inline require of an auth module in .use() is a guard", () => {
+    const repo = expressRepo(
+      `app.use(require("./middleware/requireAuth"));\napp.post("/orders", ${HANDLER});`,
+    );
+    expect(kindsOf(repo)).not.toContain("authn_missing");
+  });
+
+  it("does not take a rate limiter or a router mount for a guard", () => {
+    const repo = expressRepo(
+      `app.use(jwtLimiter);\napp.use("/auth", authRouter);\napp.post("/orders", ${HANDLER});`,
+    );
+    expect(kindsOf(repo)).toContain("authn_missing");
+  });
+});
