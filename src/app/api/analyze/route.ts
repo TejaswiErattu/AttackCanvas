@@ -18,6 +18,12 @@
  * hourly quota of a caller who never got an analysis. Nothing between the two checks
  * awaits, so no request can slip in between them.
  *
+ * A duplicate submission (the same owner/repo/ref and analysisLevel while that analysis is
+ * still in flight, a double-click or a retried request) is coalesced: the route answers
+ * with the running job's id instead of creating a second one. Checked first, before the
+ * concurrency and rate-limit checks, so the duplicate costs its caller nothing and
+ * cannot fill the concurrency cap with copies of one run.
+ *
  * The one exception is the golden-demo repo: when repoUrl
  * matches GOLDEN_REPO_URL and DEMO_FALLBACK=1, the job is created with isDemo: true and
  * seeded from a fixture instead of running the real pipeline (see
@@ -32,6 +38,7 @@ import { parseGitHubUrl } from "@/server/ingest/urlParser";
 import {
   countActiveAnalyses,
   createAnalysis,
+  findActiveAnalysis,
   getAnalysis,
   runAnalysis,
 } from "@/server/analysis/pipeline";
@@ -63,6 +70,22 @@ function isGoldenDemo(submitted: { owner: string; repo: string }): boolean {
   return (
     parsedGolden.owner.toLowerCase() === submitted.owner.toLowerCase() &&
     parsedGolden.repo.toLowerCase() === submitted.repo.toLowerCase()
+  );
+}
+
+/** True when `state` analyses the same repository, ref and level as this request. */
+function sameAnalysis(
+  state: { repoUrl: string; analysisLevel: number },
+  submitted: { owner: string; repo: string; ref?: string },
+  analysisLevel: number,
+): boolean {
+  if (state.analysisLevel !== analysisLevel) return false;
+  const stored = parseGitHubUrl(state.repoUrl);
+  return (
+    stored.ok &&
+    stored.owner.toLowerCase() === submitted.owner.toLowerCase() &&
+    stored.repo.toLowerCase() === submitted.repo.toLowerCase() &&
+    (stored.ref ?? "") === (submitted.ref ?? "")
   );
 }
 
@@ -119,6 +142,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   const isDemo = isGoldenDemo(parsedUrl);
+
+  // Coalesce a duplicate of an analysis that is still running (see the module header).
+  const running = isDemo ? undefined : findActiveAnalysis((state) => sameAnalysis(state, parsedUrl, analysisLevel));
+  if (running) {
+    return NextResponse.json({ analysisId: running.id, status: running.stage }, { status: 202 });
+  }
 
   // Global concurrency cap, real analyses only (Prompt U Part 2: cost-abuse controls).
   // A demo job never calls a paid model (src/server/analysis/demo.ts), so it neither

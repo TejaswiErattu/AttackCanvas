@@ -16,6 +16,7 @@ import {
 vi.mock("@/server/analysis/pipeline", () => ({
   countActiveAnalyses: vi.fn(),
   createAnalysis: vi.fn(),
+  findActiveAnalysis: vi.fn(),
   getAnalysis: vi.fn(),
   runAnalysis: vi.fn(),
 }));
@@ -27,6 +28,7 @@ import { POST } from "@/app/api/analyze/route";
 import {
   countActiveAnalyses,
   createAnalysis,
+  findActiveAnalysis,
   getAnalysis,
   runAnalysis,
 } from "@/server/analysis/pipeline";
@@ -49,6 +51,7 @@ beforeEach(() => {
   resetRateLimiter();
   vi.mocked(countActiveAnalyses).mockReset().mockReturnValue(0); // room to spare, by default
   vi.mocked(createAnalysis).mockReset();
+  vi.mocked(findActiveAnalysis).mockReset().mockReturnValue(undefined); // nothing running, by default
   vi.mocked(getAnalysis).mockReset();
   vi.mocked(runAnalysis).mockReset();
   vi.mocked(seedDemoAnalysis).mockReset();
@@ -184,6 +187,51 @@ describe("POST /api/analyze", () => {
     expect(createAnalysis).toHaveBeenCalledWith(VALID_URL, 2, { isDemo: false });
     expect(runAnalysis).toHaveBeenCalledWith("job-1");
     expect(seedDemoAnalysis).not.toHaveBeenCalled();
+  });
+
+  it("coalesces a duplicate of a running analysis instead of starting a second one (bug bash case 10)", async () => {
+    const running = {
+      id: "job-running",
+      stage: "generating_threats",
+      repoUrl: "https://github.com/Acme/Canary.git",
+      analysisLevel: 2,
+      isDemo: false,
+    };
+    vi.mocked(findActiveAnalysis).mockImplementation((matches) =>
+      matches(running as never) ? (running as never) : undefined,
+    );
+    vi.mocked(countActiveAnalyses).mockReturnValue(MAX_CONCURRENT_ANALYSES); // cap full: the duplicate must not care
+
+    const response = await POST(postRequest({ repoUrl: VALID_URL, analysisLevel: 2 }));
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({ analysisId: "job-running", status: "generating_threats" });
+    expect(createAnalysis).not.toHaveBeenCalled();
+    expect(runAnalysis).not.toHaveBeenCalled();
+  });
+
+  it("does not coalesce across a different ref or analysisLevel", async () => {
+    const running = {
+      id: "job-running",
+      stage: "scanning",
+      repoUrl: "https://github.com/acme/canary/tree/feature/x",
+      analysisLevel: 2,
+      isDemo: false,
+    };
+    vi.mocked(findActiveAnalysis).mockImplementation((matches) =>
+      matches(running as never) ? (running as never) : undefined,
+    );
+    vi.mocked(createAnalysis).mockReturnValue({ id: "job-new", stage: "queued" } as never);
+    vi.mocked(getAnalysis).mockReturnValue({ id: "job-new", stage: "loading_repo" } as never);
+
+    const byRef = await POST(postRequest({ repoUrl: VALID_URL, analysisLevel: 2 }));
+    expect((await byRef.json()).analysisId).toBe("job-new");
+
+    const byLevel = await POST(
+      postRequest({ repoUrl: `${VALID_URL}/tree/feature/x`, analysisLevel: 3 }, "9.9.9.10"),
+    );
+    expect((await byLevel.json()).analysisId).toBe("job-new");
+    expect(createAnalysis).toHaveBeenCalledTimes(2);
   });
 
   it("passes every valid analysisLevel (0-4) through unchanged", async () => {

@@ -32,6 +32,7 @@ import {
   countByBasis,
   createAnalysis,
   deleteAnalysis,
+  findActiveAnalysis,
   getAnalysis,
   isExpired,
   resetStore,
@@ -288,6 +289,26 @@ const COUNTED_STAGES = [
 ] as const;
 
 const TERMINAL_STAGES_UNDER_TEST = ["complete", "failed"] as const;
+
+describe("findActiveAnalysis", () => {
+  it("returns the first in-flight real job the matcher accepts, in creation order", () => {
+    const first = createAnalysis("acme/canary");
+    createAnalysis("acme/canary");
+    expect(findActiveAnalysis((s) => s.repoUrl === "acme/canary")?.id).toBe(first.id);
+  });
+
+  it("skips terminal and demo jobs, and returns undefined when nothing matches", () => {
+    const done = createAnalysis("acme/canary");
+    done.stage = "complete";
+    const failed = createAnalysis("acme/canary");
+    failed.stage = "failed";
+    createAnalysis("acme/canary", 2, { isDemo: true });
+    expect(findActiveAnalysis(() => true)).toBeUndefined();
+    const live = createAnalysis("acme/other");
+    expect(findActiveAnalysis((s) => s.repoUrl === "acme/other")?.id).toBe(live.id);
+    expect(findActiveAnalysis((s) => s.repoUrl === "acme/canary")).toBeUndefined();
+  });
+});
 
 describe("countActiveAnalyses", () => {
   it("is 0 with no jobs at all", () => {

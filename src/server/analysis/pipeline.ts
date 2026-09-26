@@ -319,6 +319,23 @@ export function countActiveAnalyses(): number {
   return count;
 }
 
+/**
+ * The first stored job that is still in flight (not complete or failed, not a demo seed)
+ * and satisfies `matches`, in creation order, or undefined. The analyze route uses it
+ * to hand a duplicate submission the job that is already running for the same
+ * repository and level instead of starting a second paid run.
+ */
+export function findActiveAnalysis(
+  matches: (state: AnalysisState) => boolean,
+): AnalysisState | undefined {
+  sweepExpired();
+  for (const state of store.values()) {
+    if (state.isDemo || TERMINAL_STAGES.has(state.stage)) continue;
+    if (matches(state)) return state;
+  }
+  return undefined;
+}
+
 export function deleteAnalysis(id: string): void {
   store.delete(id);
   usageLedger.clear(id);
