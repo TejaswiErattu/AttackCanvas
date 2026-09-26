@@ -20,6 +20,7 @@ import { useMemo } from "react";
 import ReactFlow, {
   Background,
   Controls,
+  MarkerType,
   MiniMap,
   type Edge,
   type Node,
@@ -28,6 +29,7 @@ import "reactflow/dist/style.css";
 import type { ComponentType, Severity } from "@/shared/schema";
 import type { GraphEdge, GraphNode } from "@/shared/viewModel";
 import { layoutGraph, NODE_HEIGHT, NODE_WIDTH } from "@/client/layoutGraph";
+import { edgeColor, edgeMarker, edgeRoutes, reverseEdgeShape } from "@/client/graphEdges";
 import { SEVERITY_ACCENT, SEVERITY_TEXT } from "@/components/SeveritySummary";
 
 const COMPONENT_TYPE_TEXT: Record<ComponentType, string> = {
@@ -161,14 +163,19 @@ export default function ArchitectureGraph({
     [layout.nodes, highlightedNodes, dimming, selectedNodeId],
   );
 
+  const routes = useMemo(() => edgeRoutes(layout.edges), [layout.edges]);
+
   const flowEdges = useMemo<Edge[]>(
     () =>
-      layout.edges.map((edge) => {
+      layout.edges.map((edge, index) => {
         const on = highlightedEdges.has(edge.id);
         return {
           id: edge.id,
           source: edge.source,
           target: edge.target,
+          // Every flow points the way its data moves, dotted crossings included.
+          markerEnd: { ...edgeMarker(edge, { on, dimming }), type: MarkerType.ArrowClosed },
+          ...reverseEdgeShape(routes[index]),
           label: shortLabel(edge.label, on),
           animated: edge.crossesTrustBoundary,
           labelShowBg: true,
@@ -190,16 +197,12 @@ export default function ArchitectureGraph({
             // A trust-boundary crossing is drawn heavier because it is where most
             // threats live; the flag itself comes from the model, not from us.
             strokeWidth: on ? 3 : edge.crossesTrustBoundary ? 2 : 1.5,
-            stroke: on
-              ? "var(--color-mint)"
-              : edge.crossesTrustBoundary
-                ? "var(--color-boundary)"
-                : "var(--color-flow)",
+            stroke: edgeColor(edge, on),
             opacity: dimming && !on ? 0.25 : 1,
           },
-        };
+        } as Edge;
       }),
-    [layout.edges, highlightedEdges, dimming],
+    [layout.edges, routes, highlightedEdges, dimming],
   );
 
   if (layout.nodes.length === 0) {
