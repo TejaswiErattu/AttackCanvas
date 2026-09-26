@@ -19,6 +19,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ANALYSIS_LEVEL_LABELS } from "@/shared/schema";
+import { formatCostRange } from "@/shared/levelCost";
 import type { AnalysisError } from "@/shared/viewModel";
 import { readApiError } from "@/client/useAnalysis";
 import ErrorState from "@/components/ErrorState";
@@ -196,6 +197,9 @@ export default function HomePage() {
                           <span className="truncate text-sm font-semibold text-fg">
                             {ANALYSIS_LEVEL_LABELS[level]}
                           </span>
+                          <span className="mt-1 text-[11px] leading-snug text-subtle">
+                            {formatCostRange(level)}
+                          </span>
                         </label>
                       </div>
                     );
@@ -203,6 +207,9 @@ export default function HomePage() {
                 </div>
                 <p id="analysis-level-hint" className="mt-2 text-xs text-subtle" aria-live="polite">
                   {LEVEL_HINTS[analysisLevel] ?? ""}
+                </p>
+                <p className="mt-1 text-xs text-subtle">
+                  Costs are API usage estimates; larger repositories cost more.
                 </p>
               </fieldset>
 

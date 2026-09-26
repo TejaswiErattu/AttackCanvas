@@ -22,10 +22,11 @@
 
 import { note, type Note } from "@/server/analysis/limitations";
 import { z } from "zod";
-import { AiError, callStructured, type ClaudeDeps } from "@/server/ai/claude";
+import { AiError, callStructured, type ClaudeDeps, type ThinkingSetting } from "@/server/ai/claude";
+import type { ModelId } from "@/server/ai/models";
 import { loadPrompt } from "@/server/ai/prompts";
 import type { CallUsage } from "@/server/ai/usage";
-import type { MergedArchitecture } from "@/server/analysis/architecture";
+import { bindGap, type MergedArchitecture } from "@/server/analysis/architecture";
 import { oneLine } from "@/server/analysis/context";
 import {
   STRIDE_ORDER,
@@ -136,6 +137,15 @@ export type ThreatEngineInput = {
   /** Per-batch input budget in tokens. Defaults to THREATS_CONTEXT_TOKENS. */
   budgetTokens?: number;
   concurrency?: number;
+  /** Defaults to modelFor("stride"); the pipeline passes its level plan's. */
+  model?: ModelId;
+  /** Defaults to THREATS_THINKING. */
+  thinking?: ThinkingSetting;
+  /**
+   * Run at most this many batches, the ones whose elements carry the most control gaps
+   * (capBatchesByGaps). Unset runs every batch. Level 0 sets it.
+   */
+  maxBatches?: number;
   /**
    * Checked immediately before each batch starts. Once it returns false no further batch
    * (so no further provider request) starts; batches already in flight finish, since the
@@ -164,6 +174,10 @@ export type ThreatEngineResult = {
   usage: CallUsage[];
   /** "threats.v1". Recorded alongside whatever the threats become. */
   promptId: string;
+  /** Elements whose batch maxBatches left out. Optional so test doubles need not set it. */
+  skippedElementIds?: string[];
+  /** Elements across every batch, run or skipped. */
+  elementCount?: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -251,6 +265,44 @@ export function batchElements(
     else for (const part of chunk(unit, size)) place(part);
   }
   return batches;
+}
+
+/**
+ * Keeps the `max` batches whose elements carry the most detector control gaps, in their
+ * original order, and names the elements left out. A gap counts for every component
+ * bindGap assigns it to; a flow counts its source component's gaps. Ties keep the
+ * batchElements order, so the choice is deterministic. Pure.
+ */
+export function capBatchesByGaps(
+  batches: readonly (readonly string[])[],
+  architecture: Pick<MergedArchitecture, "components" | "dataFlows">,
+  gaps: readonly ControlGap[],
+  max: number,
+): { kept: string[][]; skippedElementIds: string[] } {
+  if (!Number.isInteger(max) || max < 1) {
+    throw new Error(`max batches must be a positive integer, got ${max}`);
+  }
+  const gapsByComponent = new Map<string, number>();
+  for (const gap of gaps) {
+    for (const id of bindGap(gap, architecture.components).ids) {
+      gapsByComponent.set(id, (gapsByComponent.get(id) ?? 0) + 1);
+    }
+  }
+  const sourceOf = new Map(architecture.dataFlows.map((f) => [f.id, f.sourceId]));
+  const weight = (id: string): number =>
+    gapsByComponent.get(id) ?? gapsByComponent.get(sourceOf.get(id) ?? "") ?? 0;
+
+  const ranked = batches
+    .map((batch, index) => ({ index, score: batch.reduce((n, id) => n + weight(id), 0) }))
+    .sort((a, b) => b.score - a.score || a.index - b.index);
+  const keep = new Set(ranked.slice(0, max).map((r) => r.index));
+  const kept: string[][] = [];
+  const skippedElementIds: string[] = [];
+  batches.forEach((batch, index) => {
+    if (keep.has(index)) kept.push([...batch]);
+    else skippedElementIds.push(...batch);
+  });
+  return { kept, skippedElementIds };
 }
 
 // ---------------------------------------------------------------------------
@@ -750,7 +802,11 @@ export async function generateThreats(
     THREATS_PROMPT_VERSION,
     input.promptDir,
   );
-  const batches = (input.batches ?? batchElements(architecture)).map((b) => [...b]);
+  const allBatches = (input.batches ?? batchElements(architecture)).map((b) => [...b]);
+  const { kept: batches, skippedElementIds } =
+    input.maxBatches === undefined
+      ? { kept: allBatches, skippedElementIds: [] as string[] }
+      : capBatchesByGaps(allBatches, architecture, input.gaps, input.maxBatches);
   const knownPaths = new Set([
     ...(input.routePaths ?? []),
     ...input.gaps.flatMap((g) => (g.routePath === undefined ? [] : [g.routePath])),
@@ -783,7 +839,8 @@ export async function generateThreats(
         // Reasoning tokens count against max_tokens, and on a live two-element batch they
         // used all 12,000 of them and left none for the JSON. Off for threat calls only;
         // the output limit and the prompt are unchanged.
-        thinking: THREATS_THINKING,
+        thinking: input.thinking ?? THREATS_THINKING,
+        model: input.model,
         // One dump per batch and attempt in development: batches no longer overwrite each other.
         dumpKey: `b${String(index).padStart(2, "0")}`,
         analysisId: input.analysisId,
@@ -843,5 +900,7 @@ export async function generateThreats(
     batches: outcomes.map((o) => o.report),
     usage: outcomes.map((o) => o.usage),
     promptId: prompt.id,
+    skippedElementIds,
+    elementCount: allBatches.reduce((n, b) => n + b.length, 0),
   };
 }
