@@ -9,6 +9,24 @@ the factories in `tests/gapSamples.ts` so they become tests in `tests/detect.gap
 Written before any code changed (2026-09-25). Fix status is tracked in the commit log; the
 documented limitations live in `docs/known-limitations.md` under "Gap detector".
 
+### Outcome
+
+Every **code** entry landed in one commit per kind (`1d4f6b0` through `3f7823e`), each with
+tests in `tests/detect.gaps.test.ts` built from the sketch; every **lower** entry landed in
+`b9c0aca`. Two fixes are narrower than the sketch, on purpose:
+
+- **3d** skips the rate-limit gap only for server-side OIDC handlers that own the login route
+  (`express-openid-connect`, `keycloak-connect`, `passport-auth0`, `passport-openidconnect`,
+  `@clerk/express`, `supertokens-node`), not for every hosted provider: the sample repository
+  has a Next app on Clerk beside an Express `/login` that still needs a limiter.
+- **8b** skips the password gap on a passwordless dependency (`otplib`, `speakeasy`, magic
+  link, WebAuthn) but not on "no file mentions a password": a handler that delegates to
+  `users.authenticate(req.body)` says nothing either, and the plain `/login` case must
+  stay reported.
+
+Two pinned certainties moved with their entries: a bare `cors()` with no credentials is now
+0.5 (11a) and a missing lockfile is 0.35 (12b).
+
 
 Each entry: how a present control is missed; fix type (**code** / **lower** / **doc**); estimated minutes; sketch of the smallest repository that triggers the false gap. Every sketch is written so `tests/gapSamples.ts` factories (`expressRepo`, `manifest`, `file`) can express it.
 
