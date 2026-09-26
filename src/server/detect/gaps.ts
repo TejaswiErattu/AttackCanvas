@@ -1043,7 +1043,34 @@ const VALIDATION_LIBS = new Set([
   "class-validator",
   "ajv",
   "@sinclair/typebox",
+  "celebrate",
+  "express-joi-validation",
+  "zod-express-middleware",
+  "@hono/zod-validator",
+  "arktype",
+  "io-ts",
+  "runtypes",
+  "typia",
+  "validator",
+  "express-openapi-validator",
+  "effect",
 ]);
+
+/**
+ * A validation library re-exported from a local module or a workspace package:
+ * `import { z } from "@/lib/validation"`, `import { UserSchema } from "@acme/schemas"`.
+ */
+const VALIDATION_SPECIFIER = /schema|valid/i;
+
+/**
+ * A validation call in the handler itself, whatever module the schema came from.
+ * `JSON.parse` is parsing, not validation, and is excluded by the lookbehind.
+ */
+const VALIDATES_IN_BODY =
+  /(?<!\bJSON)\s*\.\s*(?:parse|safeParse|parseAsync|safeParseAsync|validate|validateSync|validateAsync|assert|check)\s*\(|\b(?:validationResult|matchedData)\s*\(/;
+
+/** Route middleware that validates: by name, or an express-validator chain (`body("email")`). */
+const VALIDATING_MIDDLEWARE = /valid|schema|sanitiz|celebrate|^(?:body|check|param|query|header|cookie)\b/i;
 
 const READS_INPUT =
   /\breq(?:uest)?\s*\.\s*(?:body|query)\b|\b(?:req|request)\s*\.\s*json\s*\(|\bsearchParams\b/;
@@ -1055,8 +1082,9 @@ function packageRoot(specifier: string): string {
 }
 
 function importsValidation(file: DetectorInput): boolean {
-  return [...importsIn(file.content).values()].some((specifier) =>
-    VALIDATION_LIBS.has(packageRoot(specifier)),
+  return [...importsIn(file.content).values()].some(
+    (specifier) =>
+      VALIDATION_LIBS.has(packageRoot(specifier)) || VALIDATION_SPECIFIER.test(specifier),
   );
 }
 
@@ -1064,13 +1092,20 @@ function inputValidationMissing(ctx: Ctx): Finding[] {
   const found: Finding[] = [];
   const seen = new Set<string>();
   const byFile = new Map(ctx.source.map((file) => [file.path, file]));
+  // Validation applied with app.use()/router.use() never appears on the route itself.
+  const appLevel = scopeOfUseCalls(
+    ctx.useCalls,
+    (name) => VALIDATING_MIDDLEWARE.test(name) && !ROUTER_NAME.test(name),
+  );
 
   for (const route of ctx.routes) {
     const file = byFile.get(route.file);
-    if (!file || !READS_INPUT.test(ctx.body(route))) continue;
+    const body = ctx.body(route);
+    if (!file || !READS_INPUT.test(body)) continue;
     if (importsValidation(file)) continue;
-    if (route.middleware.some((name) => /valid|schema|sanitiz/i.test(name)))
-      continue;
+    if (VALIDATES_IN_BODY.test(body)) continue;
+    if (route.middleware.some((name) => VALIDATING_MIDDLEWARE.test(name))) continue;
+    if (coveredByAppAuth(appLevel, route.normalizedPath)) continue;
 
     // A Pages API file is one handler for every method: report it once.
     const key = `${route.file}:${route.line}`;

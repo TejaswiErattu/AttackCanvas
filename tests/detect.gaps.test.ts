@@ -1067,3 +1067,60 @@ describe("adversarial: security_headers_missing", () => {
     expect(kindsOf(web)).toContain("security_headers_missing");
   });
 });
+
+describe("adversarial: input_validation_missing", () => {
+  it("6a: a schema imported from a workspace package and parsed in the handler is validation", () => {
+    const repo = [
+      manifest({ express: "^4.0.0" }),
+      LOCKFILE,
+      expressApp(
+        `const { UserSchema } = require("@acme/schemas");\napp.post("/x", (req, res) => { const u = UserSchema.parse(req.body); res.json(u); });`,
+      ),
+    ];
+    expect(kindsOf(repo)).not.toContain("input_validation_missing");
+  });
+
+  it("6a: a validate() call on a locally imported schema counts", () => {
+    const repo = expressRepo(
+      `const { orderSchema } = require("../lib/orders");\napp.post("/x", async (req, res) => { const v = await orderSchema.validate(req.body); res.json(v); });`,
+    );
+    expect(kindsOf(repo)).not.toContain("input_validation_missing");
+  });
+
+  it("6b: validation middleware mounted with router.use covers the routes under it", () => {
+    const repo = expressRepo(
+      `const validate = require("./validate");\napp.use(validate);\napp.post("/x", (req, res) => res.json(req.body));`,
+    );
+    expect(kindsOf(repo)).not.toContain("input_validation_missing");
+  });
+
+  it("6c: an express-validator chain from a shared module is validating middleware", () => {
+    const repo = [
+      manifest({ express: "^4.0.0", "express-validator": "^7.0.0" }),
+      LOCKFILE,
+      expressApp(
+        `const { rules } = require("./validators");\napp.post("/x", rules.email, (req, res) => res.json(req.body));`,
+      ),
+      file(
+        "src/validators.js",
+        `const { body } = require("express-validator");\nexports.rules = { email: body("email").isEmail() };\n`,
+      ),
+    ];
+    expect(kindsOf(repo)).not.toContain("input_validation_missing");
+  });
+
+  it("6d: celebrate is a validation library", () => {
+    const repo = [
+      manifest({ express: "^4.0.0", celebrate: "^15.0.0" }),
+      LOCKFILE,
+      expressApp(
+        `const { celebrate, Joi } = require("celebrate");\napp.post("/x", celebrate({ body: Joi.object() }), (req, res) => res.json(req.body));`,
+      ),
+    ];
+    expect(kindsOf(repo)).not.toContain("input_validation_missing");
+  });
+
+  it("still reports a handler that reads the body and validates nothing", () => {
+    expect(kindsOf(CASES[5].absent)).toContain("input_validation_missing");
+  });
+});
