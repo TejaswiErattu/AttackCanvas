@@ -21,7 +21,9 @@
  * ever rendered as text (CLAUDE.md rule 3).
  */
 
+import { useState } from "react";
 import type { ThreatCardData } from "@/shared/viewModel";
+import { buildIssue, type IssueRepo } from "@/client/issueBody";
 import {
   FINDING_STATUSES,
   FINDING_STATUS_LABELS,
@@ -57,6 +59,8 @@ type ThreatCardProps = {
   /** The reader's triage status. Omitted where statuses are not tracked; then no selector. */
   status?: FindingStatus;
   onStatusChange?: (id: string, status: FindingStatus) => void;
+  /** The analysed repository and ref, for the GitHub issue link. Omitted: no issue actions. */
+  repo?: IssueRepo;
 };
 
 function Chip({ children, title }: { children: React.ReactNode; title?: string }) {
@@ -82,7 +86,18 @@ export default function ThreatCard({
   onSelect,
   status = "open",
   onStatusChange,
+  repo,
 }: ThreatCardProps) {
+  const [copied, setCopied] = useState<"idle" | "copied" | "failed">("idle");
+  const issue = repo ? buildIssue(threat, repo) : null;
+  const copyMarkdown = async () => {
+    try {
+      await navigator.clipboard.writeText(issue?.body ?? "");
+      setCopied("copied");
+    } catch {
+      setCopied("failed");
+    }
+  };
   const statusId = `threat-${threat.id}-status`;
   const headingId = `threat-${threat.id}-title`;
   const detailsId = `threat-${threat.id}-details`;
@@ -162,14 +177,16 @@ export default function ThreatCard({
         </div>
       </button>
 
-      {onStatusChange ? (
+      {onStatusChange || issue ? (
         // Outside the header button: a control nested in a button is invalid and would
         // toggle the card as well.
-        <div className="flex items-center gap-2 pb-3 pl-6 pr-4 sm:pr-5">
-          <label htmlFor={statusId} className="text-xs text-muted">
-            Status
-          </label>
-          <select
+        <div className="flex flex-wrap items-center gap-2 pb-3 pl-6 pr-4 sm:pr-5">
+          {onStatusChange ? (
+            <>
+              <label htmlFor={statusId} className="text-xs text-muted">
+                Status
+              </label>
+              <select
             id={statusId}
             value={status}
             onChange={(event) => {
@@ -184,6 +201,29 @@ export default function ThreatCard({
               </option>
             ))}
           </select>
+            </>
+          ) : null}
+          {issue ? (
+            <div className="ml-auto flex items-center gap-2">
+              {issue.url ? (
+                <a
+                  href={issue.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded-full border border-line-strong px-3 py-1 text-xs font-medium text-fg hover:border-mint hover:text-mint"
+                >
+                  Open as GitHub issue
+                </a>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => void copyMarkdown()}
+                className="rounded-full border border-line-strong px-3 py-1 text-xs font-medium text-fg hover:border-mint hover:text-mint"
+              >
+                {copied === "copied" ? "Copied" : copied === "failed" ? "Copy failed" : "Copy as Markdown"}
+              </button>
+            </div>
+          ) : null}
         </div>
       ) : null}
 

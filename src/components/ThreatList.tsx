@@ -13,6 +13,7 @@
 import type { ThreatCardData } from "@/shared/viewModel";
 import type { HiddenReason, HiddenSummary } from "@/client/useAnalysis";
 import ThreatCard from "@/components/ThreatCard";
+import type { IssueRepo } from "@/client/issueBody";
 import { statusOf, type FindingStatus, type StatusMap } from "@/client/findingStatus";
 
 type ThreatListProps = {
@@ -25,6 +26,7 @@ type ThreatListProps = {
   hiddenSummary?: HiddenSummary | null;
   statuses?: StatusMap;
   onStatusChange?: (id: string, status: FindingStatus) => void;
+  repo?: IssueRepo;
 };
 
 const REASON_TEXT: Record<HiddenReason, string> = {
@@ -64,6 +66,7 @@ export default function ThreatList({
   hiddenSummary = null,
   statuses = {},
   onStatusChange,
+  repo,
 }: ThreatListProps) {
   const items = Array.isArray(threats) ? threats : [];
 
@@ -89,6 +92,7 @@ export default function ThreatList({
               onSelect={onSelect}
               status={statusOf(statuses, threat.id)}
               onStatusChange={onStatusChange}
+              repo={repo}
             />
           </li>
         ))}

@@ -120,7 +120,7 @@ describe("Dashboard with the demo fixture", () => {
       `threat-card-${first.id}`,
     );
 
-    fireEvent.click(within(card).getByRole("button"));
+    fireEvent.click(card.querySelector("button[aria-controls]")!);
 
     expect(within(card).getByText(first.attackScenario)).toBeTruthy();
     expect(within(card).getByText(first.mitigation.summary)).toBeTruthy();

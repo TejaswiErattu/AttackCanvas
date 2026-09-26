@@ -109,6 +109,10 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
     [threats, statuses],
   );
 
+  const issueRepo = view.repo?.fullName && view.repo.ref
+    ? { fullName: view.repo.fullName, ref: view.repo.ref }
+    : undefined;
+
   const visible = useMemo(
     () => orderByStatus(filterThreats(threats, filters, statuses), statuses),
     [threats, filters, statuses],
@@ -406,6 +410,7 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
                   onSelect={handleSelectThreat}
                   status={statuses[threat.id] ?? "open"}
                   onStatusChange={statusKey ? handleStatusChange : undefined}
+                  repo={issueRepo}
                 />
               </li>
             ))}
@@ -434,6 +439,7 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
               hiddenSummary={hiddenSummary}
               statuses={statuses}
               onStatusChange={statusKey ? handleStatusChange : undefined}
+              repo={issueRepo}
             />
           </div>
         </div>
