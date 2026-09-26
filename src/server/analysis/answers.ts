@@ -16,6 +16,7 @@
  * same object, not just equal value -- so its confidence is provably unchanged.
  */
 
+import { dedupe, note, userLimitations, type Note } from "@/server/analysis/limitations";
 import { normalizeThreat } from "@/server/analysis/threats";
 import type { QuestionEffects } from "@/server/questions";
 import type { ControlGap } from "@/server/detect/types";
@@ -53,8 +54,13 @@ export type ApplyAnswersInput = {
 
 export type ApplyAnswersResult = {
   model: ThreatModel;
-  /** New limitations produced while applying answers (a dropped threat, a bad answer). */
+  /**
+   * Diagnostics produced while applying answers (a dropped threat, a bad answer), with
+   * question and threat ids. The model's own `limitations` gains only the reader-facing
+   * sentences built from `notes` (src/server/analysis/limitations.ts).
+   */
   limitations: string[];
+  notes: Note[];
 };
 
 // ---------------------------------------------------------------------------
@@ -165,12 +171,11 @@ function applyAnswered(
   gapById: ReadonlyMap<string, ControlGap>,
   byThreatId: Map<string, ThreatChanges>,
   newEvidence: Map<string, Evidence>,
-  limitations: string[],
+  limitations: Note[],
 ): boolean {
   const optionEffect = effect.options[optionIndex];
   if (!optionEffect) {
-    limitations.push(
-      `Answer to "${question.id}" named option ${optionIndex}, which the question does not have; it was treated as skipped.`,
+    limitations.push(note("answer_not_applied", `Answer to "${question.id}" named option ${optionIndex}, which the question does not have; it was treated as skipped.`),
     );
     return false;
   }
@@ -257,7 +262,7 @@ function distinctAnswers(group: readonly DeveloperAnswer[]): DeveloperAnswer[] {
  */
 function resolveAnswers(
   answers: readonly DeveloperAnswer[],
-  limitations: string[],
+  limitations: Note[],
 ): Map<string, DeveloperAnswer> {
   // push, not a re-spread per answer: re-copying the group each time was quadratic in
   // the number of answers sharing a questionId.
@@ -275,8 +280,7 @@ function resolveAnswers(
       resolved.set(questionId, distinct[0]);
       continue;
     }
-    limitations.push(
-      `Answer to "${questionId}" was ignored: ${distinct.length} conflicting answers were given for it; it was treated as skipped.`,
+    limitations.push(note("answer_not_applied", `Answer to "${questionId}" was ignored: ${distinct.length} conflicting answers were given for it; it was treated as skipped.`),
     );
   }
   return resolved;
@@ -290,7 +294,7 @@ export function applyAnswers(input: ApplyAnswersInput): ApplyAnswersResult {
     input.gaps.map((g) => [gapEvidenceId(g), g] as const),
   );
 
-  const limitations: string[] = [];
+  const limitations: Note[] = [];
   const byThreatId = new Map<string, ThreatChanges>();
   const newEvidence = new Map<string, Evidence>();
   /** Questions this call already applied an answer or a default to (or reported). */
@@ -299,24 +303,21 @@ export function applyAnswers(input: ApplyAnswersInput): ApplyAnswersResult {
   for (const answer of resolveAnswers(input.answers, limitations).values()) {
     const question = questionsById.get(answer.questionId);
     if (!question) {
-      limitations.push(
-        `Answer to unknown question "${answer.questionId}" was ignored.`,
+      limitations.push(note("internal", `Answer to unknown question "${answer.questionId}" was ignored.`),
       );
       continue;
     }
     handled.add(question.id);
     const effect = input.effects.get(answer.questionId);
     if (!effect) {
-      limitations.push(
-        `Answer to "${answer.questionId}" was ignored: no QuestionEffects entry for it.`,
+      limitations.push(note("internal", `Answer to "${answer.questionId}" was ignored: no QuestionEffects entry for it.`),
       );
       continue;
     }
 
     if (answer.status === "answered") {
       if (answer.optionIndex === undefined) {
-        limitations.push(
-          `Answer to "${question.id}" was marked "answered" with no option chosen; it was treated as skipped.`,
+        limitations.push(note("answer_not_applied", `Answer to "${question.id}" was marked "answered" with no option chosen; it was treated as skipped.`),
         );
         applyDefaulted(question, effect, byThreatId);
         continue;
@@ -345,14 +346,13 @@ export function applyAnswers(input: ApplyAnswersInput): ApplyAnswersResult {
     if (handled.has(question.id)) continue;
     const effect = input.effects.get(question.id);
     if (!effect) {
-      limitations.push(
-        `Question "${question.id}" got no usable answer and has no QuestionEffects entry; nothing was applied.`,
+      limitations.push(note("internal", `Question "${question.id}" got no usable answer and has no QuestionEffects entry; nothing was applied.`),
       );
       continue;
     }
     applyDefaulted(question, effect, byThreatId);
     if (!answeredIds.has(question.id)) {
-      limitations.push(`No answer was given for "${question.id}"; it was treated as skipped.`);
+      limitations.push(note("internal", `No answer was given for "${question.id}"; it was treated as skipped.`));
     }
   }
 
@@ -389,8 +389,7 @@ export function applyAnswers(input: ApplyAnswersInput): ApplyAnswersResult {
 
     if (evidenceIds.length === 0 && assumptions.length === 0) {
       droppedThreatIds.add(threat.id);
-      limitations.push(
-        `Dropped threat "${threat.title}" (${threat.id}): a developer answer cleared its only evidence and assumptions.`,
+      limitations.push(note("threat_ruled_out_by_answer", `Dropped threat "${threat.title}" (${threat.id}): a developer answer cleared its only evidence and assumptions.`, threat.title),
       );
       continue;
     }
@@ -445,7 +444,8 @@ export function applyAnswers(input: ApplyAnswersInput): ApplyAnswersResult {
   // Sorted so the result never depends on `input.answers`' order or on `model.threats`'
   // iteration order for a drop -- two calls over logically identical input, differently
   // ordered, produce byte-identical limitations.
-  const sortedLimitations = [...limitations].sort(cmp);
+  const sorted = [...limitations].sort((a, b) => cmp(a.detail, b.detail));
+  const sortedLimitations = sorted.map((n) => n.detail);
 
   return {
     model: {
@@ -453,8 +453,10 @@ export function applyAnswers(input: ApplyAnswersInput): ApplyAnswersResult {
       threats,
       evidence,
       questions,
-      limitations: [...model.limitations, ...sortedLimitations],
+      // Reader-facing sentences only; the diagnostic lines are returned separately.
+      limitations: dedupe([...model.limitations, ...userLimitations(sorted)]),
     },
     limitations: sortedLimitations,
+    notes: sorted,
   };
 }

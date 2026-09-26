@@ -16,6 +16,7 @@ import {
   validateMerged,
   type MergedArchitecture,
 } from "@/server/analysis/architecture";
+import { userLimitations } from "@/server/analysis/limitations";
 import type { RepoFacts } from "@/server/analysis/context";
 import type {
   ControlGap,
@@ -1627,5 +1628,60 @@ describe("bad model output is reported, never thrown", () => {
       ["gap-2", []],
     ]);
     expect(r.limitations.join("\n")).toMatch(/produced no components/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Regression: CI workflows in the reader-facing Limitations section
+// ---------------------------------------------------------------------------
+
+describe("mergeArchitecture notes: the reported GitHub Actions case", () => {
+  const workflow = (name: string, file: string): Deployment => ({
+    kind: "github_actions",
+    name,
+    ports: [],
+    file,
+    line: 1,
+  });
+  const files = [...FILE_PATHS, ".github/workflows/e2e-test.yml", ".github/workflows/lint.yml"];
+  const merged = () =>
+    mergeArchitecture(
+      // The draft modelled both workflows as one CI component, as the real run did, so each
+      // detected workflow matches it and neither can claim it alone.
+      draft({
+        components: [
+          ...draft().components,
+          comp("github-actions-ci", [".github/workflows/e2e-test.yml", ".github/workflows/lint.yml"], "external_service"),
+        ],
+      }),
+      makeFacts({
+        files,
+        deployment: [
+          workflow("e2e-test.yml:e2e-test", ".github/workflows/e2e-test.yml"),
+          workflow("lint.yml:lint", ".github/workflows/lint.yml"),
+        ],
+        evidence: [
+          ev("ev-deploy-1", ".github/workflows/e2e-test.yml", 1, "Deployment (github_actions): e2e-test.yml:e2e-test", { kind: "config" }),
+          ev("ev-deploy-2", ".github/workflows/lint.yml", 1, "Deployment (github_actions): lint.yml:lint", { kind: "config" }),
+        ],
+      }),
+    );
+
+  it("keeps the exact diagnostics, schema fallback and ids included", () => {
+    const r = merged();
+    const text = r.limitations.join("\n");
+    expect(text).toMatch(/is represented as component deployment-github-actions-[a-z0-9-]+ of type external_service/);
+    expect(text).toMatch(/matched github-actions-ci ambiguously/);
+  });
+
+  it("gives the reader one plain sentence naming both workflows, with no internal detail", () => {
+    const section = userLimitations(merged().notes ?? []);
+    const ci = section.filter((line) => line.includes("GitHub Actions"));
+    expect(ci).toEqual([
+      "The diagram shows the GitHub Actions workflow e2e-test.yml and the GitHub Actions workflow lint.yml as external systems because it has no separate type for build and deployment tooling. Read these as part of your own release pipeline, not as third-party services; threats against them concern how code is built and shipped.",
+    ]);
+    for (const line of section) {
+      expect(line).not.toMatch(/external_service|schema|github-actions-ci|deployment-github|ambiguous/);
+    }
   });
 });

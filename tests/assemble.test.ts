@@ -1,3 +1,4 @@
+import { STATIC_ANALYSIS_LIMITATION } from "@/server/analysis/assemble";
 import { describe, expect, it } from "vitest";
 import { assembleThreatModel, type AssembleInput } from "@/server/analysis/assemble";
 import { GAP_ASSERT_CERTAINTY } from "@/server/analysis/architecture";
@@ -488,9 +489,7 @@ describe("automatic limitations", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.model.limitations[0]).toBe("upstream limitation one");
-      expect(
-        result.model.limitations.some((l) => l.includes("regex-based")),
-      ).toBe(true);
+      expect(result.model.limitations).toContain(STATIC_ANALYSIS_LIMITATION);
     }
   });
 
@@ -502,8 +501,8 @@ describe("automatic limitations", () => {
     if (result.ok) {
       expect(result.model.limitations).toEqual(
         expect.arrayContaining([
-          expect.stringContaining("csrf_missing"),
-          expect.stringContaining("logging_missing"),
+          // Named as a reader would, never by the internal gap kind.
+          expect.stringContaining("CSRF protection, security logging"),
         ]),
       );
     }
@@ -516,9 +515,31 @@ describe("automatic limitations", () => {
     const result = assembleThreatModel(baseInput({ gaps: [low1, low2, high] }));
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.model.limitations.some((l) => l.startsWith("2 control gap(s)"))).toBe(
-        true,
-      );
+      expect(
+        result.model.limitations.some((l) =>
+          l.startsWith("2 possible missing controls could not be confirmed"),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("says nothing about low-certainty gaps when there are none", () => {
+    const result = assembleThreatModel(baseInput({ gaps: [] }));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.model.limitations.some((l) => l.includes("could not be confirmed"))).toBe(false);
+    }
+  });
+
+  it("states each limitation once, however often upstream repeats it", () => {
+    const result = assembleThreatModel(
+      baseInput({ limitations: ["same caveat", "same caveat", STATIC_ANALYSIS_LIMITATION] }),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const lines = result.model.limitations;
+      expect(lines.filter((l) => l === "same caveat")).toHaveLength(1);
+      expect(lines.filter((l) => l === STATIC_ANALYSIS_LIMITATION)).toHaveLength(1);
     }
   });
 

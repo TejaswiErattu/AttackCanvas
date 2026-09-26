@@ -15,6 +15,7 @@
  */
 
 import type { ControlGap, GapKind } from "@/server/detect/types";
+import { dedupe } from "@/server/analysis/limitations";
 import { isGapEvidence, scoreThreat } from "@/server/scoring";
 import { mapOwasp2021 } from "@/shared/owaspMap";
 import {
@@ -56,7 +57,10 @@ export type AssembleInput = {
   /** The detector's gaps, so gap certainty and gap classification can be read back. */
   gaps: readonly ControlGap[];
   assumptions: readonly string[];
-  /** Limitations already produced upstream (architecture merge, threat engine). */
+  /**
+   * Reader-facing limitations already produced upstream: userLimitations() over the merge's
+   * and the engine's notes, plus plain caveats such as OSV's. Never diagnostics.
+   */
   limitations: readonly string[];
   /** Gap kinds a caller disabled or cut before detection ran. */
   disabledGapKinds?: readonly GapKind[];
@@ -186,27 +190,59 @@ function unresolvedEvidenceIssues(
 // 3. Automatic limitations
 // ---------------------------------------------------------------------------
 
-const REGEX_LIMITATION =
-  "Detection is regex-based over source text and may miss dynamically registered routes, framework conventions it does not recognise, or controls supplied by middleware it cannot follow to its definition.";
+/**
+ * Reader-facing wording only (src/server/analysis/limitations.ts): what the reader should
+ * take into account, never how the pipeline produced it.
+ */
+export const STATIC_ANALYSIS_LIMITATION =
+  "Findings come from reading the source code, not running it. Routes registered at run time, framework conventions the analysis does not recognise, and controls applied in code it could not trace may be missed, or reported as missing when they are present.";
+
+/** What each gap check looks for, as a reader would name it. */
+const GAP_KIND_TEXT: Record<GapKind, string> = {
+  authz_missing: "ownership and role checks",
+  authn_missing: "authentication",
+  rate_limit_missing: "rate limiting",
+  csrf_missing: "CSRF protection",
+  security_headers_missing: "security response headers",
+  input_validation_missing: "input validation",
+  transport_insecure: "transport encryption",
+  password_storage_weak: "password hashing",
+  logging_missing: "security logging",
+  error_handling_gap: "error handling",
+  cors_permissive: "cross-origin (CORS) policy",
+  supply_chain_integrity: "dependency integrity",
+  client_secret_storage: "secret storage in the browser",
+};
+
+/** Plain names for upstream stages a caller may report as dropped. */
+const STAGE_TEXT: Record<string, string> = {
+  semgrep: "The Semgrep code scanner",
+  osv: "The dependency vulnerability lookup (OSV)",
+};
 
 function automaticLimitations(input: AssembleInput): string[] {
   const out: string[] = [];
 
-  for (const kind of sortedUnique(input.disabledGapKinds ?? [])) {
-    out.push(`Control gap detector "${kind}" was disabled or cut and did not run.`);
+  const disabled = sortedUnique(input.disabledGapKinds ?? []);
+  if (disabled.length > 0) {
+    const names = disabled.map((kind) => GAP_KIND_TEXT[kind] ?? kind.replace(/_/g, " "));
+    out.push(
+      `The checks for ${names.join(", ")} did not run, so no finding about ${disabled.length === 1 ? "it" : "them"} does not mean ${disabled.length === 1 ? "it is" : "they are"} in place.`,
+    );
   }
 
-  out.push(REGEX_LIMITATION);
+  out.push(STATIC_ANALYSIS_LIMITATION);
 
-  const lowCertainty = input.gaps.filter(
-    (g) => g.certainty < GAP_ASSERT_CERTAINTY,
-  ).length;
-  out.push(
-    `${lowCertainty} control gap(s) fell below the ${GAP_ASSERT_CERTAINTY.toFixed(2)} certainty threshold and were treated as unknowns rather than confirmed findings.`,
-  );
+  const lowCertainty = input.gaps.filter((g) => g.certainty < GAP_ASSERT_CERTAINTY).length;
+  if (lowCertainty > 0) {
+    out.push(
+      `${lowCertainty} possible missing ${lowCertainty === 1 ? "control" : "controls"} could not be confirmed from the code, so ${lowCertainty === 1 ? "it is" : "they are"} treated as uncertain rather than reported as ${lowCertainty === 1 ? "a finding" : "findings"}.`,
+    );
+  }
 
-  for (const stage of input.droppedStages ?? []) {
-    out.push(`Upstream analysis stage "${stage}" was dropped or unavailable.`);
+  for (const stage of sortedUnique(input.droppedStages ?? [])) {
+    const name = STAGE_TEXT[stage] ?? `The ${stage.replace(/_/g, " ")} step`;
+    out.push(`${name} could not run, so findings it would have added are missing.`);
   }
 
   return out;
@@ -262,7 +298,8 @@ export function assembleThreatModel(input: AssembleInput): AssembleResult {
     threats: scored,
     questions: [],
     assumptions: sortedUnique(input.assumptions),
-    limitations: [...input.limitations, ...automaticLimitations(input)],
+    // Reader-facing only, each sentence once (src/server/analysis/limitations.ts).
+    limitations: dedupe([...input.limitations, ...automaticLimitations(input)]),
   };
 
   const validated = validateThreatModel(model);

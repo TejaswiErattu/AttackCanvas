@@ -27,6 +27,7 @@ import {
   ANALYSIS_TTL_MS,
   MAX_TIMEOUT_MS,
   NO_GAPS_LIMITATION,
+  INJECTION_ECHO_LIMITATION,
   PIPELINE_TIMEOUT_MS,
   countActiveAnalyses,
   countByBasis,
@@ -645,7 +646,7 @@ describe("runAnalysis", () => {
     expect(result.stage).toBe("complete");
     expect(result.droppedStages).toEqual(["semgrep"]);
     expect(result.threatModel?.limitations).toContain(
-      'Upstream analysis stage "semgrep" was dropped or unavailable.',
+      "The Semgrep code scanner could not run, so findings it would have added are missing.",
     );
   });
 
@@ -839,9 +840,10 @@ describe("runAnalysis", () => {
 
     expect(result.stage).toBe("complete");
     expect(result.threatModel).toBeDefined();
-    expect(
-      result.threatModel?.limitations.some((l) => l.includes('"injection_echo"')),
-    ).toBe(true);
+    // The reader gets one plain sentence; the check code and JSON path are diagnostics.
+    expect(result.threatModel?.limitations).toContain(INJECTION_ECHO_LIMITATION);
+    expect(result.threatModel?.limitations.some((l) => l.includes("injection_echo"))).toBe(false);
+    expect(result.diagnostics.some((l) => l.includes('"injection_echo"'))).toBe(true);
   });
 
   it("never calls selectQuestions once a fatal output issue is found (unknown_file)", async () => {

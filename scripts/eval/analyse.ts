@@ -81,6 +81,7 @@ export async function analyseRepo(
       ranAt: new Date(now()).toISOString(),
       cost: { calls: state.cost.calls, totalUsd: state.cost.totalUsd },
       threatModel: state.threatModel,
+      diagnostics: [...(state.diagnostics ?? [])],
     },
   };
 }

@@ -19,6 +19,7 @@
  * lives. The model proposes in the first half of this file; code disposes in the second.
  */
 
+import { diagnosticsOf, note, type Note } from "@/server/analysis/limitations";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { callStructured, type ClaudeDeps } from "@/server/ai/claude";
@@ -256,7 +257,16 @@ export type MergedArchitecture = {
   unknowns: Unknown[];
   /** Detector, Semgrep and OSV evidence, de-duplicated by id. Everything a threat may cite. */
   evidence: Evidence[];
+  /**
+   * Diagnostics: what the merge did, ids and all (src/server/analysis/limitations.ts). Not
+   * reader-facing; the Limitations section is built from `notes` by userLimitations().
+   */
   limitations: string[];
+  /**
+   * The same messages with a code each, so the reader-facing summary can group them.
+   * mergeArchitecture always sets it; optional only so hand-built test fixtures need not.
+   */
+  notes?: Note[];
   /** gap id -> component ids. Consumed by Prompt P. */
   gapBindings: Map<string, string[]>;
   /**
@@ -424,7 +434,7 @@ function resolveRefs(
 function dropComponents(
   draft: ArchitectureDraft,
   idx: RefIndex,
-  limitations: string[],
+  limitations: Note[],
 ): Kept[] {
   const kept: Kept[] = [];
   const seen = new Set<string>();
@@ -436,14 +446,15 @@ function dropComponents(
     const refs = resolveRefs(evidenceRefs, idx);
     if (unknownFile !== undefined) {
       limitations.push(
-        `Dropped component ${label}: it lists ${oneLine(unknownFile)}, which is not in the loaded file list.`,
+        note("architecture_item_dropped", `Dropped component ${label}: it lists ${oneLine(unknownFile)}, which is not in the loaded file list.`),
       );
     } else if (!refs.resolved) {
       limitations.push(
-        `Dropped component ${label}: none of its evidenceRefs resolves to evidence, a route or a loaded file.`,
+        note("architecture_item_dropped", `Dropped component ${label}: none of its evidenceRefs resolves to evidence, a route or a loaded file.`),
       );
     } else if (seen.has(component.id)) {
-      limitations.push(`Dropped a second component with the id ${label}.`);
+      limitations.push(
+        note("internal", `Dropped a second component with the id ${label}.`));
     } else {
       seen.add(component.id);
       kept.push({
@@ -459,7 +470,7 @@ function dropFlows(
   draft: ArchitectureDraft,
   componentIds: ReadonlySet<string>,
   idx: RefIndex,
-  limitations: string[],
+  limitations: Note[],
 ): KeptFlow[] {
   const kept: KeptFlow[] = [];
   const seen = new Set<string>();
@@ -468,14 +479,15 @@ function dropFlows(
     const refs = resolveRefs(evidenceRefs, idx);
     if (!componentIds.has(flow.sourceId) || !componentIds.has(flow.targetId)) {
       limitations.push(
-        `Dropped data flow ${label}: an endpoint is not a component that survived the merge.`,
+        note("architecture_item_dropped", `Dropped data flow ${label}: an endpoint is not a component that survived the merge.`),
       );
     } else if (!refs.resolved) {
       limitations.push(
-        `Dropped data flow ${label}: none of its evidenceRefs resolves to evidence, a route or a loaded file.`,
+        note("architecture_item_dropped", `Dropped data flow ${label}: none of its evidenceRefs resolves to evidence, a route or a loaded file.`),
       );
     } else if (seen.has(flow.id)) {
-      limitations.push(`Dropped a second data flow with the id ${label}.`);
+      limitations.push(
+        note("internal", `Dropped a second data flow with the id ${label}.`));
     } else {
       seen.add(flow.id);
       kept.push({ flow, evidenceIds: refs.evidenceIds });
@@ -487,7 +499,7 @@ function dropFlows(
 function pruneBoundaries(
   boundaries: readonly TrustBoundary[],
   componentIds: ReadonlySet<string>,
-  limitations: string[],
+  limitations: Note[],
 ): TrustBoundary[] {
   const out: TrustBoundary[] = [];
   for (const boundary of boundaries) {
@@ -496,11 +508,11 @@ function pruneBoundaries(
       out.push(boundary);
     } else if (members.length === 0) {
       limitations.push(
-        `Dropped trust boundary ${oneLine(boundary.id)}: none of its components survived the merge.`,
+        note("architecture_item_dropped", `Dropped trust boundary ${oneLine(boundary.id)}: none of its components survived the merge.`),
       );
     } else {
       limitations.push(
-        `Trust boundary ${oneLine(boundary.id)} lost members that did not survive the merge.`,
+        note("internal", `Trust boundary ${oneLine(boundary.id)} lost members that did not survive the merge.`),
       );
       out.push({ ...boundary, componentIds: members });
     }
@@ -511,7 +523,7 @@ function pruneBoundaries(
 function pruneUnknowns(
   unknowns: readonly Unknown[],
   componentIds: ReadonlySet<string>,
-  limitations: string[],
+  limitations: Note[],
 ): Unknown[] {
   const out: Unknown[] = [];
   for (const unknown of unknowns) {
@@ -520,7 +532,7 @@ function pruneUnknowns(
     );
     if (affects.length === 0 && unknown.affectsComponentIds.length > 0) {
       limitations.push(
-        `Dropped unknown ${oneLine(unknown.id)}: every component it affects was dropped.`,
+        note("internal", `Dropped unknown ${oneLine(unknown.id)}: every component it affects was dropped.`),
       );
     } else {
       out.push({ ...unknown, affectsComponentIds: affects });
@@ -533,7 +545,7 @@ function pruneUnknowns(
 function fixBoundaryRefs(
   flows: KeptFlow[],
   boundaries: readonly TrustBoundary[],
-  limitations: string[],
+  limitations: Note[],
 ): KeptFlow[] {
   const ids = new Set(boundaries.map((b) => b.id));
   return flows.map(({ flow, evidenceIds }) => {
@@ -541,7 +553,7 @@ function fixBoundaryRefs(
       return { flow, evidenceIds };
     }
     limitations.push(
-      `Data flow ${oneLine(flow.id)} named a trust boundary that does not exist; the reference was removed.`,
+        note("internal", `Data flow ${oneLine(flow.id)} named a trust boundary that does not exist; the reference was removed.`),
     );
     const cleaned = { ...flow };
     delete cleaned.boundaryId;
@@ -698,11 +710,32 @@ function synthesize(group: FactGroup, taken: Set<string>): Kept {
  * match is ambiguous and the deterministic component is added beside them instead of
  * silently merging two things that may differ.
  */
+/** Plain names for deployment kinds, as a reader would call them. */
+const DEPLOYMENT_KIND_TEXT: Record<string, string> = {
+  github_actions: "GitHub Actions workflow",
+  compose: "Docker Compose service",
+  dockerfile: "Dockerfile",
+  vercel: "Vercel configuration",
+  serverless: "Serverless Framework function",
+  terraform: "Terraform resource",
+};
+
+/**
+ * "the GitHub Actions workflow lint.yml" for a deployment fact group, from its kind and
+ * detector names ("lint.yml:lint" is file:job; the file is what a reader recognises).
+ * Repository-derived names pass through oneLine like every other text here.
+ */
+function deploymentSubject(kind: string, names: readonly string[]): string {
+  const what = DEPLOYMENT_KIND_TEXT[kind] ?? `${kind.replace(/_/g, " ")} configuration`;
+  const shown = [...new Set(names.map((name) => oneLine(name.split(":")[0], 80)))];
+  return shown.length ? `the ${what} ${shown.join(", ")}` : `the ${what}`;
+}
+
 function addBackFacts(
   kept: Kept[],
   groups: readonly FactGroup[],
   taken: Set<string>,
-  limitations: string[],
+  limitations: Note[],
 ): Kept[] {
   const picks = new Map(
     groups.map((g) => [
@@ -738,13 +771,25 @@ function addBackFacts(
     added.push(synthesized);
     if (group.kind === "deployment") {
       limitations.push(
-        `Deployment target ${oneLine(group.label)} ${oneLine(group.names.join(", "))} is represented as component ${synthesized.component.id} of type ${DEPLOYMENT_SYNTH_TYPE}: the schema has no deployment component type, so this is the closest valid type, not a claim that it is a third-party service.`,
+        note(
+          "deployment_modelled_as_external",
+          `Deployment target ${oneLine(group.label)} ${oneLine(group.names.join(", "))} is represented as component ${synthesized.component.id} of type ${DEPLOYMENT_SYNTH_TYPE}: the schema has no deployment component type, so this is the closest valid type, not a claim that it is a third-party service.`,
+          deploymentSubject(group.label, group.names),
+        ),
       );
     }
+    // A deployment target's reader-facing sentence is the one above; how it was matched is
+    // diagnostic only. A datastore added back is worth telling the reader about once.
+    const code = group.kind === "deployment" ? "internal" : "component_added_from_code";
+    const subject = group.kind === "datastore" ? `${group.label} datastore` : undefined;
     limitations.push(
-      ambiguous.length > 0
-        ? `Detected ${label} matched ${ambiguous.map((id) => oneLine(id)).join(", ")} ambiguously; nothing was merged and component ${synthesized.component.id} was added from the detector fact.`
-        : `Added component ${synthesized.component.id} for the detected ${label}; the draft did not include it.`,
+      note(
+        code,
+        ambiguous.length > 0
+          ? `Detected ${label} matched ${ambiguous.map((id) => oneLine(id)).join(", ")} ambiguously; nothing was merged and component ${synthesized.component.id} was added from the detector fact.`
+          : `Added component ${synthesized.component.id} for the detected ${label}; the draft did not include it.`,
+        subject,
+      ),
     );
   }
   return [...kept, ...added];
@@ -858,7 +903,7 @@ const VIA_TEXT: Record<BindVia, string> = {
 function bindAll(
   gaps: readonly ControlGap[],
   components: readonly Component[],
-  limitations: string[],
+  limitations: Note[],
 ): Map<string, string[]> {
   const bindings = new Map<string, string[]>();
   for (const gap of gaps) {
@@ -867,11 +912,11 @@ function bindAll(
     const bound = ids.length > 0 ? ids.join(", ") : "none";
     if (repoWide) {
       limitations.push(
-        `Gap ${oneLine(gap.id)} (${oneLine(gap.control)}) is in ${oneLine(gap.file)}, a repository-wide file (dependency manifest or deployment config); repository-wide fallback binding used ${VIA_TEXT[via]}: ${bound}.`,
+        note("gap_bound_broadly", `Gap ${oneLine(gap.id)} (${oneLine(gap.control)}) is in ${oneLine(gap.file)}, a repository-wide file (dependency manifest or deployment config); repository-wide fallback binding used ${VIA_TEXT[via]}: ${bound}.`),
       );
     } else if (gap.scope !== "repository" && via !== "exact") {
       limitations.push(
-        `Gap ${oneLine(gap.id)} (${oneLine(gap.control)}) in ${oneLine(gap.file)} has no component listing that file; fallback binding used ${VIA_TEXT[via]}: ${bound}.`,
+        note("gap_bound_broadly", `Gap ${oneLine(gap.id)} (${oneLine(gap.control)}) in ${oneLine(gap.file)} has no component listing that file; fallback binding used ${VIA_TEXT[via]}: ${bound}.`),
       );
     }
   }
@@ -930,14 +975,14 @@ function gapUnknowns(
   routes: readonly Route[],
   evidence: readonly Evidence[],
   takenIds: Set<string>,
-  limitations: string[],
+  limitations: Note[],
 ): RankedUnknown[] {
   const nameOf = new Map(components.map((c) => [c.id, c.name]));
   const out: RankedUnknown[] = [];
   for (const gap of gaps) {
     if (gapEvidenceIds(gap, evidence).length === 0) {
       limitations.push(
-        `Gap ${oneLine(gap.id)} has no evidence in the evidence array; a threat cannot cite it.`,
+        note("internal", `Gap ${oneLine(gap.id)} has no evidence in the evidence array; a threat cannot cite it.`),
       );
     }
     if (gap.certainty >= GAP_ASSERT_CERTAINTY) continue;
@@ -989,7 +1034,7 @@ function dedupeModelUnknowns(
 
 function capUnknowns(
   ranked: readonly RankedUnknown[],
-  limitations: string[],
+  limitations: Note[],
 ): Unknown[] {
   const sorted = [...ranked].sort(
     (a, b) =>
@@ -1000,7 +1045,7 @@ function capUnknowns(
   );
   if (sorted.length > MAX_UNKNOWNS) {
     limitations.push(
-      `${sorted.length - MAX_UNKNOWNS} lower-ranked unknown(s) were dropped to keep the cap of ${MAX_UNKNOWNS}.`,
+        note("internal", `${sorted.length - MAX_UNKNOWNS} lower-ranked unknown(s) were dropped to keep the cap of ${MAX_UNKNOWNS}.`),
     );
   }
   return sorted.slice(0, MAX_UNKNOWNS).map((r) => r.unknown);
@@ -1157,7 +1202,7 @@ export function mergeArchitecture(
   draft: ArchitectureDraft,
   facts: RepoFacts,
 ): MergedArchitecture {
-  const limitations: string[] = [];
+  const limitations: Note[] = [];
   const evidence = mergeEvidence(facts);
   const idx = buildRefIndex(facts, evidence);
 
@@ -1225,7 +1270,8 @@ export function mergeArchitecture(
     trustBoundaries,
     unknowns,
     evidence,
-    limitations,
+    limitations: diagnosticsOf(limitations),
+    notes: limitations,
     gapBindings,
     componentEvidence: new Map(
       kept.map((k) => [k.component.id, k.evidenceIds]),
