@@ -276,3 +276,28 @@ function ArchitectureNode({ data }: NodeProps<ArchitectureNodeData>) {
 }
 
 export default memo(ArchitectureNode);
+
+// ---------------------------------------------------------------------------
+// Trust boundary group
+// ---------------------------------------------------------------------------
+
+export type BoundaryGroupData = { label: string };
+
+/**
+ * A trust boundary drawn behind its components: dashed outline, tinted background and
+ * its name in the top-left corner. Not selectable; clicks fall through to the canvas.
+ */
+function BoundaryGroupNode({ data }: NodeProps<BoundaryGroupData>) {
+  return (
+    <div
+      className="pointer-events-none h-full w-full rounded-2xl border-2 border-dashed border-boundary/60 bg-boundary/[0.06]"
+      data-boundary-group=""
+    >
+      <span className="absolute left-3 top-2 rounded-full bg-surface/90 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-boundary">
+        {data.label}
+      </span>
+    </div>
+  );
+}
+
+export const BoundaryGroup = memo(BoundaryGroupNode);

@@ -324,6 +324,11 @@ export function toDashboardViewModel(model: ThreatModel): DashboardViewModel {
     fixNowTotal: fixNowCards.length,
     nodes: model.components.map((component) => toGraphNode(component, visible)),
     edges: model.dataFlows.map(toGraphEdge),
+    boundaries: model.trustBoundaries.map((boundary) => ({
+      id: boundary.id,
+      name: boundary.name,
+      componentIds: [...boundary.componentIds],
+    })),
     threats,
     assumptions: [...model.assumptions],
     limitations: [...model.limitations],

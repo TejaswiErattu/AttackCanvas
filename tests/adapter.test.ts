@@ -1069,3 +1069,13 @@ describe("toAnalysisError", () => {
     }
   });
 });
+
+describe("toDashboardViewModel: trust boundaries", () => {
+  it("carries every boundary with its name and component ids, in the model's order", () => {
+    const model = buildModel();
+    const view = toDashboardViewModel(model);
+    expect(view.boundaries).toEqual(
+      model.trustBoundaries.map((b) => ({ id: b.id, name: b.name, componentIds: b.componentIds })),
+    );
+  });
+});

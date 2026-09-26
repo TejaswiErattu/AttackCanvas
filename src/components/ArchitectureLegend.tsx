@@ -20,10 +20,18 @@ export function legendTypes(nodes: readonly Pick<GraphNode, "type">[]): string[]
   return present.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
 }
 
-export default function ArchitectureLegend({ nodes }: { nodes: readonly GraphNode[] }) {
+export default function ArchitectureLegend({
+  nodes,
+  notes = [],
+}: {
+  nodes: readonly GraphNode[];
+  /** Boundary memberships the diagram could not draw (assignBoundaries). */
+  notes?: readonly string[];
+}) {
   const types = legendTypes(nodes);
   if (types.length === 0) return null;
   return (
+    <>
     <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-subtle" aria-label="Diagram legend">
       <ul className="flex flex-wrap gap-x-3 gap-y-1.5" aria-label="Component types">
         {types.map((type) => (
@@ -41,6 +49,21 @@ export default function ArchitectureLegend({ nodes }: { nodes: readonly GraphNod
         <span aria-hidden="true" className="h-0.5 w-5 bg-flow" />
         Internal flow
       </span>
+      <span className="flex items-center gap-1.5">
+        <span aria-hidden="true" className="h-3 w-5 rounded border border-dashed border-boundary/60 bg-boundary/[0.06]" />
+        Trust boundary
+      </span>
     </div>
+    {notes.length > 0 ? (
+      <div className="mt-2 text-xs text-muted">
+        <p className="font-medium uppercase tracking-[0.14em] text-subtle">Layout notes</p>
+        <ul className="mt-1 list-disc space-y-0.5 pl-5">
+          {notes.map((note) => (
+            <li key={note}>{note}</li>
+          ))}
+        </ul>
+      </div>
+    ) : null}
+    </>
   );
 }

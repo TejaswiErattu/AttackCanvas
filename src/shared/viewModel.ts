@@ -41,6 +41,14 @@ export type GraphEdge = {
   dataClassification: DataClassification;
 };
 
+/** A trust boundary as the diagram draws it: its name and the components inside it. */
+export type TrustBoundaryView = {
+  id: string;
+  name: string;
+  /** In the model's order. A component may appear in more than one boundary. */
+  componentIds: string[];
+};
+
 export type EvidenceItem = {
   kind: EvidenceKind;
   kindLabel: string;
@@ -140,6 +148,8 @@ export type DashboardViewModel = {
   fixNowTotal: number;
   nodes: GraphNode[];
   edges: GraphEdge[];
+  /** In the model's order; the diagram puts a component in the first one that lists it. */
+  boundaries: TrustBoundaryView[];
   /** Sorted by priority, then risk (impact x likelihood), highest first. */
   threats: ThreatCardData[];
   assumptions: string[];

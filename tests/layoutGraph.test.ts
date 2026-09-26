@@ -10,8 +10,8 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { layoutGraph, NODE_HEIGHT, NODE_WIDTH } from "@/client/layoutGraph";
-import type { GraphEdge, GraphNode } from "@/shared/viewModel";
+import { assignBoundaries, layoutGraph, NODE_HEIGHT, NODE_WIDTH } from "@/client/layoutGraph";
+import type { GraphEdge, GraphNode, TrustBoundaryView } from "@/shared/viewModel";
 import { deepFreeze } from "./helpers";
 
 function node(id: string, overrides: Partial<GraphNode> = {}): GraphNode {
@@ -164,5 +164,46 @@ describe("layoutGraph", () => {
     const result = layoutGraph(malformed, badEdges);
     expect(result.nodes.map((n) => n.id)).toEqual(["ok"]);
     expect(result.edges).toEqual([]);
+  });
+});
+
+describe("assignBoundaries", () => {
+  const b = (id: string, componentIds: string[]): TrustBoundaryView => ({ id, name: `${id} zone`, componentIds });
+
+  it("puts a component in the first boundary that lists it and notes the second", () => {
+    const result = assignBoundaries([b("edge", ["user", "web"]), b("app", ["web", "api"])], NODES);
+    expect(Object.fromEntries(result.boundaryOf)).toEqual({ user: "edge", web: "edge", api: "app" });
+    expect(result.notes).toEqual(['web is also in the trust boundary "app zone"; it is drawn inside "edge zone".']);
+  });
+
+  it("leaves a component in no boundary top-level, and drops a boundary with no shown member", () => {
+    const result = assignBoundaries([b("edge", ["user"]), b("ghost", ["not-a-node"])], NODES);
+    expect(result.boundaryOf.has("db")).toBe(false);
+    expect(result.used.map((u) => u.id)).toEqual(["edge"]);
+  });
+});
+
+describe("layoutGraph: boundary groups", () => {
+  const boundaries: TrustBoundaryView[] = [
+    { id: "edge", name: "Internet", componentIds: ["user", "web"] },
+    { id: "data", name: "Data", componentIds: ["db"] },
+  ];
+
+  it("draws one group per used boundary around its children, and keeps others top-level", () => {
+    const { nodes, groups } = layoutGraph(NODES, EDGES, { boundaries });
+    expect(groups.map((g) => [g.id, g.childIds])).toEqual([
+      ["edge", ["user", "web"]],
+      ["data", ["db"]],
+    ]);
+    expect(nodes.find((n) => n.id === "api")?.boundaryId).toBeNull();
+    for (const group of groups) {
+      for (const id of group.childIds) {
+        const child = nodes.find((n) => n.id === id)!;
+        expect(child.position.x).toBeGreaterThan(group.position.x);
+        expect(child.position.y).toBeGreaterThan(group.position.y);
+        expect(child.position.x + child.width).toBeLessThan(group.position.x + group.width);
+        expect(child.position.y + child.height).toBeLessThan(group.position.y + group.height);
+      }
+    }
   });
 });

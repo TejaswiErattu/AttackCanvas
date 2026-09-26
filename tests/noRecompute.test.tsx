@@ -161,6 +161,7 @@ const VIEW: DashboardViewModel = {
     },
   ],
   edges: [],
+  boundaries: [],
   // Server order: low first, critical second. Not sorted by severity.
   threats: [QUIET_GAP, LOUD_CRITICAL, MIDDLE],
   assumptions: ["Sessions are cookie-based."],

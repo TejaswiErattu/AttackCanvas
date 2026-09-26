@@ -19,11 +19,60 @@
  */
 
 import dagre from "dagre";
-import type { GraphEdge, GraphNode } from "@/shared/viewModel";
+import type { GraphEdge, GraphNode, TrustBoundaryView } from "@/shared/viewModel";
 
 /** Must match the rendered node box in ArchitectureGraph.tsx, or edges will not meet it. */
 export const NODE_WIDTH = 220;
 export const NODE_HEIGHT = 76;
+
+/** Room a boundary group leaves around its children, and above them for its label. */
+export const GROUP_PADDING = 20;
+export const GROUP_LABEL_HEIGHT = 28;
+
+export type BoundaryAssignment = {
+  /** Component id -> the one boundary it is drawn inside. Absent: top-level. */
+  boundaryOf: Map<string, string>;
+  /** Boundaries that received at least one of `nodeIds`, in the model's order. */
+  used: TrustBoundaryView[];
+  /** One line per extra boundary membership that could not be drawn. */
+  notes: string[];
+};
+
+/**
+ * Which boundary each component is drawn inside. A group node can hold a child only
+ * once, so a component the model put in two boundaries goes in the first that lists it,
+ * and every later membership becomes a note. Only ids in `nodeIds` count, so a boundary
+ * whose members are all off the current view is not drawn. Pure and order-preserving.
+ */
+export function assignBoundaries(
+  boundaries: readonly TrustBoundaryView[],
+  nodes: readonly Pick<GraphNode, "id" | "label">[],
+): BoundaryAssignment {
+  const labels = new Map(nodes.map((node) => [node.id, node.label]));
+  const boundaryOf = new Map<string, string>();
+  const names = new Map<string, string>();
+  const notes: string[] = [];
+  for (const boundary of Array.isArray(boundaries) ? boundaries : []) {
+    names.set(boundary.id, boundary.name);
+    for (const id of new Set<string>(boundary.componentIds ?? [])) {
+      if (!labels.has(id)) continue;
+      const first = boundaryOf.get(id);
+      if (first === undefined) {
+        boundaryOf.set(id, boundary.id);
+      } else if (first !== boundary.id) {
+        notes.push(
+          `${labels.get(id)} is also in the trust boundary "${boundary.name}"; it is drawn inside "${names.get(first)}".`,
+        );
+      }
+    }
+  }
+  const usedIds = new Set(boundaryOf.values());
+  return {
+    boundaryOf,
+    used: (Array.isArray(boundaries) ? boundaries : []).filter((b) => usedIds.has(b.id)),
+    notes,
+  };
+}
 
 export type LayoutOptions = {
   nodeWidth?: number;
@@ -34,17 +83,36 @@ export type LayoutOptions = {
   nodesep?: number;
   /** Gap between ranks. */
   ranksep?: number;
+  /** Trust boundaries to draw as groups around their components. */
+  boundaries?: readonly TrustBoundaryView[];
 };
 
 export type PositionedNode = GraphNode & {
+  /** Absolute, top-left. */
   position: { x: number; y: number };
   width: number;
   height: number;
+  /** The boundary group it is drawn inside, or null when top-level. */
+  boundaryId: string | null;
+};
+
+export type PositionedGroup = {
+  id: string;
+  label: string;
+  /** Absolute, top-left. */
+  position: { x: number; y: number };
+  width: number;
+  height: number;
+  childIds: string[];
 };
 
 export type LayoutResult = {
   /** Input order is preserved, so the server's node ordering survives layout. */
   nodes: PositionedNode[];
+  /** One per boundary with at least one child, in the model's order. */
+  groups: PositionedGroup[];
+  /** Extra boundary memberships that could not be drawn (see assignBoundaries). */
+  notes: string[];
   /** Only edges whose endpoints both exist; a dangling edge is dropped, not crashed on. */
   edges: GraphEdge[];
   width: number;
@@ -131,6 +199,8 @@ export function layoutGraph(
 
   dagre.layout(graph);
 
+  const assignment = assignBoundaries(options.boundaries ?? [], laidOut);
+
   const positioned: PositionedNode[] = laidOut.map((node) => {
     const placed: unknown = graph.node(node.id);
     // dagre reports the node centre; React Flow positions from the top-left corner.
@@ -144,14 +214,36 @@ export function layoutGraph(
       },
       width: nodeWidth,
       height: nodeHeight,
+      boundaryId: assignment.boundaryOf.get(node.id) ?? null,
     };
   });
+
+  const groups = assignment.used.map((boundary) => groupAround(boundary, positioned));
 
   const size: unknown = graph.graph();
   return {
     nodes: positioned,
+    groups,
+    notes: assignment.notes,
     edges: validEdges.map((edge) => ({ ...edge })),
     width: Math.round(isRecord(size) ? finiteOr(size.width, 0) : 0),
     height: Math.round(isRecord(size) ? finiteOr(size.height, 0) : 0),
+  };
+}
+
+/** A boundary's box: its children's bounding box, padded, with room for the label on top. */
+function groupAround(boundary: TrustBoundaryView, nodes: readonly PositionedNode[]): PositionedGroup {
+  const children = nodes.filter((node) => node.boundaryId === boundary.id);
+  const left = Math.min(...children.map((n) => n.position.x)) - GROUP_PADDING;
+  const top = Math.min(...children.map((n) => n.position.y)) - GROUP_PADDING - GROUP_LABEL_HEIGHT;
+  const right = Math.max(...children.map((n) => n.position.x + n.width)) + GROUP_PADDING;
+  const bottom = Math.max(...children.map((n) => n.position.y + n.height)) + GROUP_PADDING;
+  return {
+    id: boundary.id,
+    label: boundary.name,
+    position: { x: left, y: top },
+    width: right - left,
+    height: bottom - top,
+    childIds: children.map((n) => n.id),
   };
 }

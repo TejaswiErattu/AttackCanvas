@@ -20,6 +20,7 @@
 
 import { useMemo, useState } from "react";
 import type { DashboardViewModel } from "@/shared/viewModel";
+import { assignBoundaries } from "@/client/layoutGraph";
 import {
   EMPTY_FILTERS,
   filterThreats,
@@ -96,6 +97,8 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
   // Falls back to the list length only for a partial response that lacks the total.
   const fixNowTotal = view.fixNowTotal ?? view.fixNow?.length ?? 0;
   const nodes = view.nodes ?? [];
+  const boundaries = view.boundaries ?? [];
+  const layoutNotes = assignBoundaries(boundaries, nodes).notes;
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? null;
   const assumptions = view.assumptions ?? [];
   const limitations = view.limitations ?? [];
@@ -138,12 +141,13 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
             <ArchitectureGraph
               nodes={nodes}
               edges={view.edges ?? []}
+              boundaries={boundaries}
               highlightNodeIds={highlight.nodeIds}
               highlightEdgeIds={highlight.edgeIds}
               selectedNodeId={selectedNodeId}
               onSelectNode={handleSelectNode}
             />
-            <ArchitectureLegend nodes={nodes} />
+            <ArchitectureLegend nodes={nodes} notes={layoutNotes} />
           </div>
 
           {nodes.length > 0 ? (

@@ -26,10 +26,14 @@ import ReactFlow, {
   type Node,
 } from "reactflow";
 import "reactflow/dist/style.css";
-import type { GraphEdge, GraphNode } from "@/shared/viewModel";
+import type { GraphEdge, GraphNode, TrustBoundaryView } from "@/shared/viewModel";
 import { layoutGraph, NODE_HEIGHT, NODE_WIDTH } from "@/client/layoutGraph";
 import { edgeColor, edgeMarker, edgeRoutes, reverseEdgeShape } from "@/client/graphEdges";
-import ArchitectureNode, { type ArchitectureNodeData } from "@/components/ArchitectureNode";
+import ArchitectureNode, {
+  BoundaryGroup,
+  type ArchitectureNodeData,
+  type BoundaryGroupData,
+} from "@/components/ArchitectureNode";
 
 /**
  * Wider than layoutGraph's defaults: edge labels sit at edge midpoints, and dagre does not
@@ -48,6 +52,8 @@ function shortLabel(label: string | undefined, full: boolean): string | undefine
 type ArchitectureGraphProps = {
   nodes: readonly GraphNode[];
   edges: readonly GraphEdge[];
+  /** Drawn as groups around their components; a component in none stays top-level. */
+  boundaries?: readonly TrustBoundaryView[];
   /**
    * Component ids (nodes) and data-flow ids (edges) to emphasise. When both are empty
    * nothing is dimmed.
@@ -59,11 +65,12 @@ type ArchitectureGraphProps = {
 };
 
 /** Defined once, outside render: React Flow warns when nodeTypes changes identity. */
-const NODE_TYPES = { component: ArchitectureNode };
+const NODE_TYPES = { component: ArchitectureNode, boundary: BoundaryGroup };
 
 export default function ArchitectureGraph({
   nodes,
   edges,
+  boundaries = [],
   highlightNodeIds,
   highlightEdgeIds,
   selectedNodeId,
@@ -71,7 +78,10 @@ export default function ArchitectureGraph({
 }: ArchitectureGraphProps) {
   // Layout depends only on the graph itself, so it is not recomputed when the selection
   // changes — which also keeps node positions stable while a user clicks around.
-  const layout = useMemo(() => layoutGraph(nodes, edges, LAYOUT_OPTIONS), [nodes, edges]);
+  const layout = useMemo(
+    () => layoutGraph(nodes, edges, { ...LAYOUT_OPTIONS, boundaries }),
+    [nodes, edges, boundaries],
+  );
 
   const highlightedNodes = useMemo(
     () => new Set(Array.isArray(highlightNodeIds) ? highlightNodeIds : []),
@@ -83,21 +93,38 @@ export default function ArchitectureGraph({
   );
   const dimming = highlightedNodes.size > 0 || highlightedEdges.size > 0;
 
-  const flowNodes = useMemo<Node<ArchitectureNodeData>[]>(
-    () =>
-      layout.nodes.map((node) => {
+  const flowNodes = useMemo<Node<ArchitectureNodeData | BoundaryGroupData>[]>(() => {
+    const groupAt = new Map(layout.groups.map((group) => [group.id, group.position]));
+    // Groups first: React Flow needs a parent before its children.
+    const groups: Node<BoundaryGroupData>[] = layout.groups.map((group) => ({
+      id: `boundary:${group.id}`,
+      type: "boundary",
+      position: group.position,
+      data: { label: group.label },
+      style: { width: group.width, height: group.height, background: "transparent", border: 0, padding: 0 },
+      selectable: false,
+      draggable: false,
+      focusable: false,
+      zIndex: -1,
+    }));
+    const components: Node<ArchitectureNodeData>[] = layout.nodes.map((node) => {
         const on = highlightedNodes.has(node.id);
+        const parent = node.boundaryId ? groupAt.get(node.boundaryId) : undefined;
         return {
           id: node.id,
           type: "component",
-          position: node.position,
+          // A child is positioned relative to its group.
+          position: parent
+            ? { x: node.position.x - parent.x, y: node.position.y - parent.y }
+            : node.position,
+          ...(parent ? { parentNode: `boundary:${node.boundaryId}` } : {}),
           data: { node, on, selected: selectedNodeId === node.id, dimmed: dimming && !on },
           // The custom node draws its own outline; the wrapper adds no box of its own.
           style: { width: NODE_WIDTH, height: NODE_HEIGHT, background: "transparent", border: 0, padding: 0 },
         };
-      }),
-    [layout.nodes, highlightedNodes, dimming, selectedNodeId],
-  );
+      });
+    return [...groups, ...components];
+  }, [layout.nodes, layout.groups, highlightedNodes, dimming, selectedNodeId]);
 
   const routes = useMemo(() => edgeRoutes(layout.edges), [layout.edges]);
 
@@ -159,7 +186,9 @@ export default function ArchitectureGraph({
         nodes={flowNodes}
         edges={flowEdges}
         nodeTypes={NODE_TYPES}
-        onNodeClick={(_event, node) => onSelectNode(node.id)}
+        onNodeClick={(_event, node) => {
+          if (node.type === "component") onSelectNode(node.id);
+        }}
         onPaneClick={() => onSelectNode(null)}
         fitView
         fitViewOptions={{ padding: 0.15 }}
