@@ -753,7 +753,44 @@ const CSRF_DEPS = [
   "tiny-csrf",
   "next-csrf",
   "@fastify/csrf-protection",
+  "csrf-sync",
+  "@dr.pogodin/csurf",
+  "koa-csrf",
 ];
+
+/**
+ * An Origin, Referer or Fetch-Metadata check is CSRF protection with no "csrf" in any
+ * name (OWASP's "verifying origin with standard headers"): the request's origin is read
+ * and compared, or `Sec-Fetch-Site` is consulted.
+ */
+const ORIGIN_READ =
+  /\b(?:headers\s*(?:\.\s*|\[\s*['"`])(?:origin|referer)\b|(?:get|header)\s*\(\s*['"`](?:origin|referer)['"`]\s*\))/i;
+const ORIGIN_COMPARED = /===|!==|==|!=|\.(?:includes|startsWith|endsWith|has|test)\s*\(/;
+const FETCH_METADATA = /sec-fetch-site/i;
+
+function checksOrigin(ctx: Ctx): boolean {
+  return ctx.source.some((file) => {
+    const text = ctx.uncommented(file);
+    if (FETCH_METADATA.test(text)) return true;
+    const read = ORIGIN_READ.exec(text);
+    if (!read) return false;
+    // The comparison is on the same line or the next one: `if (req.get("origin") !== X)`.
+    const nearby = text.slice(read.index, text.indexOf("\n", text.indexOf("\n", read.index) + 1) + 1 || undefined);
+    return ORIGIN_COMPARED.test(nearby);
+  });
+}
+
+/**
+ * A body parser that accepts only JSON. A browser cannot send `application/json`
+ * cross-site without a CORS preflight, so a JSON-only API is not reachable by the simple
+ * form post CSRF relies on; the risk is real only if some route accepts a form body.
+ */
+const JSON_ONLY_PARSER = /\b(?:express|bodyParser)\s*\.\s*json\s*\(/;
+const FORM_PARSER = /\burlencoded\s*\(|\bmulter\b|\bformidable\b|\bbusboy\b|\bmultipart\b|\bformData\s*\(/i;
+
+function jsonOnlyApi(ctx: Ctx): boolean {
+  return anySource(ctx, JSON_ONLY_PARSER) && !anySource(ctx, FORM_PARSER);
+}
 const COOKIE_USAGE =
   /\bres\s*\.\s*cookie\s*\(|\bcookies\s*\(\s*\)|\breq\s*\.\s*session\b/;
 
@@ -854,24 +891,34 @@ function csrfMissing(ctx: Ctx): Finding[] {
   if (usesPackage(ctx, CSRF_DEPS, ["@edge-csrf/"])) return [];
   if (usesPackageFeature(ctx, "lusca", ["csrf"])) return [];
   if (checksCsrfToken(ctx)) return [];
+  if (checksOrigin(ctx)) return [];
 
   // The value is inside a string, so this reads the comment-masked text.
   const sameSite = ctx.source.some((file) =>
     /sameSite\s*:\s*['"`]strict['"`]/i.test(ctx.uncommented(file)),
   );
+  const jsonOnly = jsonOnlyApi(ctx);
+
+  const expectation = jsonOnly
+    ? "Cookie sessions with state-changing routes need CSRF protection; only a JSON body parser was found, which a cross-site form cannot reach, so the exposure depends on whether any route accepts a form body"
+    : sameSite
+      ? "Cookie sessions with state-changing routes usually need a CSRF token; SameSite strict reduces the risk but is not a token"
+      : "Cookie sessions with state-changing routes need CSRF protection";
 
   return [
     {
       scope: "repository",
-      expectation: sameSite
-        ? "Cookie sessions with state-changing routes usually need a CSRF token; SameSite strict reduces the risk but is not a token"
-        : "Cookie sessions with state-changing routes need CSRF protection",
+      expectation,
       summary: `Cookie-based sessions are used and ${route.method} ${route.normalizedPath} changes state, with no CSRF middleware or token pattern found`,
       file: route.file,
       line: route.line,
       routeId: route.id,
-      basisFacts: ["cookie session signal", `${route.id} changes state`],
-      certainty: sameSite ? 0.5 : 0.8,
+      basisFacts: [
+        "cookie session signal",
+        `${route.id} changes state`,
+        ...(jsonOnly ? ["JSON-only body parser"] : []),
+      ],
+      certainty: jsonOnly ? 0.45 : sameSite ? 0.5 : 0.8,
       evidenceKind: "code",
     },
   ];

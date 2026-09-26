@@ -982,3 +982,47 @@ describe("adversarial: rate_limit_missing", () => {
     expect(kindsOf(expressRepo(login))).toContain("rate_limit_missing");
   });
 });
+
+describe("adversarial: csrf_missing", () => {
+  const checkout = `app.post("/checkout", ${HANDLER});`;
+
+  it("4a: a JSON-only body parser lowers certainty to 0.45 and says why", () => {
+    const repo = expressRepo(`app.use(express.json());\n${checkout}`, NEXT_DEP);
+    const gap = gapsOf(repo).find((g) => g.kind === "csrf_missing");
+    expect(gap?.certainty).toBe(0.45);
+    expect(gap?.basisFacts).toContain("JSON-only body parser");
+  });
+
+  it("4a: a form body parser beside the JSON one keeps 0.8", () => {
+    const repo = expressRepo(
+      `app.use(express.json());\napp.use(express.urlencoded({ extended: false }));\n${checkout}`,
+      NEXT_DEP,
+    );
+    expect(certaintyOf(repo, "csrf_missing")).toBe(0.8);
+  });
+
+  it.each([
+    ["Origin header comparison", `app.use((req, res, next) => {\n  if (req.method !== "GET" && req.get("origin") !== ORIGIN) return res.sendStatus(403);\n  next();\n});`],
+    ["Sec-Fetch-Site", `app.use((req, res, next) => {\n  if (req.headers["sec-fetch-site"] === "cross-site") return res.sendStatus(403);\n  next();\n});`],
+    ["Referer allowlist", `app.use((req, res, next) => {\n  const referer = req.headers.referer || "";\n  if (!referer.startsWith(SITE)) return res.sendStatus(403);\n  next();\n});`],
+  ])("4b: %s is CSRF protection", (_name, guard) => {
+    const repo = expressRepo(`${guard}\n${checkout}`, { "cookie-session": "^2.0.0" });
+    expect(kindsOf(repo)).not.toContain("csrf_missing");
+  });
+
+  it("4b: reading the origin for CORS reflection without comparing it is not protection", () => {
+    const repo = expressRepo(
+      `app.use((req, res, next) => { res.set("Vary", req.headers.origin); next(); });\n${checkout}`,
+      NEXT_DEP,
+    );
+    expect(kindsOf(repo)).toContain("csrf_missing");
+  });
+
+  it("4c: csrf-sync's doubleSubmit counts as a used CSRF package", () => {
+    const repo = expressRepo(
+      `const { doubleSubmit } = require("csrf-sync");\napp.use(doubleSubmit);\n${checkout}`,
+      { ...NEXT_DEP, "csrf-sync": "^4.0.0" },
+    );
+    expect(kindsOf(repo)).not.toContain("csrf_missing");
+  });
+});
