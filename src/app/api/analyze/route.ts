@@ -24,6 +24,10 @@
  * concurrency and rate-limit checks, so the duplicate costs its caller nothing and
  * cannot fill the concurrency cap with copies of one run.
  *
+ * When ATTACKCANVAS_ALLOWED_OWNERS is set, a repository whose owner is not on the list gets
+ * 403 OWNER_NOT_ALLOWED before anything else is checked (src/server/http/ownerAllowlist.ts).
+ * Unset, nothing changes.
+ *
  * The one exception is the golden-demo repo: when repoUrl
  * matches GOLDEN_REPO_URL and DEMO_FALLBACK=1, the job is created with isDemo: true and
  * seeded from a fixture instead of running the real pipeline (see
@@ -34,6 +38,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { AnalysisRequestSchema } from "@/shared/schema";
+import { isLevelLocked, LOCKED_LEVEL_MESSAGE } from "@/shared/levelCost";
 import { parseGitHubUrl } from "@/server/ingest/urlParser";
 import {
   countActiveAnalyses,
@@ -43,6 +48,7 @@ import {
   runAnalysis,
 } from "@/server/analysis/pipeline";
 import { seedDemoAnalysis } from "@/server/analysis/demo";
+import { checkOwner } from "@/server/http/ownerAllowlist";
 import {
   MAX_CONCURRENT_ANALYSES,
   RATE_LIMIT_MAX,
@@ -142,6 +148,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   const isDemo = isGoldenDemo(parsedUrl);
+
+  // Locked levels (the costliest one) are refused before anything that counts or spends.
+  // The golden demo is exempt: it serves a canned result and calls no model.
+  if (!isDemo && isLevelLocked(analysisLevel)) {
+    return errorResponse(400, "INVALID_REQUEST", LOCKED_LEVEL_MESSAGE);
+  }
+
+  // Optional owner allowlist (ATTACKCANVAS_ALLOWED_OWNERS). Checked right after the URL is
+  // understood and before anything that counts or spends: a refused owner takes no job
+  // slot, no rate-limit attempt, and reaches no GitHub or model. The golden demo is exempt:
+  // it serves a canned result and reads nothing.
+  if (!isDemo && !checkOwner(parsedUrl.owner)) {
+    return errorResponse(403, "OWNER_NOT_ALLOWED");
+  }
 
   // Coalesce a duplicate of an analysis that is still running (see the module header).
   const running = isDemo ? undefined : findActiveAnalysis((state) => sameAnalysis(state, parsedUrl, analysisLevel));

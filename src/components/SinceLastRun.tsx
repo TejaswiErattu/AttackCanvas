@@ -1,10 +1,13 @@
 "use client";
 
 /**
- * The "Since last run" panel: what this analysis found that the previous one of the same
- * repository did not, and what it no longer finds. Counts and lists come from
- * diffThreatModels (src/client/drift.ts); nothing is scored here. All names are repository-
- * or model-derived text and are rendered as text only.
+ * The "Since last run" panel: two lines comparing this analysis with the previous one of
+ * the same repository in this browser. Counts come from diffThreatModels and carryForward
+ * (src/client/drift.ts, src/client/carryForward.ts); nothing is scored here.
+ *
+ * A threat missing from this run is "not found this run", never resolved or fixed: the
+ * tool cannot tell a code change from a run that sampled differently, and only a status the
+ * reader sets records that a threat is closed.
  */
 
 import type { DriftResult } from "@/client/drift";
@@ -12,74 +15,49 @@ import type { DriftResult } from "@/client/drift";
 type SinceLastRunProps = {
   /** null when there is no previous run to compare with. */
   drift: DriftResult | null;
+  /** Of the threats not found this run, how many the reader has not marked Fixed or False positive. */
+  notClosedCount?: number;
+  /** The previous run's date, YYYY-MM-DD, or null when unknown. */
+  lastRunDate?: string | null;
 };
 
-function Group({ title, items }: { title: string; items: string[] }) {
-  return (
-    <div>
-      <h4 className="text-[11px] font-medium uppercase tracking-[0.14em] text-mint">
-        {title} ({items.length})
-      </h4>
-      {items.length ? (
-        <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm text-muted">
-          {items.map((item, index) => (
-            <li key={index}>{item}</li>
-          ))}
-        </ul>
-      ) : (
-        <p className="mt-1 text-sm text-subtle">None</p>
-      )}
-    </div>
-  );
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
-export default function SinceLastRun({ drift }: SinceLastRunProps) {
+export default function SinceLastRun({
+  drift,
+  notClosedCount = 0,
+  lastRunDate = null,
+}: SinceLastRunProps) {
   return (
     <section
       aria-labelledby="since-last-run-heading"
       data-testid="since-last-run"
-      className="rounded-2xl border border-line bg-surface/70 p-5"
+      className="rounded-2xl border border-line bg-surface/70 px-5 py-4"
     >
       <h2
         id="since-last-run-heading"
         className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted"
       >
-        Since last run
+        Since last run{drift && lastRunDate ? ` (${lastRunDate})` : ""}
       </h2>
       {drift === null ? (
-        <p className="mt-3 text-sm text-muted">
-          No previous run of this repository in this browser, so there is nothing to compare
-          with yet. Run it again later to see what changed.
+        <p className="mt-2 text-sm text-muted">
+          First run of this repository in this browser; nothing to compare with yet.
         </p>
       ) : (
-        <div className="mt-3 space-y-4">
-          <p className="text-sm text-muted">
-            Threats: {drift.threats.new.length} new, {drift.threats.persisting.length} persisting,{" "}
-            {drift.threats.resolved.length} resolved. Components: {drift.components.added.length}{" "}
-            added, {drift.components.removed.length} removed. Flows: {drift.flows.added.length}{" "}
-            added, {drift.flows.removed.length} removed.
-          </p>
-          <div className="grid gap-4 md:grid-cols-2">
-            <Group title="New threats" items={drift.threats.new.map((t) => t.title)} />
-            <Group title="Resolved threats" items={drift.threats.resolved.map((t) => t.title)} />
-            <Group
-              title="Components added"
-              items={drift.components.added.map((c) => `${c.name} (${c.type})`)}
-            />
-            <Group
-              title="Components removed"
-              items={drift.components.removed.map((c) => `${c.name} (${c.type})`)}
-            />
-            <Group
-              title="Flows added"
-              items={drift.flows.added.map((f) => `${f.source} → ${f.target}: ${f.label}`)}
-            />
-            <Group
-              title="Flows removed"
-              items={drift.flows.removed.map((f) => `${f.source} → ${f.target}: ${f.label}`)}
-            />
-          </div>
-        </div>
+        <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted">
+          <li>{plural(drift.threats.new.length, "new threat")} this run.</li>
+          <li>
+            {plural(drift.threats.notFound.length, "threat")} from the last run not found this
+            run
+            {drift.threats.notFound.length > 0
+              ? `, ${notClosedCount} of them not marked Fixed or False positive`
+              : ""}
+            .
+          </li>
+        </ul>
       )}
     </section>
   );

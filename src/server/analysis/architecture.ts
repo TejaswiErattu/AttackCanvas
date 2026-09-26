@@ -22,7 +22,8 @@
 import { diagnosticsOf, note, type Note } from "@/server/analysis/limitations";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { callStructured, type ClaudeDeps } from "@/server/ai/claude";
+import { callStructured, type ClaudeDeps, type ThinkingSetting } from "@/server/ai/claude";
+import type { ModelId } from "@/server/ai/models";
 import { loadPrompt } from "@/server/ai/prompts";
 import type { CallUsage } from "@/server/ai/usage";
 import dagre from "dagre";
@@ -104,6 +105,10 @@ export type InferArchitectureOptions = {
   context: BuiltContext;
   analysisId: string;
   maxTokens?: number;
+  /** Defaults to modelFor("architecture"); the pipeline passes its level plan's. */
+  model?: ModelId;
+  /** Defaults to ARCHITECTURE_THINKING. */
+  thinking?: ThinkingSetting;
   /** Passed straight to callStructured. The test seam; nothing production sets it. */
   deps?: Partial<ClaudeDeps>;
   /** Where to read the prompt from. Defaults to the prompts directory. */
@@ -149,7 +154,8 @@ export async function inferArchitecture(
     schema: ArchitectureDraftSchema,
     jsonSchema: architectureDraftJsonSchema as Record<string, unknown>,
     maxTokens: options.maxTokens ?? ARCHITECTURE_MAX_TOKENS,
-    thinking: ARCHITECTURE_THINKING,
+    thinking: options.thinking ?? ARCHITECTURE_THINKING,
+    model: options.model,
     analysisId: options.analysisId,
     deps: options.deps,
   });

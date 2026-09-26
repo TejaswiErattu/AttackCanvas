@@ -39,6 +39,7 @@ with an HTTP status; a failed analysis comes back from `GET /api/analyze/[id]` a
 | `INVALID_URL` | 400 on POST `/api/analyze` | `repoUrl` is not a public github.com repository URL | no |
 | `INVALID_REQUEST` | 400 on either POST | Body is not JSON, `analysisLevel` is not 0-4, or `answers` is malformed | no |
 | `NOT_FOUND` | 404 on `[id]` routes | No analysis with that id, or it expired (HTTP-only, not a schema code) | no |
+| `OWNER_NOT_ALLOWED` | 403 on POST `/api/analyze` | `ATTACKCANVAS_ALLOWED_OWNERS` is set and this repository's owner is not on it (checked before any job, rate-limit attempt, GitHub or model call; the golden demo is exempt) | no |
 | `NOT_AWAITING_ANSWERS` | 409 on POST `answers` | The analysis has moved past `awaiting_answers` | no |
 | `SERVER_BUSY` | 429 on POST `/api/analyze` | `MAX_CONCURRENT_ANALYSES` real analyses are already running | yes |
 | `RATE_LIMITED` | 429 on POST `/api/analyze` | This address started `RATE_LIMIT_MAX` analyses within the hour | yes |

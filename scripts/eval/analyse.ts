@@ -8,11 +8,12 @@
  */
 
 import type { AnalysisState } from "@/server/analysis/pipeline";
+import type { AnalysisLevel } from "@/shared/schema";
 import type { DeveloperAnswer } from "@/server/analysis/answers";
-import { StageTracker, requireRepoUrl, type EvalRepo, type EvalResult, type RunFailure } from "./lib";
+import { DEFAULT_LEVEL, StageTracker, requireRepoUrl, type EvalRepo, type EvalResult, type RunFailure } from "./lib";
 
 export type PipelineApi = {
-  createAnalysis: (repoUrl: string, level: 2, options: { timeoutMs: number }) => AnalysisState;
+  createAnalysis: (repoUrl: string, level: AnalysisLevel, options: { timeoutMs: number }) => AnalysisState;
   runAnalysis: (id: string) => Promise<AnalysisState>;
   resumeWithAnswers: (id: string, answers: readonly DeveloperAnswer[]) => Promise<AnalysisState>;
   getAnalysis: (id: string) => AnalysisState | undefined;
@@ -38,15 +39,16 @@ async function tracking<T>(api: PipelineApi, id: string, tracker: StageTracker, 
 export async function analyseRepo(
   api: PipelineApi,
   repo: EvalRepo,
-  options: { timeoutMs: number; profile: string; now?: () => number },
+  options: { timeoutMs: number; profile: string; level?: AnalysisLevel; now?: () => number },
 ): Promise<AnalyseOutcome> {
   const now = options.now ?? Date.now;
   const repoUrl = requireRepoUrl(repo);
+  const level = options.level ?? DEFAULT_LEVEL;
   const started = now();
   const tracker = new StageTracker();
   let phase: RunFailure["phase"] = "analysis";
 
-  let state = api.createAnalysis(repoUrl, 2, { timeoutMs: options.timeoutMs });
+  let state = api.createAnalysis(repoUrl, level, { timeoutMs: options.timeoutMs });
   state = await tracking(api, state.id, tracker, api.runAnalysis(state.id));
   tracker.record(state.stage);
   if (state.stage === "awaiting_answers" && state.questions) {
@@ -79,6 +81,8 @@ export async function analyseRepo(
       repoUrl,
       modelProfile: options.profile,
       ranAt: new Date(now()).toISOString(),
+      level,
+      durationMs: now() - started,
       cost: { calls: state.cost.calls, totalUsd: state.cost.totalUsd },
       threatModel: state.threatModel,
       diagnostics: [...(state.diagnostics ?? [])],

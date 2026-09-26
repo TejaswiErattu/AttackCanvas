@@ -35,3 +35,17 @@ repos:
     # 7d83ed1 (limitations split from diagnostics) and a6ef3ec (finding wording, prompt rule).
     # Scored against eval/expected/nodegoat-a6ef3ec.yaml, a byte-identical copy of the draft key.
     url: "https://github.com/OWASP/NodeGoat/tree/c5cb68a7084e4ae7dcc60e6a98768720a81841e8"
+  # Consistency runs (scripts/eval/consistency.ts). All at the pinned commit c5cb68a and all
+  # run with the pipeline at AttackCanvas 535a19d (Prompt H, the level plans) and the I-1
+  # eval harness committed on top of it, which changes no pipeline code. r1-r3 repeat
+  # level 2; l0 and l1 vary only the level.
+  - name: nodegoat-final-r1 # OWASP/NodeGoat, level 2, AttackCanvas 535a19d
+    url: "https://github.com/OWASP/NodeGoat/tree/c5cb68a7084e4ae7dcc60e6a98768720a81841e8"
+  - name: nodegoat-final-r2 # OWASP/NodeGoat, level 2, AttackCanvas 535a19d
+    url: "https://github.com/OWASP/NodeGoat/tree/c5cb68a7084e4ae7dcc60e6a98768720a81841e8"
+  - name: nodegoat-final-r3 # OWASP/NodeGoat, level 2, AttackCanvas 535a19d
+    url: "https://github.com/OWASP/NodeGoat/tree/c5cb68a7084e4ae7dcc60e6a98768720a81841e8"
+  - name: nodegoat-final-l0 # OWASP/NodeGoat, level 0, AttackCanvas 535a19d
+    url: "https://github.com/OWASP/NodeGoat/tree/c5cb68a7084e4ae7dcc60e6a98768720a81841e8"
+  - name: nodegoat-final-l1 # OWASP/NodeGoat, level 1, AttackCanvas 535a19d
+    url: "https://github.com/OWASP/NodeGoat/tree/c5cb68a7084e4ae7dcc60e6a98768720a81841e8"

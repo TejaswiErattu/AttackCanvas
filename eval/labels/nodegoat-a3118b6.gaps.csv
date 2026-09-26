@@ -1,0 +1,40 @@
+threatId,title,gapKinds,files,confidence,visible,gapLabel,notes
+threat-3,Cookie-session requests to the allocations handler carry no CSRF token,csrf_missing,app/routes/index.js:34,0.40,y,predicted_correct,
+threat-4,Missing security response headers let a hostile page frame and drive the allocations view,security_headers_missing,package.json:13,0.12,n,predicted_correct,
+threat-6,"No audit trail for cross-user allocation access, so enumeration is repudiable",authz_missing,app/routes/index.js:63,0.00,n,predicted_correct,
+threat-12,"No CSRF protection on POST /login, /profile, /contributions, /benefits and /memos",csrf_missing,app/routes/index.js:34,0.40,y,predicted_correct,
+threat-14,Credential and session data on the app-to-session dispatch path is neither CSRF-bound nor protected by response headers,csrf_missing;security_headers_missing,app/routes/index.js:34 | package.json:13,0.40,y,predicted_correct,
+threat-17,"Rendered pages carry no security headers, so an injected or framed view runs without CSP or clickjacking protection",security_headers_missing,package.json:13,0.12,n,predicted_correct,
+threat-20,Cross-site request forgery changes any employee's benefit start date via POST /benefits,csrf_missing,app/routes/index.js:34,0.40,y,predicted_correct,
+threat-23,Missing security response headers allow the benefits admin page to be framed and its markup abused,security_headers_missing,package.json:13,0.12,n,predicted_correct,
+threat-27,Missing CSRF protection lets an attacker drive state-changing NodeGoat routes over the ci-to-app flow's HTTP endpoints,csrf_missing,app/routes/index.js:34,0.40,y,predicted_correct,
+threat-28,Open redirect on GET /learn reachable over the ci-to-app flow,input_validation_missing,app/routes/index.js:70,0.01,n,predicted_correct,
+threat-29,No security response headers on the application exposed by the ci-to-app flow,security_headers_missing,package.json:13,0.00,n,predicted_correct,
+threat-31,Missing ownership check on GET /allocations/:userId exposed through the ci-to-app flow,authz_missing,app/routes/index.js:63,0.00,n,predicted_correct,
+threat-32,CSRF lets an attacker change a victim's contribution percentages and trigger the eval() sink,csrf_missing,app/routes/index.js:34,0.40,y,predicted_correct,
+threat-35,Missing security response headers allow the contributions page to be framed and injected content to run,security_headers_missing,package.json:13,0.12,n,predicted_correct,
+threat-53,"Error page is served without security response headers, letting injected error text execute in the victim's session",security_headers_missing,package.json:13,0.00,n,predicted_correct,
+threat-54,No CSRF token on the state-changing forms whose failures surface through the error middleware,csrf_missing,app/routes/index.js:34,0.40,y,predicted_correct,
+threat-59,Template auto-escaping disabled application-wide enables stored XSS,security_headers_missing,package.json:13,0.12,n,predicted_correct,"Gap is true app-wide, but this threat's own claim is autoescape:false (server.js:135-142), not missing headers."
+threat-60,Any logged-in user can read another user's retirement allocations via GET /allocations/:userId,authz_missing,app/routes/index.js:63,0.00,n,predicted_correct,
+threat-65,302 redirect response from /learn carries no security headers and travels over plain HTTP,security_headers_missing,package.json:13,0.00,n,predicted_correct,"Gap true (helmet/HSTS commented out, server.js:38-65); claim is plaintext HTTP (server.js:145), a transport issue beyond the headers gap."
+threat-66,Unvalidated url parameter on GET /learn allows non-http scheme redirects,input_validation_missing,app/routes/index.js:70,0.00,n,predicted_correct,
+threat-67,Cross-site request forgery lets any site post memos as a logged-in victim,csrf_missing,app/routes/index.js:34,0.40,y,predicted_correct,
+threat-69,Missing security response headers remove the last defence against the memos XSS payload,security_headers_missing,package.json:13,0.12,n,predicted_correct,
+threat-75,Missing CSRF token on the memo form lets attackers post memos as any logged-in user,csrf_missing,app/routes/index.js:34,0.40,y,predicted_correct,
+threat-76,Missing Content-Security-Policy lets memo-borne script run unrestricted on the memos page,security_headers_missing,package.json:13,0.12,n,predicted_correct,
+threat-90,Missing security response headers let the echoed /research body run without any CSP restraint,security_headers_missing,package.json:13,0.40,y,predicted_correct,
+threat-104,Missing security response headers on HTML delivered to the browser,security_headers_missing,package.json:13,0.12,n,predicted_correct,
+threat-110,Missing CSRF tokens and security headers on the allocations flow allow forged and clickjacked requests,csrf_missing;security_headers_missing,app/routes/index.js:34 | package.json:13,0.00,n,predicted_correct,"Both gaps true; the allocations-framing part is a headers claim on a GET, not CSRF."
+threat-112,Cross-site request forgery against POST /login allows login CSRF and forced session fixation,csrf_missing,app/routes/index.js:34,0.40,y,predicted_correct,
+threat-115,Missing security response headers let injected markup run in the login and signup pages,security_headers_missing,package.json:13,0.12,n,predicted_correct,
+threat-116,Cross-site request forgery on POST /benefits changes another employee's benefit start date,csrf_missing,app/routes/index.js:34,0.40,y,predicted_correct,
+threat-118,Employee roster and benefit data transit /benefits without TLS or anti-framing headers,security_headers_missing,package.json:13,0.00,n,predicted_correct,"Gap true; claim leans on plaintext HTTP (server.js:145) and clickjacking, which the SameSite-less cookie undermines."
+threat-119,Contribution values and session cookie sent over plaintext HTTP,security_headers_missing,package.json:13,0.00,n,predicted_correct,"Gap true (no HSTS); claim is plaintext HTTP (server.js:145), a transport issue beyond the headers gap."
+threat-120,"Cross-site request forgery forces a victim's contribution update, reaching the eval() sink",csrf_missing,app/routes/index.js:34,0.40,y,predicted_correct,
+threat-123,Cross-site request forgery posts memos as a victim user,csrf_missing,app/routes/index.js:34,0.40,y,predicted_correct,
+threat-124,Memo submissions and session cookie travel unencrypted over HTTP,security_headers_missing,package.json:13,0.00,n,predicted_correct,"Gap true (no HSTS); claim is plaintext HTTP (server.js:145), a transport issue beyond the headers gap."
+threat-125,Missing Content-Security-Policy leaves the memo page's rendered markdown without a script containment fallback,security_headers_missing,package.json:13,0.12,n,predicted_correct,
+threat-132,"State-changing POSTs carried over the zap-to-app flow have no CSRF token, allowing forged profile updates",csrf_missing,app/routes/index.js:34,0.40,y,predicted_correct,
+threat-135,Open redirect on GET /learn reached over the zap-to-app flow,input_validation_missing,app/routes/index.js:70,0.01,n,predicted_correct,
+threat-136,"Traffic proxied to /profile crosses the trust boundary without security response headers, so injected script runs unrestricted in the session",security_headers_missing,package.json:13,0.00,n,predicted_correct,

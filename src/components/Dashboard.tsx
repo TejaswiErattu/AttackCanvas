@@ -18,6 +18,7 @@
  * clears the node's highlight.
  */
 
+import ComingSoon from "@/components/ComingSoon";
 import { useEffect, useMemo, useState } from "react";
 import type { DashboardViewModel } from "@/shared/viewModel";
 import { assignBoundaries } from "@/client/layoutGraph";
@@ -34,9 +35,12 @@ import {
 } from "@/client/filterThreats";
 import {
   loadStatuses,
+  migrateStatuses,
   orderByStatus,
+  saveStatuses,
   setStatus,
   splitFullName,
+  statusesById,
   statusStorageKey,
   summarise,
   type FindingStatus,
@@ -45,10 +49,12 @@ import {
 import {
   diffThreatModels,
   newThreatKeys,
+  readLastRun,
   recordRun,
   threatKey,
   type DriftModel,
 } from "@/client/drift";
+import { carryForward } from "@/client/carryForward";
 import type { BasisCounts, HiddenSummary } from "@/client/useAnalysis";
 import ArchitectureGraph from "@/components/ArchitectureGraph";
 import ArchitectureLegend from "@/components/ArchitectureLegend";
@@ -97,38 +103,70 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
   const [diagramView, setDiagramView] = useState<DiagramView>("overall");
 
   const threats = useMemo(() => view.threats ?? [], [view.threats]);
+  // Below-25% threats: listed after the others, greyed and marked unverified (display only).
+  const hiddenThreats = useMemo(() => view.hiddenThreats ?? [], [view.hiddenThreats]);
+  // On by default: every scored threat is listed, the ones below 25% greyed after the rest.
+  const [showHidden, setShowHidden] = useState(true);
 
-  // Triage statuses live in this browser only. Read after mount so the first render
-  // matches the server's, and re-read if the repo or ref changes.
+  // Triage statuses live in this browser only, keyed by threatKey so a status follows the
+  // same threat from run to run. Read after mount so the first render matches the server's.
+  const repoFullName = view.repo?.fullName ?? "";
+  const repoRef = view.repo?.ref;
   const statusKey = useMemo(() => {
-    const name = splitFullName(view.repo?.fullName ?? "");
-    return name && view.repo?.ref ? statusStorageKey(name.owner, name.repo, view.repo.ref) : null;
-  }, [view.repo?.fullName, view.repo?.ref]);
-  const [statuses, setStatuses] = useState<StatusMap>({});
-  useEffect(() => {
-    setStatuses(statusKey ? loadStatuses(safeLocalStorage(), statusKey) : {});
-  }, [statusKey]);
-  const handleStatusChange = (id: string, status: FindingStatus) => {
-    if (!statusKey) return;
-    setStatuses((current) => setStatus(safeLocalStorage(), statusKey, current, id, status));
-  };
-  const statusCounts = useMemo(
-    () => summarise(threats.map((t) => t.id), statuses),
-    [threats, statuses],
-  );
+    const name = splitFullName(repoFullName);
+    return name && repoRef ? statusStorageKey(name.owner, name.repo, repoRef) : null;
+  }, [repoFullName, repoRef]);
+  const [statusesByKey, setStatusesByKey] = useState<StatusMap>({});
 
   // The run before this one, read once this run is recorded. undefined until then, so the
   // first render (which must match the server's) shows nothing; null means no earlier run.
   const [prevRun, setPrevRun] = useState<DriftModel | null | undefined>(undefined);
   useEffect(() => {
+    const storage = safeLocalStorage();
     const name = splitFullName(view.repo?.fullName ?? "");
-    setPrevRun(name ? recordRun(safeLocalStorage(), name.owner, name.repo, view) : null);
-  }, [view]);
+    // The run shown when statuses were last saved: the stored "last" run, read before this
+    // one replaces it. An id-keyed map from before statuses were keyed by threatKey is
+    // migrated against it once (or against this run, when that one was of another ref).
+    const savedOn = name ? readLastRun(storage, name.owner, name.repo) : null;
+    // Deliberate: recording the run and reading statuses need localStorage, so the client.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPrevRun(name ? recordRun(storage, name.owner, name.repo, view) : null);
+    if (!statusKey) {
+      setStatusesByKey({});
+      return;
+    }
+    const migrated = migrateStatuses(
+      loadStatuses(storage, statusKey),
+      savedOn && savedOn.repo?.ref === view.repo?.ref ? savedOn : view,
+    );
+    if (migrated.changed) saveStatuses(storage, statusKey, migrated.statuses);
+    setStatusesByKey(migrated.statuses);
+  }, [view, statusKey]);
+
+  // This run's ids mapped to their stored status, which is what cards, filters and counts use.
+  const statuses = useMemo(
+    () => statusesById([...threats, ...hiddenThreats], statusesByKey),
+    [threats, hiddenThreats, statusesByKey],
+  );
+  const handleStatusChange = (id: string, status: FindingStatus) => {
+    const threat = [...threats, ...hiddenThreats].find((t) => t.id === id);
+    if (!statusKey || !threat) return;
+    const key = threatKey(threat);
+    setStatusesByKey((current) => setStatus(safeLocalStorage(), statusKey, current, key, status));
+  };
+  const statusCounts = useMemo(
+    () => summarise([...threats, ...hiddenThreats].map((t) => t.id), statuses),
+    [threats, hiddenThreats, statuses],
+  );
+
   const drift = useMemo(() => (prevRun ? diffThreatModels(prevRun, view) : null), [prevRun, view]);
   const newKeys = useMemo(
     () => (prevRun ? newThreatKeys(prevRun, view) : new Set<string>()),
     [prevRun, view],
   );
+  // Last run's threats not re-found and not closed; the drift panel reports how many.
+  const carried = useMemo(() => carryForward(drift, statusesByKey), [drift, statusesByKey]);
+  const lastRunDate = prevRun?.repo?.analyzedAt ? formatAnalyzedAt(prevRun.repo.analyzedAt) : null;
 
   const issueRepo = view.repo?.fullName && view.repo.ref
     ? { fullName: view.repo.fullName, ref: view.repo.ref }
@@ -138,10 +176,17 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
     () => orderByStatus(filterThreats(threats, filters, statuses), statuses),
     [threats, filters, statuses],
   );
+  const visibleHidden = useMemo(
+    () => orderByStatus(filterThreats(hiddenThreats, filters, statuses), statuses),
+    [hiddenThreats, filters, statuses],
+  );
 
   const selectedThreat = useMemo(
-    () => threats.find((threat) => threat.id === selectedThreatId) ?? null,
-    [threats, selectedThreatId],
+    () =>
+      threats.find((threat) => threat.id === selectedThreatId) ??
+      (showHidden ? hiddenThreats.find((threat) => threat.id === selectedThreatId) : null) ??
+      null,
+    [threats, hiddenThreats, showHidden, selectedThreatId],
   );
 
   // A selected threat wins over a selected node: the user asked about that threat. Its
@@ -357,6 +402,7 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
             // The server's total, not the length of the (capped) list below.
             fixNowCount={fixNowTotal}
             statusCounts={statusCounts}
+            hiddenCounts={view.hiddenCounts ?? null}
           />
 
           <section
@@ -373,7 +419,7 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
               <p className="mt-3 text-sm text-muted">
                 {hiddenSummary.hidden} of {hiddenSummary.scored} scored threat
                 {hiddenSummary.scored === 1 ? "" : "s"} fell below 25% confidence and are
-                not listed.
+                listed after the others, greyed and marked unverified.
               </p>
             ) : null}
             {assumptions.length ? (
@@ -410,20 +456,22 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
         </div>
       </div>
 
-      {prevRun !== undefined ? <SinceLastRun drift={drift} /> : null}
+      {prevRun !== undefined ? (
+        <SinceLastRun drift={drift} notClosedCount={carried.length} lastRunDate={lastRunDate} />
+      ) : null}
 
-      {view.fixNow?.length ? (
-        <section aria-labelledby="fix-now-heading">
-          <h2 id="fix-now-heading" className="font-display text-xl font-semibold text-fg">
-            Fix now
-          </h2>
-          <p className="mt-1 text-sm text-muted">
-            Critical threats, and high-severity threats the analysis is at least 50%
-            confident in.
-            {fixNowTotal > view.fixNow.length
-              ? ` Showing the top ${view.fixNow.length} of ${fixNowTotal}; the full list is below.`
-              : ""}
-          </p>
+      <section aria-labelledby="fix-now-heading">
+        <h2 id="fix-now-heading" className="font-display text-xl font-semibold text-fg">
+          Fix now
+        </h2>
+        <p className="mt-1 text-sm text-muted">
+          Critical threats, and high-severity threats the analysis is at least 50%
+          confident in, at 25% confidence or above.
+          {view.fixNow?.length && fixNowTotal > view.fixNow.length
+            ? ` Showing the top ${view.fixNow.length} of ${fixNowTotal}; the full list is below.`
+            : ""}
+        </p>
+        {view.fixNow?.length ? (
           <ul className="mt-4 grid gap-3 xl:grid-cols-2">
             {view.fixNow.map((threat) => (
               <li key={`fix-now-${threat.id}`} className="min-w-0">
@@ -439,8 +487,19 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
               </li>
             ))}
           </ul>
-        </section>
-      ) : null}
+        ) : (
+          <p
+            data-testid="fix-now-empty"
+            className="mt-4 rounded-2xl border border-dashed border-line-strong p-5 text-sm text-muted"
+          >
+            No threat met the Fix now bar in this run. Every scored threat is in the list
+            below, highest priority first.{" "}
+            <a href="#threats-heading" className="text-mint underline underline-offset-2">
+              Go to the list
+            </a>
+          </p>
+        )}
+      </section>
 
       <section aria-labelledby="threats-heading" className="scroll-mt-24">
         <h2 id="threats-heading" className="font-display text-xl font-semibold text-fg">
@@ -465,10 +524,16 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
               onStatusChange={statusKey ? handleStatusChange : undefined}
               repo={issueRepo}
               newKeys={newKeys}
+              hiddenThreats={visibleHidden}
+              hiddenTotal={hiddenThreats.length}
+              showHidden={showHidden}
+              onShowHiddenChange={setShowHidden}
             />
           </div>
         </div>
       </section>
+
+      <ComingSoon />
     </div>
   );
 }
