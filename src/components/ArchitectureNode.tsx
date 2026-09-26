@@ -268,9 +268,9 @@ export function NodeContent({ data }: { data: ArchitectureNodeData }) {
 function ArchitectureNode({ data }: NodeProps<ArchitectureNodeData>) {
   return (
     <>
-      <Handle id="in" type="target" position={Position.Top} isConnectable={false} style={HIDDEN_HANDLE} />
+      <Handle id="in" type="target" position={Position.Left} isConnectable={false} style={HIDDEN_HANDLE} />
       <NodeContent data={data} />
-      <Handle id="out" type="source" position={Position.Bottom} isConnectable={false} style={HIDDEN_HANDLE} />
+      <Handle id="out" type="source" position={Position.Right} isConnectable={false} style={HIDDEN_HANDLE} />
     </>
   );
 }

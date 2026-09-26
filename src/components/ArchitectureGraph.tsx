@@ -36,10 +36,11 @@ import ArchitectureNode, {
 } from "@/components/ArchitectureNode";
 
 /**
- * Wider than layoutGraph's defaults: edge labels sit at edge midpoints, and dagre does not
- * reserve room for them, so the extra gap is what keeps neighbouring labels apart.
+ * The gap between type columns. Edge labels sit at edge midpoints between columns and
+ * dagre reserves no room for them; 150 (up from the old 130 between ranks) keeps labels
+ * apart while five columns still fit a laptop-width diagram at a readable zoom.
  */
-const LAYOUT_OPTIONS = { nodesep: 120, ranksep: 130 } as const;
+const LAYOUT_OPTIONS = { ranksep: 150 } as const;
 
 /** Unselected flow labels are clipped so they do not run into each other. */
 const LABEL_MAX = 24;
@@ -178,7 +179,7 @@ export default function ArchitectureGraph({
 
   return (
     <div
-      className="h-[380px] w-full overflow-hidden rounded-2xl border border-line bg-surface sm:h-[520px]"
+      className="h-[380px] w-full overflow-hidden rounded-2xl border border-line bg-surface sm:h-[560px]"
       aria-label="Architecture diagram"
       role="group"
     >

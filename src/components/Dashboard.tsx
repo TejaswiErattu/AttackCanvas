@@ -128,7 +128,8 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
         ) : null}
       </header>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
+      {/* The diagram reads left to right in five type columns, so it takes the full row. */}
+      <div className="space-y-6">
         <section aria-labelledby="architecture-heading" className="min-w-0">
           <h2 id="architecture-heading" className="font-display text-xl font-semibold text-fg">
             Architecture
@@ -199,7 +200,7 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
           ) : null}
         </section>
 
-        <div className="min-w-0 space-y-6">
+        <div className="grid min-w-0 gap-6 lg:grid-cols-2 lg:items-start">
           <SeveritySummary
             counts={view.counts}
             basisCounts={basisCounts}
