@@ -33,6 +33,10 @@ certainty for exactly this reason.
 - **cors_permissive (11d).** The wildcard-header scan keeps string literals on purpose, so
   `res.setHeader("Access-Control-Allow-Origin", "*")` is caught. A string that merely
   mentions the header (an error message, a fixture list, a `.d.ts`) is reported too.
+- **supply_chain_integrity (12b).** A lockfile can be in the repository and absent from the
+  analysis: `yarn.lock` and `pnpm-lock.yaml` over 200 KB are ignored at load (only
+  `package-lock.json` has the 1 MiB exemption), and any file can fall past the 300-file
+  cap. The missing-lockfile gap is held at 0.35 for that reason.
 - **client_secret_storage (13b, 13c).** Only `localStorage` and `sessionStorage` writes
   count. React Native `AsyncStorage` and encrypted wrappers (`secure-ls`, `secureStorage`)
   are out of scope. Writes in test, mock and storybook files are filtered by the

@@ -1,6 +1,6 @@
 # Bug bash and security review (final sprint, Prompt Z)
 
-Date: 2026-09-25. Branch: final-sprint. Baseline before fixes: `pnpm typecheck` clean,
+Date: 2026-09-25. File and line references are to the review baseline, commit `443abe0`. Branch: final-sprint. Baseline before fixes: `pnpm typecheck` clean,
 `pnpm test` 80 files / 3505 passed / 1 skipped.
 
 The security review (Part 1) is recorded first because two of its rows are the same defects
