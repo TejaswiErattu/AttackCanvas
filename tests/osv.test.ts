@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   BATCH_SIZE,
   DETAIL_CONCURRENCY,
+  MAX_DETAIL_FETCHES,
   MAX_EVIDENCE,
   OSV_TIMEOUT_MS,
   collapseAliases,
@@ -1206,6 +1207,30 @@ describe("scanDependencies: batching", () => {
     expect(over.posts().map((p) => p.body?.queries.length)).toEqual([500, 1]);
   });
 
+  it("fetches at most 400 advisory records, most-referenced first, and says so (bug bash case 12)", async () => {
+    // 1,000 dependencies, each with its own advisory; two of them share one more.
+    const http = makeFetch({
+      batch: (queries) => ({
+        results: queries.map((q) => ({
+          vulns: [
+            { id: `ONLY-${q.package.name}` },
+            ...(q.package.name === "pkg-0998" || q.package.name === "pkg-0999" ? [{ id: "SHARED-1" }] : []),
+          ],
+        })),
+      }),
+    });
+    const result = await scanDependencies([manyDeps(1000)], {
+      fetch: http.fetch,
+      cache: new Map(),
+    });
+
+    const fetched = http.gets().map((c) => decodeURIComponent(c.url.split("/v1/vulns/")[1]));
+    expect(fetched).toHaveLength(MAX_DETAIL_FETCHES);
+    expect(fetched[0]).toBe("SHARED-1");
+    expect(fetched.slice(1, 4)).toEqual(["ONLY-pkg-0000", "ONLY-pkg-0001", "ONLY-pkg-0002"]);
+    expect(result.limitations.some((l) => l.startsWith(`${1001 - MAX_DETAIL_FETCHES} advisories were not retrieved`))).toBe(true);
+  });
+
   it("keeps the results of a good batch when a later one fails", async () => {
     const http = makeFetch({
       batch: (queries) =>
@@ -2040,8 +2065,13 @@ describe("advisory details are cached in memory by id", () => {
   });
 
   it("evicts the oldest entry rather than growing without bound", async () => {
+    // 4,900 records already cached, then a scan that fetches 400 more (the per-scan
+    // fetch cap): the cache would reach 5,300 and must evict its oldest instead.
     const cache = new Map<string, OsvVuln>();
-    const ids = Array.from({ length: 5001 }, (_, i) => `V-${i}`);
+    for (let i = 0; i < 4900; i++) {
+      cache.set(`V-${i}`, parseVuln(synth(`V-${i}`, "a", { fixed: "2.0.0" }))!);
+    }
+    const ids = Array.from({ length: 401 }, (_, i) => `V-${4900 + i}`);
     const http = makeFetch({
       batch: () => ({ results: [{ vulns: ids.map((id) => ({ id })) }] }),
       vulns: Object.fromEntries(
@@ -2053,9 +2083,10 @@ describe("advisory details are cached in memory by id", () => {
       cache,
     });
 
+    expect(http.gets()).toHaveLength(MAX_DETAIL_FETCHES);
     expect(cache.size).toBeLessThanOrEqual(5000);
     expect(cache.has("V-0")).toBe(false); // the oldest went first
-    expect(cache.has("V-5000")).toBe(true);
+    expect(cache.has("V-5299")).toBe(true);
   });
 });
 
