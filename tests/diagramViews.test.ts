@@ -3,7 +3,7 @@ import { selectDiagramView, type DiagramView } from "@/client/diagramViews";
 import type { DashboardViewModel, GraphEdge, GraphNode, ThreatCardData } from "@/shared/viewModel";
 
 const n = (id: string, type: GraphNode["type"]): GraphNode => ({
-  id, type, label: id, position: { x: 0, y: 0 }, threatCount: 0, maxSeverity: null, technologies: [],
+  id, type, label: id, position: { x: 0, y: 0 }, threatCount: 0, maxSeverity: null, technologies: [], assets: [], exposure: "internal",
 });
 const e = (
   id: string, source: string, target: string,

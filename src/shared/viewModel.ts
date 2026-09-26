@@ -19,6 +19,9 @@ import type {
  * absent values are `null`, `[]` or `{ x: 0, y: 0 }`. Built by src/client/adapter.ts.
  */
 
+/** Where a component sits relative to the outside world; rated by src/client/exposure.ts. */
+export type Exposure = "external" | "edge" | "internal";
+
 export type CodeLabel<Code extends string> = { code: Code; label: string };
 
 export type GraphNode = {
@@ -30,6 +33,10 @@ export type GraphNode = {
   threatCount: number;
   maxSeverity: Severity | null;
   technologies: string[];
+  /** What is worth protecting here, from the model. */
+  assets: string[];
+  /** Where it sits relative to the outside world (src/client/exposure.ts). */
+  exposure: Exposure;
 };
 
 export type GraphEdge = {

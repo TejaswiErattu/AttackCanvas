@@ -24,6 +24,27 @@ import type { ComponentType, Severity } from "@/shared/schema";
 import type { GraphNode } from "@/shared/viewModel";
 import { NODE_HEIGHT, NODE_WIDTH } from "@/client/layoutGraph";
 import { SEVERITY_ACCENT, SEVERITY_TEXT } from "@/components/SeveritySummary";
+import { EXPOSURE_LABELS, type Exposure } from "@/client/exposure";
+
+/** Badge colours: outside the system reads as a warning, inside as quiet. */
+export const EXPOSURE_BADGE: Record<Exposure, string> = {
+  external: "border-boundary/40 bg-boundary/10 text-boundary",
+  edge: "border-sev-medium/40 bg-sev-medium/10 text-sev-medium",
+  internal: "border-line-strong bg-surface-2 text-muted",
+};
+
+export function ExposureBadge({ exposure, className = "" }: { exposure: Exposure; className?: string }) {
+  const label = EXPOSURE_LABELS[exposure] ?? exposure;
+  return (
+    <span
+      data-exposure={exposure}
+      title={`Exposure: ${label}`}
+      className={`inline-flex shrink-0 items-center rounded-full border px-1.5 py-px text-[9px] font-semibold uppercase tracking-wider ${EXPOSURE_BADGE[exposure] ?? EXPOSURE_BADGE.internal} ${className}`}
+    >
+      {label}
+    </span>
+  );
+}
 
 export const COMPONENT_TYPE_TEXT: Record<ComponentType, string> = {
   actor: "Actor",
@@ -251,7 +272,10 @@ export function NodeContent({ data }: { data: ArchitectureNodeData }) {
       >
         <TypeIcon shape={shape} className="mt-0.5 shrink-0 text-muted" />
         <div className="min-w-0 flex-1">
-          <div className="truncate font-display text-sm font-semibold text-fg">{node.label}</div>
+          <div className="flex items-center gap-1.5">
+            <span className="min-w-0 truncate font-display text-sm font-semibold text-fg">{node.label}</span>
+            {node.exposure ? <ExposureBadge exposure={node.exposure} /> : null}
+          </div>
           <div className="mt-0.5 truncate text-[10px] uppercase tracking-wider text-subtle">
             {typeText(node.type)}
           </div>

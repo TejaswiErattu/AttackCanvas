@@ -149,6 +149,8 @@ const VIEW: DashboardViewModel = {
       threatCount: 9,
       maxSeverity: "critical",
       technologies: ["next"],
+      assets: [],
+      exposure: "internal",
     },
     {
       id: "db",
@@ -158,6 +160,8 @@ const VIEW: DashboardViewModel = {
       threatCount: 1,
       maxSeverity: "low",
       technologies: ["postgres"],
+      assets: [],
+      exposure: "internal",
     },
   ],
   edges: [],

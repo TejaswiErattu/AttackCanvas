@@ -23,6 +23,8 @@ function node(type: string, overrides: Partial<GraphNode> = {}): GraphNode {
     threatCount: 2,
     maxSeverity: "high",
     technologies: [],
+    assets: [],
+    exposure: "internal",
     ...overrides,
   };
 }
@@ -84,5 +86,14 @@ describe("ArchitectureLegend", () => {
     render(<ArchitectureLegend nodes={nodes} />);
     const list = screen.getByRole("list", { name: "Component types" });
     expect(list.textContent).toBe("ActorDatabase");
+  });
+});
+
+describe("exposure badge", () => {
+  it("shows the node's exposure on the node", () => {
+    const { container } = render(
+      <NodeContent data={{ node: node("external_service", { exposure: "external" }), on: false, selected: false, dimmed: false }} />,
+    );
+    expect(container.querySelector('[data-exposure="external"]')?.textContent).toBe("External");
   });
 });

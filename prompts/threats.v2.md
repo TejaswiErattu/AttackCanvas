@@ -20,6 +20,12 @@ empty `threats` array is a valid answer.
   Library defaults are already applied: an option that is absent or commented out in
   the source is shown with the value the library uses instead. This block is context,
   not evidence: it has no ids and cannot be cited.
+- `## EXPOSURE` — every component in the architecture, once, with its exposure and its
+  assets. `external` is a service someone else runs (an external service or auth
+  provider); `edge` takes input from outside (an actor, a frontend, or any component an
+  actor sends data to directly); `internal` is reachable only through other components.
+  Use it to judge how reachable a threat's target is. It is context, not evidence: it
+  has no ids and cannot be cited.
 - `## FILE EXCERPTS` — the repository's own text, wrapped in `<repo_file path="...">`
   tags with lines numbered from 1.
 

@@ -35,6 +35,15 @@ import {
 import type { BasisCounts, HiddenSummary } from "@/client/useAnalysis";
 import ArchitectureGraph from "@/components/ArchitectureGraph";
 import ArchitectureLegend from "@/components/ArchitectureLegend";
+import { ExposureBadge, typeText } from "@/components/ArchitectureNode";
+import type { Exposure } from "@/shared/viewModel";
+
+/** What each exposure means, for the node detail panel. */
+const EXPOSURE_DESCRIPTIONS: Record<Exposure, string> = {
+  external: "External: a service someone else runs.",
+  edge: "Edge: takes input from outside (an actor, a frontend, or a direct target of an actor).",
+  internal: "Internal: reachable only through other components.",
+};
 import SectionLabel from "@/components/SectionLabel";
 import FilterBar from "@/components/FilterBar";
 import SeveritySummary from "@/components/SeveritySummary";
@@ -240,16 +249,37 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
           ) : null}
 
           {selectedNode ? (
-            <p
-              role="status"
-              className="mt-3 rounded-xl border border-mint/40 bg-mint-deep/50 px-4 py-2.5 text-sm text-fg"
+            <section
+              aria-label={`${selectedNode.label} details`}
+              className="mt-3 rounded-xl border border-mint/40 bg-mint-deep/50 px-4 py-3 text-sm text-fg"
             >
-              The threat list below is narrowed to threats that involve{" "}
-              <strong className="font-semibold">{selectedNode.label}</strong>.{" "}
-              <a href="#threats-heading" className="text-mint underline underline-offset-2">
-                Go to the list
-              </a>
-            </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="font-display text-base font-semibold">{selectedNode.label}</h3>
+                <span className="text-xs uppercase tracking-wider text-subtle">
+                  {typeText(selectedNode.type)}
+                </span>
+                {selectedNode.exposure ? <ExposureBadge exposure={selectedNode.exposure} /> : null}
+              </div>
+              <dl className="mt-2 grid gap-x-4 gap-y-1 text-sm sm:grid-cols-[auto_1fr]">
+                <dt className="text-muted">Exposure</dt>
+                <dd>{EXPOSURE_DESCRIPTIONS[selectedNode.exposure ?? "internal"]}</dd>
+                <dt className="text-muted">Assets</dt>
+                <dd>{selectedNode.assets?.length ? selectedNode.assets.join(", ") : "None recorded"}</dd>
+                <dt className="text-muted">Technologies</dt>
+                <dd>
+                  {selectedNode.technologies?.length
+                    ? selectedNode.technologies.join(", ")
+                    : "None recorded"}
+                </dd>
+              </dl>
+              <p role="status" className="mt-2">
+                The threat list below is narrowed to threats that involve{" "}
+                <strong className="font-semibold">{selectedNode.label}</strong>.{" "}
+                <a href="#threats-heading" className="text-mint underline underline-offset-2">
+                  Go to the list
+                </a>
+              </p>
+            </section>
           ) : null}
         </section>
 

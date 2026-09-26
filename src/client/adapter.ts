@@ -26,6 +26,7 @@ import {
   STRIDE_LABELS,
 } from "@/shared/labels";
 import { explainConfidence, isGapEvidence } from "@/shared/confidence";
+import { exposureMap, type Exposure } from "@/client/exposure";
 import type {
   AnalysisError,
   AnalysisStatus,
@@ -232,7 +233,11 @@ function toThreatCard(threat: Threat, lookups: Lookups): ThreatCardData {
 // Graph
 // ---------------------------------------------------------------------------
 
-function toGraphNode(component: Component, threats: readonly Threat[]): GraphNode {
+function toGraphNode(
+  component: Component,
+  threats: readonly Threat[],
+  exposure: ReadonlyMap<string, Exposure>,
+): GraphNode {
   const affecting = threats.filter((t) => t.componentIds.includes(component.id));
   return {
     id: component.id,
@@ -242,6 +247,8 @@ function toGraphNode(component: Component, threats: readonly Threat[]): GraphNod
     threatCount: affecting.length,
     maxSeverity: maxSeverityOf(affecting),
     technologies: [...component.technologies],
+    assets: [...component.assets],
+    exposure: exposure.get(component.id) ?? "internal",
   };
 }
 
@@ -305,6 +312,11 @@ export function toDashboardViewModel(model: ThreatModel): DashboardViewModel {
   const lookups = buildLookups(model);
   const threats = visible.map((threat) => toThreatCard(threat, lookups));
   // Selected by the server-computed priority only; nothing is re-scored here.
+  // Rated on the full flow list, so a sub-view that hides a flow never changes a badge.
+  const exposure = exposureMap(
+    model.components,
+    model.dataFlows.map((flow) => ({ source: flow.sourceId, target: flow.targetId })),
+  );
   const fixNowCards = threats
     .filter((t) => t.priority === "fix_now")
     .sort(compareFixNow);
@@ -322,7 +334,7 @@ export function toDashboardViewModel(model: ThreatModel): DashboardViewModel {
     counts: countBySeverity(visible),
     fixNow: fixNowCards.slice(0, FIX_NOW_LIMIT),
     fixNowTotal: fixNowCards.length,
-    nodes: model.components.map((component) => toGraphNode(component, visible)),
+    nodes: model.components.map((component) => toGraphNode(component, visible, exposure)),
     edges: model.dataFlows.map(toGraphEdge),
     boundaries: model.trustBoundaries.map((boundary) => ({
       id: boundary.id,

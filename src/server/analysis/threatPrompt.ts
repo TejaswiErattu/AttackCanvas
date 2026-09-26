@@ -48,6 +48,7 @@ import type { ControlGap } from "@/server/detect/types";
 import type { CookieAttribute, SessionCookie } from "@/server/detect/sessionCookies";
 import { modelBoundFiles, type LoadedFile } from "@/server/ingest/loader";
 import { redact } from "@/server/security/redactor";
+import { exposureMap } from "@/client/exposure";
 import type {
   Component,
   ComponentType,
@@ -570,6 +571,39 @@ export function renderSessionCookies(cookies: readonly SessionCookie[]): string[
 /** Header of the session-cookie context block; the threats prompt describes it. */
 export const SESSION_COOKIES_HEADER = "## SESSION COOKIES";
 
+/** Header of the exposure context block; the threats prompt describes it. */
+export const EXPOSURE_HEADER = "## EXPOSURE";
+
+/**
+ * Every component's exposure (src/client/exposure.ts, the rule the dashboard badge uses)
+ * and its assets, one line each, in the architecture's order, so the model can weigh a
+ * threat by how reachable its target is. Context, not evidence: nothing here can be
+ * cited, and nothing in src/server/scoring reads it. Names and assets are repository-
+ * derived and pass through clean(); the id, type and exposure are ours.
+ */
+export function renderExposure(
+  architecture: Pick<MergedArchitecture, "components" | "dataFlows">,
+): string[] {
+  if (architecture.components.length === 0) return [];
+  const exposure = exposureMap(
+    architecture.components,
+    architecture.dataFlows.map((flow) => ({ source: flow.sourceId, target: flow.targetId })),
+  );
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  for (const component of architecture.components) {
+    if (seen.has(component.id)) continue;
+    seen.add(component.id);
+    const assets = component.assets.length
+      ? component.assets.map((asset) => clean(asset, 120)).join("; ")
+      : "none recorded";
+    lines.push(
+      `- ${component.id} "${clean(component.name, 120)}" (${component.type}): ${exposure.get(component.id)}; assets: ${assets}`,
+    );
+  }
+  return [EXPOSURE_HEADER, ...lines, ""];
+}
+
 export function buildThreatBatch(input: BuildThreatBatchInput): ThreatBatch {
   const { architecture } = input;
   const evidenceById = new Map(architecture.evidence.map((e) => [e.id, e]));
@@ -587,7 +621,8 @@ export function buildThreatBatch(input: BuildThreatBatchInput): ThreatBatch {
   const header = `## BATCH (${elements.length} element${elements.length === 1 ? "" : "s"})`;
   const blocks = elements.map((e) => renderElement(e, evidenceById));
   const cookies = renderSessionCookies(input.sessionCookies ?? []);
-  const prefix = `${[header, "", ...blocks, "", ...cookies, EXCERPT_HEADER].join("\n")}\n`;
+  const exposure = renderExposure(architecture);
+  const prefix = `${[header, "", ...blocks, "", ...cookies, ...exposure, EXCERPT_HEADER].join("\n")}\n`;
 
   // Redact each whole file before any window is taken, so a multi-line secret is never
   // split by a range boundary and smuggled through in halves.

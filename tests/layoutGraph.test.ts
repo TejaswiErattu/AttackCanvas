@@ -23,6 +23,8 @@ function node(id: string, overrides: Partial<GraphNode> = {}): GraphNode {
     threatCount: 0,
     maxSeverity: null,
     technologies: [],
+    assets: [],
+    exposure: "internal",
     ...overrides,
   };
 }

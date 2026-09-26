@@ -16,6 +16,7 @@ import {
 } from "@/shared/schema";
 import { BASIS_LABELS } from "@/shared/labels";
 import { deepFreeze, findUndefined } from "./helpers";
+import { exposureMap } from "@/client/exposure";
 
 // ---------------------------------------------------------------------------
 // Fixture
@@ -1077,5 +1078,21 @@ describe("toDashboardViewModel: trust boundaries", () => {
     expect(view.boundaries).toEqual(
       model.trustBoundaries.map((b) => ({ id: b.id, name: b.name, componentIds: b.componentIds })),
     );
+  });
+});
+
+describe("toDashboardViewModel: node assets and exposure", () => {
+  it("copies assets and rates exposure from the full flow list", () => {
+    const model = buildModel();
+    const view = toDashboardViewModel(model);
+    const expected = exposureMap(
+      model.components,
+      model.dataFlows.map((f) => ({ source: f.sourceId, target: f.targetId })),
+    );
+    for (const component of model.components) {
+      const node = view.nodes.find((n) => n.id === component.id)!;
+      expect(node.assets).toEqual(component.assets);
+      expect(node.exposure).toBe(expected.get(component.id));
+    }
   });
 });
