@@ -1,5 +1,6 @@
 /**
  * Evaluation step 3: score the hand-filled label sheets and write docs/evaluation.md.
+ * Hand-written sections below its notes marker (EVAL_NOTES_MARKER) are kept.
  *
  *   pnpm try scripts/eval/score.ts            # every repo in eval/repos.yaml
  *   pnpm try scripts/eval/score.ts nodegoat
@@ -42,6 +43,7 @@ import {
   parseSecondLabels,
   parseYamlWith,
   recallByClass,
+  mergeEvaluationReport,
   renderEvaluationReport,
   revisionMismatch,
   secondSheetProblems,
@@ -139,9 +141,13 @@ function main(): void {
   }
 
   mkdirSync(`${ROOT}/docs`, { recursive: true });
+  const out = `${ROOT}/docs/evaluation.md`;
   writeFileSync(
-    `${ROOT}/docs/evaluation.md`,
-    renderEvaluationReport(metrics, new Date().toISOString().slice(0, 10), [...profiles], extras),
+    out,
+    mergeEvaluationReport(
+      renderEvaluationReport(metrics, new Date().toISOString().slice(0, 10), [...profiles], extras),
+      existsSync(out) ? readFileSync(out, "utf8") : undefined,
+    ),
   );
   for (const m of metrics) {
     console.log(

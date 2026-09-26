@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import type { Evidence, Threat, ThreatModel } from "@/shared/schema";
 import { validateThreatModel } from "@/shared/schema";
 import {
+  EVAL_NOTES_MARKER,
   ExpectedFileSchema,
   GAP_COLUMNS,
   LABEL_COLUMNS,
@@ -25,6 +26,7 @@ import {
   gapSheetRows,
   gapSheetStarted,
   goldenProblems,
+  mergeEvaluationReport,
   parseCsv,
   parseGapLabels,
   parseLabels,
@@ -427,6 +429,24 @@ describe("renderEvaluationReport with extras", () => {
     const plain = renderEvaluationReport([m], "2026-09-25", ["demo"]);
     expect(plain).not.toContain("## Recall by class");
     expect(plain).not.toContain("Gap precision");
+  });
+
+  it("says a model, not a person, labelled the second sample, and only when there is one", () => {
+    expect(md).toContain("The second-labeller sample was labelled by a separate, blind model session, not a person");
+    expect(md).toContain("a separate model session rather than a person");
+    expect(md).not.toContain("no model judged any output");
+    const plain = renderEvaluationReport([m], "2026-09-25", ["demo"]);
+    expect(plain).toContain("no model judged any output");
+  });
+
+  it("keeps hand-written sections below the notes marker when regenerating", () => {
+    expect(md.trimEnd().endsWith(EVAL_NOTES_MARKER)).toBe(true);
+    const existing = `old generated text\n${EVAL_NOTES_MARKER}\n\n## Caveats\n\nHand text.\n`;
+    const merged = mergeEvaluationReport(md, existing);
+    expect(merged).toContain("## Recall by class: r");
+    expect(merged).not.toContain("old generated text");
+    expect(merged.endsWith(`${EVAL_NOTES_MARKER}\n\n## Caveats\n\nHand text.\n`)).toBe(true);
+    expect(mergeEvaluationReport(md, undefined)).toBe(`${md.trimEnd()}\n`);
   });
 });
 
