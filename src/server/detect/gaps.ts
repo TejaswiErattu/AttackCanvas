@@ -409,6 +409,42 @@ function usesPackageFeature(ctx: Ctx, pkg: string, features: readonly string[]):
   });
 }
 
+/**
+ * True when a development-or-test condition sits within the three lines before `offset`:
+ * `if (process.env.NODE_ENV !== "production")`, `if (isDev)`. What it guards may never
+ * run in production, so a finding under it is held to a lower certainty.
+ */
+const DEV_GUARD = /NODE_ENV|\bisDev\b|\bdevelopment\b|\b__DEV__\b|\bisTest\b/;
+
+function underDevGuard(text: string, offset: number): boolean {
+  let start = offset;
+  for (let lines = 0; lines < 3 && start > 0; lines++) {
+    start = text.lastIndexOf("\n", start - 1);
+    if (start === -1) {
+      start = 0;
+      break;
+    }
+  }
+  return DEV_GUARD.test(text.slice(start, offset));
+}
+
+/** The directory of a path: "apps/api/package.json" -> "apps/api", "package.json" -> "". */
+const dirOf = (path: string): string => {
+  const normalized = normalizeSeparators(path);
+  const slash = normalized.lastIndexOf("/");
+  return slash === -1 ? "" : normalized.slice(0, slash);
+};
+
+/** The package a file belongs to: the longest manifest directory that contains it. */
+function packageDirOf(path: string, manifestDirs: readonly string[]): string {
+  const normalized = normalizeSeparators(path);
+  let best = "";
+  for (const dir of manifestDirs) {
+    if ((dir === "" || normalized.startsWith(`${dir}/`)) && dir.length >= best.length) best = dir;
+  }
+  return best;
+}
+
 /** Evidence kind: source files are code, everything else is configuration. */
 const kindFor = (path: string): EvidenceKind =>
   isScannable(path) ? "code" : "config";
@@ -612,6 +648,17 @@ function isPublicRoute(path: string): boolean {
 
 function authnMissing(ctx: Ctx): Finding[] {
   const found: Finding[] = [];
+  // Files that mount a guard under a prefix: a route in another file may sit under that
+  // prefix through a router mount detectRoutes could not resolve (a wrapped router).
+  const prefixGuardFiles = new Set(
+    ctx.useCalls
+      .filter(
+        (call) =>
+          call.prefix !== undefined &&
+          call.names.some((name) => isGuardName(name) && !ROUTER_NAME.test(name)),
+      )
+      .map((call) => call.file),
+  );
 
   for (const route of ctx.routes) {
     const fact = ctx.authOf(route);
@@ -621,6 +668,7 @@ function authnMissing(ctx: Ctx): Finding[] {
     if (coveredByAppAuth(ctx.appLevelAuth, route.normalizedPath)) continue;
 
     const unknown = fact.status === "unknown";
+    const maybeMounted = prefixGuardFiles.size > 0 && !prefixGuardFiles.has(route.file);
     found.push({
       scope: "route",
       expectation: unknown
@@ -632,8 +680,11 @@ function authnMissing(ctx: Ctx): Finding[] {
       file: route.file,
       line: route.line,
       routeId: route.id,
-      basisFacts: [`${route.id} ${fact.status}`],
-      certainty: unknown ? 0.45 : 0.9,
+      basisFacts: [
+        `${route.id} ${fact.status}`,
+        ...(maybeMounted ? ["a prefix guard exists in another file"] : []),
+      ],
+      certainty: unknown ? 0.45 : maybeMounted ? 0.6 : 0.9,
       evidenceKind: "code",
     });
   }
@@ -898,6 +949,22 @@ function csrfMissing(ctx: Ctx): Finding[] {
     /sameSite\s*:\s*['"`]strict['"`]/i.test(ctx.uncommented(file)),
   );
   const jsonOnly = jsonOnlyApi(ctx);
+  // Next.js: Server Actions check the origin themselves and route handlers are usually
+  // JSON, so a cookie signal proves less there than in an Express app.
+  const nextRoute = route.framework === "next_app" || route.framework === "next_pages";
+  // Monorepo: the cookie session may belong to another package than the route.
+  const manifests = ctx.files.filter((file) => isManifest(file.path));
+  const manifestDirs = manifests.map((file) => dirOf(file.path));
+  const cookieDirs = new Set([
+    ...ctx.source
+      .filter((file) => COOKIE_USAGE.test(ctx.code(file)))
+      .map((file) => packageDirOf(file.path, manifestDirs)),
+    ...manifests
+      .filter((file) => hasAny(dependencyNames([file]), SESSION_DEPS))
+      .map((file) => dirOf(file.path)),
+  ]);
+  const otherPackage =
+    manifests.length > 1 && !cookieDirs.has(packageDirOf(route.file, manifestDirs));
 
   const expectation = jsonOnly
     ? "Cookie sessions with state-changing routes need CSRF protection; only a JSON body parser was found, which a cross-site form cannot reach, so the exposure depends on whether any route accepts a form body"
@@ -917,8 +984,10 @@ function csrfMissing(ctx: Ctx): Finding[] {
         "cookie session signal",
         `${route.id} changes state`,
         ...(jsonOnly ? ["JSON-only body parser"] : []),
+        ...(nextRoute ? ["Next.js route"] : []),
+        ...(otherPackage ? ["cookie signal in another package"] : []),
       ],
-      certainty: jsonOnly ? 0.45 : sameSite ? 0.5 : 0.8,
+      certainty: jsonOnly ? 0.45 : sameSite || nextRoute || otherPackage ? 0.5 : 0.8,
       evidenceKind: "code",
     },
   ];
@@ -1013,16 +1082,19 @@ function securityHeadersMissing(ctx: Ctx): Finding[] {
     return [];
   if (ctx.files.some((file) => TEMPLATE_FILE.test(file.path) && hasCspMeta(file.content))) return [];
 
+  // Declared but not seen used: the file that mounts it may not have been loaded.
+  const declared = hasAny(ctx.deps, [...HEADER_DEPS, "lusca"]);
   return [
     {
       scope: "repository",
-      expectation:
-        "A web application should set security response headers such as a content security policy",
+      expectation: declared
+        ? "A web application should set security response headers such as a content security policy; a header package is declared but no file that mounts it was loaded"
+        : "A web application should set security response headers such as a content security policy",
       summary: `${web.name} is used and no helmet middleware, headers configuration or security header was found`,
       file: web.file,
       line: web.line,
-      basisFacts: [`${web.name} web framework`, "no header middleware"],
-      certainty: 0.9,
+      basisFacts: [`${web.name} web framework`, declared ? "header package declared, no use seen" : "no header middleware"],
+      certainty: declared ? 0.6 : 0.9,
       evidenceKind: "config",
     },
   ];
@@ -1200,17 +1272,22 @@ function transportInFile(
 
   const starts = lineStarts(file.content);
   const disabled = tls !== null && tls.index === offset;
+  const devOnly = disabled && underDevGuard(text, offset);
   return {
     scope: "file",
-    expectation:
-      "Traffic to another host should use TLS and certificate verification",
+    expectation: devOnly
+      ? "Traffic to another host should use TLS and certificate verification; this setting sits under a development condition and may never run in production"
+      : "Traffic to another host should use TLS and certificate verification",
     summary: disabled
       ? `${file.path} disables TLS certificate verification`
       : `${file.path} makes a plaintext http request to an external host`,
     file: file.path,
     line: lineAt(starts, offset),
-    basisFacts: [disabled ? "TLS verification disabled" : "plaintext http URL"],
-    certainty: 0.75,
+    basisFacts: [
+      disabled ? "TLS verification disabled" : "plaintext http URL",
+      ...(devOnly ? ["under a development condition"] : []),
+    ],
+    certainty: devOnly ? 0.5 : 0.75,
     evidenceKind: "code",
   };
 }
@@ -1315,7 +1392,25 @@ function delegatesAuth(ctx: Ctx): boolean {
   )
     return true;
   const nextAuth = ctx.deps.has("next-auth") || ctx.deps.has("@auth/core");
-  return nextAuth && !anySource(ctx, /CredentialsProvider|\bCredentials\s*\(/);
+  return nextAuth && !anySource(ctx, CREDENTIALS_PROVIDER);
+}
+
+const CREDENTIALS_PROVIDER = /CredentialsProvider|\bCredentials\s*\(/;
+
+/**
+ * A next-auth Credentials provider whose authorize() calls another service: the password
+ * is checked there, not against a local store. Read on comment-masked text so the fetch
+ * inside the provider's body counts.
+ */
+function credentialsVerifiedRemotely(ctx: Ctx): boolean {
+  const nextAuth = ctx.deps.has("next-auth") || ctx.deps.has("@auth/core");
+  if (!nextAuth) return false;
+  return ctx.source.some((file) => {
+    const text = ctx.uncommented(file);
+    const provider = CREDENTIALS_PROVIDER.exec(text);
+    if (!provider) return false;
+    return /\b(?:fetch|axios|got|ky)\s*[.(]/.test(text.slice(provider.index, provider.index + 2000));
+  });
 }
 
 /** md5 or sha1 within three lines of a password-shaped identifier. */
@@ -1349,11 +1444,13 @@ function passwordStorageWeak(ctx: Ctx): Finding[] {
   if (hasAny(ctx.deps, PASSWORDLESS_DEPS)) return [];
 
   const weak = weakHashLine(ctx);
+  const remote = !weak && credentialsVerifiedRemotely(ctx);
   return [
     {
       scope: "repository",
-      expectation:
-        "An application that authenticates users itself and stores accounts needs a password hashing function such as bcrypt, argon2 or scrypt",
+      expectation: remote
+        ? "An application that authenticates users itself and stores accounts needs a password hashing function; the Credentials provider here calls another service, which may hold the password instead"
+        : "An application that authenticates users itself and stores accounts needs a password hashing function such as bcrypt, argon2 or scrypt",
       summary: weak
         ? `Authentication routes and a datastore exist and ${weak.file} hashes with a fast digest instead of a password hashing function`
         : `${route.method} ${route.normalizedPath} authenticates users against a datastore and no password hashing library was found`,
@@ -1364,8 +1461,9 @@ function passwordStorageWeak(ctx: Ctx): Finding[] {
         `${route.id} is an authentication route`,
         "datastore present",
         "no password hashing dependency",
+        ...(remote ? ["credentials verified by a remote call"] : []),
       ],
-      certainty: weak ? 0.95 : 0.8,
+      certainty: weak ? 0.95 : remote ? 0.5 : 0.8,
       evidenceKind: kindFor(weak?.file ?? route.file),
     },
   ];
@@ -1563,7 +1661,8 @@ function definesCorsLocally(ctx: Ctx, file: DetectorInput): boolean {
 function corsInFile(ctx: Ctx, file: DetectorInput): Finding[] {
   const masked = ctx.code(file);
   const starts = lineStarts(file.content);
-  const lines = new Map<number, { how: string; reflected: boolean }>();
+  const lines = new Map<number, { how: string; reflected: boolean; devOnly: boolean }>();
+  const text = ctx.uncommented(file);
 
   if (!definesCorsLocally(ctx, file)) {
     for (const match of masked.matchAll(/\bcors\s*\(/g)) {
@@ -1576,29 +1675,40 @@ function corsInFile(ctx: Ctx, file: DetectorInput): Finding[] {
         lines.set(lineAt(starts, match.index ?? 0), {
           how: bare ? "bare cors call" : "wildcard origin",
           reflected: REFLECTED_ORIGIN.test(call),
+          devOnly: underDevGuard(text, match.index ?? 0),
         });
     }
   }
 
-  const header = WILDCARD_HEADER.exec(ctx.uncommented(file));
+  const header = WILDCARD_HEADER.exec(text);
   if (header)
-    lines.set(lineAt(starts, header.index), { how: "wildcard allow-origin header", reflected: false });
+    lines.set(lineAt(starts, header.index), {
+      how: "wildcard allow-origin header",
+      reflected: false,
+      devOnly: underDevGuard(text, header.index),
+    });
 
   // A literal `*` cannot carry credentials (browsers refuse the pair), so on its own it
   // exposes public data only; a reflected origin with credentials exposes the session.
-  const credentials = CORS_CREDENTIALS.test(ctx.uncommented(file));
-  return [...lines].map(([line, { how, reflected }]) => {
+  const credentials = CORS_CREDENTIALS.test(text);
+  return [...lines].map(([line, { how, reflected, devOnly }]) => {
     const withSession = reflected || credentials;
     return {
       scope: "file" as const,
-      expectation: withSession
-        ? "Cross-origin access should be limited to the origins that need it"
-        : "Cross-origin access should be limited to the origins that need it; a literal wildcard cannot carry credentials, so this exposes only what the endpoint serves to anyone",
+      expectation: devOnly
+        ? "Cross-origin access should be limited to the origins that need it; this setting sits under a development condition and may never run in production"
+        : withSession
+          ? "Cross-origin access should be limited to the origins that need it"
+          : "Cross-origin access should be limited to the origins that need it; a literal wildcard cannot carry credentials, so this exposes only what the endpoint serves to anyone",
       summary: `${file.path} allows any origin (${how})`,
       file: file.path,
       line,
-      basisFacts: [how, ...(withSession ? ["credentials or reflected origin"] : ["no credentials"])],
-      certainty: withSession ? 0.9 : 0.5,
+      basisFacts: [
+        how,
+        ...(withSession ? ["credentials or reflected origin"] : ["no credentials"]),
+        ...(devOnly ? ["under a development condition"] : []),
+      ],
+      certainty: devOnly ? 0.5 : withSession ? 0.9 : 0.5,
       evidenceKind: "code" as const,
     };
   });
@@ -1675,7 +1785,7 @@ function supplyChainIntegrity(ctx: Ctx): Finding[] {
       file: manifests[0].path,
       line: 1,
       basisFacts: ["manifest present", "no lockfile loaded"],
-      certainty: 0.5,
+      certainty: 0.35,
       evidenceKind: "config",
     });
   }

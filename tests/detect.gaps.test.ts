@@ -213,9 +213,10 @@ describe("detectGaps: certainty", () => {
     expect(certaintyOf(CASES[10].absent, "cors_permissive")).toBe(0.5);
   });
 
-  it("reports a missing lockfile at 0.5 and a postinstall script at 0.9", () => {
-    // A manifest with no dependencies has no tree to pin (adversarial 12a).
-    expect(certaintyOf([manifest({ express: "^4.0.0" })], "supply_chain_integrity")).toBe(0.5);
+  it("reports a missing lockfile at 0.35 and a postinstall script at 0.9", () => {
+    // A manifest with no dependencies has no tree to pin (adversarial 12a); a lockfile
+    // can be in the repository and outside the loaded files (12b), hence 0.35.
+    expect(certaintyOf([manifest({ express: "^4.0.0" })], "supply_chain_integrity")).toBe(0.35);
     expect(
       certaintyOf(
         [manifest({}, { postinstall: "node x.js" }), LOCKFILE],
@@ -1335,5 +1336,81 @@ describe("adversarial: client_secret_storage", () => {
 
   it("still reports a real token write", () => {
     expect(kindsOf([file("src/auth.js", `localStorage.setItem("token", data.accessToken);`)])).toContain("client_secret_storage");
+  });
+});
+
+describe("adversarial: certainty lowerings", () => {
+  it("2d: a route in another file than a prefix guard may be covered by an unresolved mount", () => {
+    const repo = [
+      manifest({ express: "^4.18.2" }),
+      LOCKFILE,
+      expressApp(`app.use("/api", requireAuth);\napp.use("/api", logged(usersRouter));`),
+      file("src/routes/users.js", `const router = require("express").Router();\nrouter.post("/users", ${HANDLER});\nmodule.exports = router;\n`),
+    ];
+    expect(certaintyOf(repo, "authn_missing")).toBe(0.6);
+    expect(certaintyOf(expressRepo(`app.post("/orders", ${HANDLER});`), "authn_missing")).toBe(0.9);
+  });
+
+  it("4d: a Next.js route with a cookie signal is 0.5", () => {
+    const repo = [
+      manifest({ next: "^15.0.0", "next-auth": "^4.0.0" }),
+      LOCKFILE,
+      file("app/checkout/route.ts", `export async function POST(req: Request) { const body = await req.json(); return Response.json(body); }\n`),
+    ];
+    expect(certaintyOf(repo, "csrf_missing")).toBe(0.5);
+  });
+
+  it("4e: a cookie session in one workspace package does not raise the routes of another", () => {
+    const repo = [
+      file("apps/web/package.json", JSON.stringify({ dependencies: { express: "^4", "express-session": "^1" } })),
+      file("apps/web/src/app.js", `const session = require("express-session");\napp.use(session({}));\n`),
+      file("apps/api/package.json", JSON.stringify({ dependencies: { express: "^4" } })),
+      file("apps/api/src/app.js", `const express = require("express");\nconst app = express();\napp.post("/orders", ${HANDLER});\n`),
+      LOCKFILE,
+    ];
+    expect(certaintyOf(repo, "csrf_missing")).toBe(0.5);
+    expect(certaintyOf(CASES[3].absent, "csrf_missing")).toBe(0.8);
+  });
+
+  it("5d: helmet declared but its mounting file not loaded is 0.6", () => {
+    const repo = [manifest({ express: "^4.0.0", helmet: "^7.0.0" }), LOCKFILE, expressApp(`app.get("/x", ${HANDLER});`)];
+    expect(certaintyOf(repo, "security_headers_missing")).toBe(0.6);
+    expect(certaintyOf(CASES[4].absent, "security_headers_missing")).toBe(0.9);
+  });
+
+  it("7c: rejectUnauthorized under a development condition is 0.5", () => {
+    const guarded = [file("src/db.js", `const ssl = process.env.NODE_ENV === "production"\n  ? true\n  : { rejectUnauthorized: false };\n`)];
+    expect(certaintyOf(guarded, "transport_insecure")).toBe(0.5);
+    const plain = [file("src/db.js", `const ssl = { rejectUnauthorized: false };\n`)];
+    expect(certaintyOf(plain, "transport_insecure")).toBe(0.75);
+  });
+
+  it("8c: a Credentials provider that verifies against another service is 0.5", () => {
+    const remote = [
+      manifest({ next: "^15.0.0", "next-auth": "^4.0.0", pg: "^8.0.0" }),
+      LOCKFILE,
+      file("pages/api/auth/[...nextauth].ts", `CredentialsProvider({\n  async authorize(c) {\n    const r = await fetch("https://idp.example.com/login", { method: "POST", body: JSON.stringify(c) });\n    return r.ok ? await r.json() : null;\n  },\n});\n`),
+      file("pages/api/login.ts", `export default function handler(req, res) { res.end(); }\n`),
+    ];
+    expect(certaintyOf(remote, "password_storage_weak")).toBe(0.5);
+    const local = [
+      manifest({ next: "^15.0.0", "next-auth": "^4.0.0", pg: "^8.0.0" }),
+      LOCKFILE,
+      file("pages/api/auth/[...nextauth].ts", `CredentialsProvider({\n  async authorize(c) { return db.users.findByPassword(c.password); },\n});\n`),
+      file("pages/api/login.ts", `export default function handler(req, res) { res.end(); }\n`),
+    ];
+    expect(certaintyOf(local, "password_storage_weak")).toBe(0.8);
+  });
+
+  it("11c: a cors() under a development condition is 0.5 even with credentials", () => {
+    const repo = expressRepo(
+      `if (process.env.NODE_ENV === "development") {\n  app.use(cors({ origin: true, credentials: true }));\n}`,
+      { cors: "^2.8.5" },
+    );
+    expect(certaintyOf(repo, "cors_permissive")).toBe(0.5);
+  });
+
+  it("12b: a lockfile absent from the loaded files is 0.35", () => {
+    expect(certaintyOf([manifest({ express: "^4.0.0" })], "supply_chain_integrity")).toBe(0.35);
   });
 });
