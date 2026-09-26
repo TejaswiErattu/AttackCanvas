@@ -1613,7 +1613,49 @@ function corsPermissive(ctx: Ctx): Finding[] {
 // ---------------------------------------------------------------------------
 
 const LOCKFILE =
-  /(?:^|\/)(?:package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?)$/i;
+  /(?:^|\/)(?:package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|deno\.lock)$/i;
+
+/** True when the manifest declares at least one dependency of any kind. */
+function declaresDependencies(content: string): boolean {
+  try {
+    const parsed = JSON.parse(content) as Record<string, unknown> | null;
+    if (!parsed || typeof parsed !== "object") return false;
+    return ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"].some(
+      (section) => {
+        const value = parsed[section];
+        return !!value && typeof value === "object" && Object.keys(value as object).length > 0;
+      },
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Postinstall commands that are the repository's own tooling, not a third-party hook:
+ * the supply-chain vector is a dependency's postinstall, which `ignore-scripts` stops.
+ */
+const BENIGN_POSTINSTALL =
+  /^\s*(?:husky(?:\s+install)?|prisma\s+generate|npx\s+prisma\s+generate|patch-package|next\s+telemetry|electron-builder\s+install-app-deps|ngcc|tsc\b|(?:npm|pnpm|yarn)\s+(?:run\s+)?build|node\s+scripts?\/)/i;
+
+/** The postinstall command a manifest declares, or undefined. */
+function postinstallCommand(content: string): string | undefined {
+  try {
+    const scripts = (JSON.parse(content) as { scripts?: Record<string, unknown> } | null)?.scripts;
+    const command = scripts?.postinstall;
+    return typeof command === "string" ? command : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `.npmrc` with `ignore-scripts=true`: no dependency's install script runs. */
+function ignoresInstallScripts(ctx: Ctx): boolean {
+  return ctx.files.some(
+    (file) =>
+      basename(file.path) === ".npmrc" && /^\s*ignore-scripts\s*=\s*true\s*$/im.test(file.content),
+  );
+}
 
 function supplyChainIntegrity(ctx: Ctx): Finding[] {
   const manifests = ctx.files.filter((file) => isManifest(file.path));
@@ -1623,7 +1665,8 @@ function supplyChainIntegrity(ctx: Ctx): Finding[] {
   const noLockfile = !ctx.files.some((file) =>
     LOCKFILE.test(normalizeSeparators(file.path)),
   );
-  if (noLockfile) {
+  // A manifest with no dependencies has no tree to pin.
+  if (noLockfile && manifests.some((manifest) => declaresDependencies(manifest.content))) {
     found.push({
       scope: "repository",
       expectation:
@@ -1637,17 +1680,20 @@ function supplyChainIntegrity(ctx: Ctx): Finding[] {
     });
   }
 
+  if (ignoresInstallScripts(ctx)) return found;
   for (const manifest of manifests) {
     if (!manifestScripts(manifest.content).includes("postinstall")) continue;
+    const benign = BENIGN_POSTINSTALL.test(postinstallCommand(manifest.content) ?? "");
     found.push({
       scope: "repository",
-      expectation:
-        "A postinstall script runs arbitrary code on every install and is a common supply chain vector",
+      expectation: benign
+        ? "A postinstall script runs on every install; this one is the repository's own tooling, so the exposure is the dependencies' install scripts, which ignore-scripts would stop"
+        : "A postinstall script runs arbitrary code on every install and is a common supply chain vector",
       summary: `${manifest.path} runs a postinstall script on every install`,
       file: manifest.path,
       line: lineOf(manifest.content, '"postinstall"'),
-      basisFacts: ["postinstall script declared"],
-      certainty: 0.9,
+      basisFacts: ["postinstall script declared", ...(benign ? ["known tooling command"] : [])],
+      certainty: benign ? 0.4 : 0.9,
       evidenceKind: "config",
     });
   }
@@ -1725,14 +1771,36 @@ function maskYamlComments(content: string): string {
  * CDN serves. A positive observation of the tag, so certainty is high; one finding per
  * page, at its first such tag, naming the libraries by the name derived from the URL.
  */
+/**
+ * Vendors that serve a mutable script and document that SRI must not be used on it:
+ * payments, tag managers, analytics, maps, CAPTCHAs, chat widgets. An integrity hash on
+ * these would break the page at the vendor's next deploy.
+ */
+const NO_SRI_HOSTS =
+  /^(?:js\.stripe\.com|(?:www\.)?googletagmanager\.com|(?:www\.)?google-analytics\.com|maps\.googleapis\.com|js\.hcaptcha\.com|challenges\.cloudflare\.com|connect\.facebook\.net|widget\.intercom\.io|cdn\.segment\.com|js\.sentry-cdn\.com|browser\.sentry-cdn\.com|static\.hotjar\.com|cdn\.paddle\.com|checkout\.razorpay\.com|www\.paypal\.com|www\.paypalobjects\.com|js\.braintreegateway\.com|cdn\.jsdelivr\.net\/npm\/@?[^/]+@latest)$/i;
+
+function hostOf(src: string): string | undefined {
+  try {
+    return new URL(src.startsWith("//") ? `https:${src}` : src).host.toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
+/** Build tools that add integrity hashes to the emitted HTML. */
+const SRI_BUILD_DEPS = ["webpack-subresource-integrity", "vite-plugin-sri", "rollup-plugin-sri", "@nuxtjs/security", "nuxt-security"];
+
 function cdnScriptsWithoutIntegrity(ctx: Ctx): Finding[] {
   const found: Finding[] = [];
+  if (hasAny(ctx.deps, SRI_BUILD_DEPS)) return found;
   for (const page of ctx.files) {
     if (!isServedHtml(page.path)) continue;
 
-    const bare = scriptTags(page.content).filter(
-      (tag) => tag.external && !tag.integrity,
-    );
+    const bare = scriptTags(page.content).filter((tag) => {
+      if (!tag.external || tag.integrity) return false;
+      const host = hostOf(tag.src);
+      return host === undefined || !NO_SRI_HOSTS.test(host);
+    });
     if (bare.length === 0) continue;
 
     const names = [

