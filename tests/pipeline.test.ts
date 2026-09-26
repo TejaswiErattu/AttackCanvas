@@ -1350,3 +1350,56 @@ describe("threat stage stops starting batches once the job is past its deadline 
     expect(result.stage).not.toBe("failed");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Prompt H: the level plan reaches each paid stage (what the I-1 eval runs rely on)
+// ---------------------------------------------------------------------------
+
+describe("runAnalysis follows the level plan", () => {
+  async function runAt(level: 0 | 1 | 2 | 3 | 4, profile: "dev" | "demo") {
+    vi.stubEnv("ATTACKCANVAS_MODEL_PROFILE", profile);
+    const arch = vi.fn(canaryDeps().inferArchitecture!);
+    const threats = vi.fn(canaryDeps().generateThreats!);
+    const questions = vi.fn(canaryDeps().selectQuestions!);
+    const state = createAnalysis("acme/canary", level);
+    await runAnalysis(
+      state.id,
+      canaryDeps({ inferArchitecture: arch, generateThreats: threats, selectQuestions: questions }),
+    );
+    return { arch: arch.mock.calls[0]?.[0], threats: threats.mock.calls[0]?.[0], questions };
+  }
+
+  it("level 2 under demo sends the pre-H models, budgets and thinking", async () => {
+    const { arch, threats, questions } = await runAt(2, "demo");
+    expect(arch).toMatchObject({ model: "claude-opus-5", maxTokens: 12_000, thinking: { type: "disabled" } });
+    expect(threats).toMatchObject({ model: "claude-opus-5", maxTokens: 12_000, thinking: { type: "disabled" } });
+    expect(threats).not.toHaveProperty("maxBatches");
+    expect(questions).toHaveBeenCalledWith(expect.objectContaining({ model: "claude-sonnet-5" }));
+  });
+
+  it("level 0 under demo uses Sonnet, caps STRIDE at 3 batches and asks no questions", async () => {
+    const { arch, threats, questions } = await runAt(0, "demo");
+    expect(arch).toMatchObject({ model: "claude-sonnet-5" });
+    expect(threats).toMatchObject({ model: "claude-sonnet-5", maxBatches: 3 });
+    expect(questions).not.toHaveBeenCalled();
+  });
+
+  it("level 1 under demo uses Sonnet with level-2 budgets and questions on", async () => {
+    const { arch, threats, questions } = await runAt(1, "demo");
+    expect(arch).toMatchObject({ model: "claude-sonnet-5", maxTokens: 12_000 });
+    expect(threats).toMatchObject({ model: "claude-sonnet-5", maxTokens: 12_000 });
+    expect(threats).not.toHaveProperty("maxBatches");
+    expect(questions).toHaveBeenCalled();
+  });
+
+  it("level 4 under demo sends adaptive STRIDE thinking with 16,000 output tokens", async () => {
+    const { threats } = await runAt(4, "demo");
+    expect(threats).toMatchObject({ model: "claude-opus-5", maxTokens: 16_000, thinking: { type: "adaptive" } });
+  });
+
+  it("dev keeps Sonnet on architecture and STRIDE even at level 2", async () => {
+    const { arch, threats } = await runAt(2, "dev");
+    expect(arch).toMatchObject({ model: "claude-sonnet-5" });
+    expect(threats).toMatchObject({ model: "claude-sonnet-5" });
+  });
+});

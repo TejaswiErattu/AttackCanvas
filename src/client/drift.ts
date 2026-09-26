@@ -35,7 +35,7 @@ export type DriftResult = {
 // Matching keys
 // ---------------------------------------------------------------------------
 
-function norm(text: string | undefined | null): string {
+export function norm(text: string | undefined | null): string {
   return (text ?? "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
 

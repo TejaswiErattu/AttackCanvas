@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { isHidden } from "@/server/scoring";
-import { ThreatModelSchema, type AnalysisStage, type Evidence, type Threat, type ThreatModel } from "@/shared/schema";
+import { AnalysisLevelSchema, ThreatModelSchema, type AnalysisLevel, type AnalysisStage, type Evidence, type Threat, type ThreatModel } from "@/shared/schema";
 
 // ---------------------------------------------------------------------------
 // Files and config
@@ -74,6 +74,10 @@ export const EvalResultSchema = z.object({
   repoUrl: z.string(),
   modelProfile: z.string(),
   ranAt: z.string(),
+  /** The analysis level the run was requested at (run.ts --level). Absent in older results, which ran at 2. */
+  level: AnalysisLevelSchema.optional(),
+  /** Wall-clock milliseconds for the whole run. Absent in results saved before it was recorded. */
+  durationMs: z.number().min(0).optional(),
   cost: z.object({ calls: z.number().int().min(0), totalUsd: z.number().min(0) }),
   threatModel: ThreatModelSchema,
   /**
@@ -508,10 +512,12 @@ export function renderEvaluationReport(
 // run.ts: arguments and failure reporting
 // ---------------------------------------------------------------------------
 
-export type RunArgs = { names: string[]; timeoutMs: number };
+export type RunArgs = { names: string[]; timeoutMs: number; level: AnalysisLevel };
+
+export const DEFAULT_LEVEL: AnalysisLevel = 2;
 
 /**
- * Reads `[repo...] [--timeout <ms>]`. The timeout defaults to `defaultMs` (the pipeline's
+ * Reads `[repo...] [--timeout <ms>] [--level <0-4>]`. The timeout defaults to `defaultMs` (the pipeline's
  * PIPELINE_TIMEOUT_MS) and is validated with the same rule try-pipeline.ts uses, before
  * any paid work starts. Any other --flag is rejected rather than silently read as a repo
  * name or ignored.
@@ -523,6 +529,7 @@ export function parseRunArgs(
 ): { ok: true; value: RunArgs } | { ok: false; message: string } {
   const names: string[] = [];
   let raw: string | undefined;
+  let rawLevel: string | undefined;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--timeout") {
@@ -530,13 +537,20 @@ export function parseRunArgs(
       raw = argv[i + 1];
       if (raw === undefined || raw.startsWith("--")) return { ok: false, message: "--timeout needs a value in milliseconds." };
       i += 1;
+    } else if (arg === "--level") {
+      if (rawLevel !== undefined) return { ok: false, message: "--level given more than once." };
+      rawLevel = argv[i + 1];
+      if (rawLevel === undefined || rawLevel.startsWith("--")) return { ok: false, message: "--level needs a value from 0 to 4." };
+      i += 1;
     } else if (arg.startsWith("--")) {
-      return { ok: false, message: `unknown option ${arg}; usage: run.ts [repo...] [--timeout <ms>]` };
+      return { ok: false, message: `unknown option ${arg}; usage: run.ts [repo...] [--timeout <ms>] [--level <0-4>]` };
     } else {
       names.push(arg);
     }
   }
-  if (raw === undefined) return { ok: true, value: { names, timeoutMs: defaultMs } };
+  const level = AnalysisLevelSchema.safeParse(rawLevel === undefined ? DEFAULT_LEVEL : /^\d$/.test(rawLevel) ? Number(rawLevel) : NaN);
+  if (!level.success) return { ok: false, message: `--level must be an integer from 0 to 4, got "${rawLevel}".` };
+  if (raw === undefined) return { ok: true, value: { names, timeoutMs: defaultMs, level: level.data } };
   const value = Number(raw);
   if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value <= 0 || value > maxMs) {
     return {
@@ -544,7 +558,7 @@ export function parseRunArgs(
       message: `--timeout must be a positive integer number of milliseconds no greater than ${maxMs}, got "${raw}".`,
     };
   }
-  return { ok: true, value: { names, timeoutMs: value } };
+  return { ok: true, value: { names, timeoutMs: value, level: level.data } };
 }
 
 /** The order a successful job moves through; "failed" can replace any of them. */
