@@ -1463,8 +1463,25 @@ function loggingMissing(ctx: Ctx): Finding[] {
 /** (err, req, res, next), tolerating TypeScript parameter annotations. */
 const ERROR_MIDDLEWARE =
   /\(\s*(?:err|error|e)\s*(?::\s*[^,)]+)?,\s*(?:req|request)\s*(?::\s*[^,)]+)?,\s*(?:res|response)\s*(?::\s*[^,)]+)?,\s*(?:next|_next)\b/;
+/** `app.use(errorHandler)`, `app.use(errorHandler({ log }))`, `app.use(Sentry.Handlers.errorHandler())`. */
 const ERROR_REGISTRATION =
-  /\.use\s*\(\s*[\w$.]*(?:error|exception)[\w$]*\s*\)/i;
+  /\.use\s*\(\s*[\w$.]*(?:error|exception)[\w$]*\s*(?:\([^()]*\))?\s*\)/i;
+
+/** Packages that hand a rejected handler promise to the error handler on Express 4. */
+const ASYNC_FORWARDING_DEPS = [
+  "express-async-errors",
+  "express-async-handler",
+  "express-promise-router",
+  "@awaitjs/express",
+];
+
+/**
+ * A handler wrapped in an async-catching helper (`catchAsync(async (req, res) => …)`), or
+ * one that attaches `.catch(next)` to the awaited promise, forwards its own rejections.
+ */
+const ASYNC_WRAPPER =
+  /\b(?:asyncHandler|catchAsync|wrapAsync|asyncWrap|tryCatch|catchErrors|wrap|handleAsync|asyncMiddleware)\w*\s*\(\s*(?:async\b|\(|function\b)/;
+const CATCHES_PROMISE = /\.\s*catch\s*\(/;
 
 /** The lowest major version a declared range allows, e.g. 5 for "^5.1.0". */
 function lowestMajor(range: string): number | undefined {
@@ -1479,7 +1496,7 @@ function lowestMajor(range: string): number | undefined {
  * has an Express 4 service keeps the check.
  */
 function forwardsRejections(ctx: Ctx): boolean {
-  if (ctx.deps.has("express-async-errors")) return true;
+  if (hasAny(ctx.deps, ASYNC_FORWARDING_DEPS)) return true;
 
   const express = ctx.facts.frameworks.filter((f) => f.name === "express");
   return (
@@ -1499,6 +1516,7 @@ function errorHandlingGap(ctx: Ctx): Finding[] {
     if (route.framework !== "express") continue;
     const body = ctx.body(route);
     if (!/\bawait\b/.test(body) || /\btry\b/.test(body)) continue;
+    if (ASYNC_WRAPPER.test(body) || CATCHES_PROMISE.test(body)) continue;
 
     found.push({
       scope: "route",

@@ -1213,3 +1213,36 @@ describe("adversarial: logging_missing", () => {
     expect(kindsOf(CASES[8].absent)).toContain("logging_missing");
   });
 });
+
+describe("adversarial: error_handling_gap", () => {
+  const unguarded = `app.get("/a", async (req, res) => { await load(); res.end(); });`;
+
+  it.each([
+    ["an error handler registered with options", `app.use(errorHandler({ log: true }));`],
+    ["Sentry's error handler", `app.use(Sentry.Handlers.errorHandler());`],
+  ])("10a: %s is a registered error handler", (_name, registration) => {
+    expect(kindsOf(expressRepo(`${unguarded}\n${registration}`))).not.toContain("error_handling_gap");
+  });
+
+  it("10b: express-async-handler forwards rejections", () => {
+    expect(kindsOf(expressRepo(unguarded, { "express-async-handler": "^1.2.0" }))).not.toContain("error_handling_gap");
+  });
+
+  it("10b: a local catchAsync wrapper forwards the handler's rejection", () => {
+    const repo = expressRepo(
+      `const { catchAsync } = require("./utils");\napp.get("/a", catchAsync(async (req, res) => { await load(); res.end(); }));`,
+    );
+    expect(kindsOf(repo)).not.toContain("error_handling_gap");
+  });
+
+  it("10c: .catch(next) on the awaited promise handles the rejection", () => {
+    const repo = expressRepo(
+      `app.get("/a", async (req, res, next) => { const x = await load().catch(next); res.json(x); });`,
+    );
+    expect(kindsOf(repo)).not.toContain("error_handling_gap");
+  });
+
+  it("still reports an unguarded await with no handler registered", () => {
+    expect(kindsOf(CASES[9].absent)).toContain("error_handling_gap");
+  });
+});
