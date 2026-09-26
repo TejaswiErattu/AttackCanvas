@@ -1159,3 +1159,29 @@ describe("adversarial: transport_insecure", () => {
     expect(kindsOf(compose)).toContain("transport_insecure");
   });
 });
+
+describe("adversarial: password_storage_weak", () => {
+  const login = `app.post("/login", async (req, res) => { const { password } = req.body; await users.check(password); res.end(); });`;
+
+  it.each([
+    ["passport-local-mongoose hashes with pbkdf2", { "passport-local-mongoose": "^8.0.0" }],
+    ["sodium-native's crypto_pwhash is a KDF", { "sodium-native": "^4.0.0" }],
+    ["keycloak-connect delegates the password", { "keycloak-connect": "^26.0.0" }],
+    ["@ory/client delegates the password", { "@ory/client": "^1.0.0" }],
+  ])("8a: %s", (_name, deps) => {
+    const repo = expressRepo(login, { pg: "^8.0.0", ...deps });
+    expect(kindsOf(repo)).not.toContain("password_storage_weak");
+  });
+
+  it("8b: a passwordless login has no password to hash", () => {
+    const repo = expressRepo(
+      `app.post("/login", async (req, res) => { await sendMagicLink(req.body.email); res.end(); });`,
+      { pg: "^8.0.0", otplib: "^12.0.0" },
+    );
+    expect(kindsOf(repo)).not.toContain("password_storage_weak");
+  });
+
+  it("still reports a password login against a datastore with no KDF", () => {
+    expect(kindsOf(expressRepo(login, { pg: "^8.0.0" }))).toContain("password_storage_weak");
+  });
+});

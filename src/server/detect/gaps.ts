@@ -1272,9 +1272,21 @@ const KDF_DEPS = [
   "scrypt-kdf",
   "better-auth",
   "lucia",
+  "passport-local-mongoose",
+  "bcrypt-ts",
+  "hash-wasm",
+  "sodium-native",
+  "libsodium-wrappers",
 ];
+/** Passwordless mechanisms: a login route with no password to store. */
+const PASSWORDLESS_DEPS = ["otplib", "speakeasy", "passport-magic-link", "@simplewebauthn/server", "passport-webauthn"];
 const DELEGATED_EXACT = [
   "express-openid-connect",
+  "keycloak-connect",
+  "supertokens-node",
+  "openid-client",
+  "passport-saml",
+  "@node-saml/passport-saml",
   "firebase",
   "firebase-admin",
   "auth0",
@@ -1290,6 +1302,8 @@ const DELEGATED_PREFIX = [
   "@kinde-oss/",
   "@propelauth/",
   "@descope/",
+  "@ory/",
+  "@okta/",
 ];
 const PASSWORD_ROUTE = /login|signin|register|signup|password|reset/i;
 
@@ -1330,7 +1344,9 @@ function passwordStorageWeak(ctx: Ctx): Finding[] {
     return [];
   if (delegatesAuth(ctx)) return [];
   if (hasAny(ctx.deps, KDF_DEPS)) return [];
-  if (anySource(ctx, /\b(?:bcrypt|argon2|scrypt|pbkdf2)/i)) return [];
+  if (anySource(ctx, /\b(?:bcrypt|argon2|scrypt|pbkdf2|crypto_pwhash|sodium)/i)) return [];
+  // Passwordless: a magic link, OTP or passkey login stores no password to hash.
+  if (hasAny(ctx.deps, PASSWORDLESS_DEPS)) return [];
 
   const weak = weakHashLine(ctx);
   return [
