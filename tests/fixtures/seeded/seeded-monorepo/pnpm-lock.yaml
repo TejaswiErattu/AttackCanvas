@@ -1,0 +1,63 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    devDependencies:
+      tsx:
+        specifier: ^4.19.4
+        version: 4.19.4
+      typescript:
+        specifier: ^5.8.3
+        version: 5.8.3
+
+  packages/api:
+    dependencies:
+      '@acme/auth':
+        specifier: workspace:*
+        version: link:../auth
+      cookie-session:
+        specifier: ^2.1.0
+        version: 2.1.0
+      express:
+        specifier: ^4.21.2
+        version: 4.21.2
+      pg:
+        specifier: ^8.16.0
+        version: 8.16.0
+      zod:
+        specifier: ^3.25.0
+        version: 3.25.67
+
+  packages/auth:
+    dependencies:
+      express-rate-limit:
+        specifier: ^7.5.0
+        version: 7.5.0(express@4.21.2)
+
+packages:
+
+  cookie-session@2.1.0:
+    resolution: {tarball: https://registry.npmjs.org/cookie-session/-/cookie-session-2.1.0.tgz}
+
+  express-rate-limit@7.5.0:
+    resolution: {tarball: https://registry.npmjs.org/express-rate-limit/-/express-rate-limit-7.5.0.tgz}
+
+  express@4.21.2:
+    resolution: {tarball: https://registry.npmjs.org/express/-/express-4.21.2.tgz}
+
+  pg@8.16.0:
+    resolution: {tarball: https://registry.npmjs.org/pg/-/pg-8.16.0.tgz}
+
+  tsx@4.19.4:
+    resolution: {tarball: https://registry.npmjs.org/tsx/-/tsx-4.19.4.tgz}
+
+  typescript@5.8.3:
+    resolution: {tarball: https://registry.npmjs.org/typescript/-/typescript-5.8.3.tgz}
+
+  zod@3.25.67:
+    resolution: {tarball: https://registry.npmjs.org/zod/-/zod-3.25.67.tgz}

@@ -1,0 +1,12 @@
+{
+  "name": "@acme/auth",
+  "version": "0.4.0",
+  "private": true,
+  "main": "src/index.ts",
+  "dependencies": {
+    "express-rate-limit": "^7.5.0"
+  },
+  "peerDependencies": {
+    "express": "^4.21.0"
+  }
+}

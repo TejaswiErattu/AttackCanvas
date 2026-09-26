@@ -1,0 +1,23 @@
+{
+  "name": "seeded-next",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Storefront: Next.js App Router with a JWT-authenticated API",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@upstash/ratelimit": "^2.0.5",
+    "@upstash/redis": "^1.35.0",
+    "bcryptjs": "^3.0.2",
+    "jsonwebtoken": "^9.0.2",
+    "next": "^15.3.4",
+    "pg": "^8.16.0",
+    "pino": "^9.7.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "zod": "^3.25.0"
+  }
+}
