@@ -146,6 +146,17 @@ export function isJavaScriptPath(path: string): boolean {
 /** A storage key that names a credential rather than ordinary state. */
 const SECRET_KEY = /api[_-]?key|secret|token|passw|credential|jwt|bearer|private[_-]?key/i;
 
+/**
+ * A key that contains a credential word but names something else: when a token expires
+ * (`tokenExpiresAt`), how many there are, a CSRF token (double-submit by design, not a
+ * secret), a public or publishable key, or a CAPTCHA token.
+ */
+const NOT_A_SECRET_KEY =
+  /expir|ttl\b|count|_name$|name$|version|time|csrf|xsrf|public|publishable|anon|recaptcha|turnstile|captcha|hcaptcha/i;
+
+/** The value written is nothing: `setItem("token", "")` or `setItem("token", null)` clears, it does not store. */
+const EMPTY_VALUE = /^\s*,\s*(?:(['"`])\1|null|undefined)\s*\)/;
+
 export type StorageWrite = {
   storage: "localStorage" | "sessionStorage";
   /** The key as written: a literal's value, or a constant's value when it resolves in the same file. */
@@ -177,6 +188,10 @@ export function secretStorageWrites(file: DetectorInput): StorageWrite[] {
       (value): value is string => value !== undefined,
     );
     if (!candidates.some((value) => SECRET_KEY.test(value))) continue;
+    // Judged by the most concrete name: the literal or resolved value, else the identifier.
+    const judged = literal ?? resolved ?? identifier ?? "";
+    if (NOT_A_SECRET_KEY.test(judged)) continue;
+    if (EMPTY_VALUE.test(text.slice((match.index ?? 0) + match[0].length))) continue;
 
     const plain = [literal, resolved].find(
       (value) => value !== undefined && /^[\w.:-]{1,64}$/.test(value),

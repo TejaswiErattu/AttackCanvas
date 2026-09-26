@@ -1318,3 +1318,22 @@ describe("adversarial: supply_chain_integrity", () => {
     expect(kindsOf([file("index.html", `<script src="https://cdn.jsdelivr.net/npm/x@1/x.js"></script>`)])).toContain("supply_chain_integrity");
   });
 });
+
+describe("adversarial: client_secret_storage", () => {
+  it.each([
+    ["a token expiry timestamp", `localStorage.setItem("tokenExpiresAt", String(Date.now() + 3600e3));`],
+    ["a CSRF double-submit token", `sessionStorage.setItem("csrfToken", token);`],
+    ["a publishable key", `localStorage.setItem("stripePublishableKey", pk);`],
+    ["a CAPTCHA token", `sessionStorage.setItem("recaptchaToken", t);`],
+  ])("13a: %s is not a secret", (_name, code) => {
+    expect(kindsOf([file("src/auth.js", code)])).not.toContain("client_secret_storage");
+  });
+
+  it("13d: clearing a key on logout is not storing a secret", () => {
+    expect(kindsOf([file("src/logout.js", `localStorage.setItem("token", "");\nlocalStorage.setItem("apiKey", null);`)])).not.toContain("client_secret_storage");
+  });
+
+  it("still reports a real token write", () => {
+    expect(kindsOf([file("src/auth.js", `localStorage.setItem("token", data.accessToken);`)])).toContain("client_secret_storage");
+  });
+});
