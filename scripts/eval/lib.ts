@@ -10,6 +10,7 @@
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+import { isHidden } from "@/server/scoring";
 import { ThreatModelSchema, type AnalysisStage, type Evidence, type Threat, type ThreatModel } from "@/shared/schema";
 
 // ---------------------------------------------------------------------------
@@ -41,7 +42,16 @@ const ExpectedId = z.string().regex(/^[A-Za-z0-9_.-]+$/, "use letters, digits, _
 
 export const ExpectedFileSchema = z
   .object({
-    expectedThreats: z.array(z.object({ id: ExpectedId, description: z.string().min(1) })).min(1),
+    expectedThreats: z
+      .array(
+        z.object({
+          id: ExpectedId,
+          description: z.string().min(1),
+          /** The answer key's own category (e.g. "A2", "A2/A3/A5", "SSRF (tutorial ssrf.html)"); the per-class table groups by it. */
+          owasp2013: z.string().min(1).optional(),
+        }),
+      )
+      .min(1),
     /** Commit the answer key was written against; score.ts refuses a result scanned at another ref. */
     revision: z.string().min(1).optional(),
     /** "guided" when the repo documents its own vulnerabilities in files the model sees. */
@@ -89,6 +99,11 @@ export function evalPaths(root: string, name: string) {
     result: join(root, "eval", "results", `${name}.json`),
     labels: join(root, "eval", "labels", `${name}.csv`),
     expected: join(root, "eval", "expected", `${name}.yaml`),
+    /** Hand labels for the threats that cite only control gaps (gapSheet.ts). */
+    gaps: join(root, "eval", "labels", `${name}.gaps.csv`),
+    /** A second person's labels for a sample of the primary sheet (sampleSecond.ts). */
+    second: join(root, "eval", "labels", `${name}.second.csv`),
+    secondBlank: join(root, "eval", "labels", `${name}.second-blank.csv`),
   };
 }
 
@@ -365,13 +380,23 @@ export type RepoMetrics = {
 
 const ratio = (num: number, den: number): number | null => (den === 0 ? null : num / den);
 
+/**
+ * The expected ids a labelled sheet recalls: an item counts only when at least one row lists
+ * it in matchesExpected AND is labelled supported = y (R1 in
+ * eval/review/pending-evaluation-requirements.md). A row that matches an item but is
+ * unsupported still counts toward the unsupported rate; it never recalls the item on its own.
+ */
+export function recalledIds(labels: readonly LabeledThreat[]): Set<string> {
+  return new Set(labels.filter((l) => l.supported).flatMap((l) => l.matches));
+}
+
 export function computeRepoMetrics(
   repo: string,
   labels: readonly LabeledThreat[],
   expected: ExpectedFile,
   cost: { totalUsd: number; calls: number },
 ): RepoMetrics {
-  const matchedSet = new Set(labels.flatMap((l) => l.matches));
+  const matchedSet = recalledIds(labels);
   const matched = expected.expectedThreats.map((t) => t.id).filter((id) => matchedSet.has(id));
   const missed = expected.expectedThreats.map((t) => t.id).filter((id) => !matchedSet.has(id));
   const unsupported = labels.filter((l) => !l.supported).length;
@@ -439,6 +464,7 @@ export function renderEvaluationReport(
   perRepo: readonly RepoMetrics[],
   generatedAt: string,
   profiles: readonly string[],
+  extras: Readonly<Record<string, RepoExtras>> = {},
 ): string {
   const rows = perRepo.length > 1 ? [...perRepo, combineMetrics(perRepo)] : [...perRepo];
   const missedSections = perRepo
@@ -466,9 +492,10 @@ export function renderEvaluationReport(
     "",
     ...(missedSections.length > 0 ? missedSections : ["None: every expected threat was matched."]),
     "",
+    ...perRepo.flatMap((m) => renderExtras(m.repo, extras[m.repo])),
     "## Definitions",
     "",
-    "- **Recall**: expected threats matched by at least one generated threat, over expected threats. A generated threat is matched when its `matchesExpected` cell lists the expected id; a blank cell means it matches none.",
+    "- **Recall**: expected threats matched by at least one generated threat labelled `supported = y`, over expected threats. A generated threat is matched when its `matchesExpected` cell lists the expected id; a blank cell means it matches none. A match on an unsupported row does not recall the item (it counts toward Unsupported instead).",
     "- **Unsupported**: generated threats labeled `supported = n` (the cited code does not support the claim), over all generated threats. Lower is better.",
     "- **Evidence accuracy**: evidence items judged correct, over evidence items cited, summed across all threats (from each `evidenceCorrect` cell, e.g. 2/3).",
     "- **Cost**: total model spend for the run as recorded by the pipeline, at the model profile above, with every developer question skipped.",
@@ -583,4 +610,568 @@ export function formatRunFailure(f: RunFailure): string[] {
     `${f.repo}:   elapsed ${(f.elapsedMs / 1000).toFixed(1)}s of a ${(f.timeoutMs / 1000).toFixed(0)}s budget per phase`,
     `${f.repo}:   no result written`,
   ];
+}
+
+// ---------------------------------------------------------------------------
+// Gap sheet: threats whose cited evidence is only control gaps (gapSheet.ts)
+// ---------------------------------------------------------------------------
+
+/** Evidence from a control-gap detector carries ruleId "gap:<kind>" (src/server/detect/gaps.ts). */
+const GAP_RULE_PREFIX = "gap:";
+
+export const GAP_COLUMNS = ["threatId", "title", "gapKinds", "files", "confidence", "visible", "gapLabel", "notes"] as const;
+export type GapColumn = (typeof GAP_COLUMNS)[number];
+
+/** predicted_correct: the control the gap says is missing really is missing. predicted_wrong: it is there. */
+export const GAP_LABELS = ["predicted_correct", "predicted_wrong"] as const;
+export type GapLabel = (typeof GAP_LABELS)[number];
+
+const gapKindOf = (evidence: Evidence): string | undefined =>
+  evidence.ruleId?.startsWith(GAP_RULE_PREFIX) ? evidence.ruleId.slice(GAP_RULE_PREFIX.length) : undefined;
+
+/**
+ * The evidence a threat cites when every item is a control gap, else null. A threat that
+ * cites nothing is not gap-only, and neither is one that cites an id that does not resolve.
+ */
+export function gapOnlyEvidence(threat: Threat, evidenceById: ReadonlyMap<string, Evidence>): Evidence[] | null {
+  if (threat.evidenceIds.length === 0) return null;
+  const cited = threat.evidenceIds.map((id) => evidenceById.get(id));
+  if (cited.some((e) => e === undefined || gapKindOf(e) === undefined)) return null;
+  return cited as Evidence[];
+}
+
+export type GapSheetRow = {
+  threatId: string;
+  title: string;
+  /** Distinct gap kinds the threat cites, sorted. */
+  gapKinds: string[];
+  /** Distinct "path:line" locations of the cited gaps, sorted. */
+  files: string[];
+  confidence: number;
+  /** Shown on the dashboard: not below the HIDE_BELOW cutoff. */
+  visible: boolean;
+};
+
+/** One row per gap-only threat, in the model's order. */
+export function gapSheetRows(model: ThreatModel): GapSheetRow[] {
+  const evidenceById = new Map(model.evidence.map((e) => [e.id, e]));
+  const rows: GapSheetRow[] = [];
+  for (const threat of model.threats) {
+    const cited = gapOnlyEvidence(threat, evidenceById);
+    if (!cited) continue;
+    rows.push({
+      threatId: threat.id,
+      title: threat.title,
+      gapKinds: [...new Set(cited.map((e) => gapKindOf(e) as string))].sort(),
+      files: [...new Set(cited.map(describeEvidenceLocation))].sort(),
+      confidence: threat.confidence,
+      visible: !isHidden(threat.confidence),
+    });
+  }
+  return rows;
+}
+
+/** The whole sheet, header first; gapLabel and notes are left empty for a person. */
+export function buildGapSheet(model: ThreatModel): string {
+  return toCsv([
+    [...GAP_COLUMNS],
+    ...gapSheetRows(model).map((r) => [
+      r.threatId,
+      r.title,
+      r.gapKinds.join(";"),
+      r.files.join(" | "),
+      r.confidence.toFixed(2),
+      r.visible ? "y" : "n",
+      "", // gapLabel
+      "", // notes
+    ]),
+  ]);
+}
+
+export type GapLabeled = { threatId: string; gapKinds: string[]; visible: boolean; label: GapLabel };
+
+/**
+ * Whether anyone has started labelling a gap sheet: at least one row has a gapLabel. A sheet
+ * nobody has started is skipped by the scorer rather than refused, so a freshly generated
+ * blank sheet never blocks ordinary scoring; a partially filled one is still refused.
+ */
+export function gapSheetStarted(csvText: string): boolean {
+  const rows = parseCsv(csvText);
+  const column = rows[0]?.map((h) => h.trim()).indexOf("gapLabel") ?? -1;
+  return column !== -1 && rows.slice(1).some((row) => (row[column] ?? "").trim() !== "");
+}
+
+/**
+ * Reads a filled gap sheet. Every row needs a gapLabel of predicted_correct or
+ * predicted_wrong: a blank or unknown value refuses the whole sheet, so a half-labelled one
+ * cannot skew the precision. Every problem is collected, not just the first.
+ */
+export function parseGapLabels(csvText: string): GapLabeled[] {
+  const rows = parseCsv(csvText);
+  if (rows.length === 0) throw new Error("gaps sheet is empty");
+  const header = rows[0].map((h) => h.trim());
+  const missing = GAP_COLUMNS.filter((c) => !header.includes(c));
+  if (missing.length > 0) throw new Error(`gaps sheet is missing column(s): ${missing.join(", ")}`);
+  const col = (row: string[], name: GapColumn) => (row[header.indexOf(name)] ?? "").trim();
+
+  const problems: string[] = [];
+  const out: GapLabeled[] = [];
+  const seen = new Set<string>();
+  let blank = 0;
+  rows.slice(1).forEach((row, index) => {
+    const threatId = col(row, "threatId");
+    const where = `row ${index + 2} (${threatId || "no threatId"})`;
+    if (!threatId) return void problems.push(`${where}: threatId is empty`);
+    if (seen.has(threatId)) return void problems.push(`${where}: duplicate threatId`);
+    seen.add(threatId);
+
+    const gapKinds = [...new Set(col(row, "gapKinds").split(/[;,\s]+/).filter(Boolean))].sort();
+    if (gapKinds.length === 0) problems.push(`${where}: gapKinds is empty`);
+    const visibleRaw = col(row, "visible").toLowerCase();
+    if (visibleRaw !== "y" && visibleRaw !== "n") problems.push(`${where}: visible must be y or n, got "${visibleRaw}"`);
+    const label = col(row, "gapLabel").toLowerCase();
+    if (label === "") {
+      blank += 1;
+      problems.push(`${where}: gapLabel is blank`);
+    } else if (!(GAP_LABELS as readonly string[]).includes(label)) {
+      problems.push(`${where}: gapLabel must be ${GAP_LABELS.join(" or ")}, got "${label}"`);
+    } else if (gapKinds.length > 0 && (visibleRaw === "y" || visibleRaw === "n")) {
+      out.push({ threatId, gapKinds, visible: visibleRaw === "y", label: label as GapLabel });
+    }
+  });
+  if (rows.length === 1) problems.push("gaps sheet has no threat rows");
+  if (problems.length > 0) {
+    const summary = blank > 0 ? `${blank} of ${rows.length - 1} row(s) have no gapLabel` : `${problems.length} problem(s)`;
+    throw new Error(`gaps sheet is not fully labeled (${summary}):\n  ${problems.join("\n  ")}`);
+  }
+  return out;
+}
+
+/**
+ * Where a filled gap sheet disagrees with the saved result it was made from: a gap-only
+ * threat missing from the sheet, a row for a threat that is not gap-only, or a kind or
+ * visibility that no longer matches. The visible column is checked against the model's own
+ * confidence, not trusted, so the visible-only precision cannot drift from the dashboard.
+ */
+export function gapSheetProblems(labels: readonly GapLabeled[], model: ThreatModel): string[] {
+  const expected = new Map(gapSheetRows(model).map((r) => [r.threatId, r]));
+  const problems: string[] = [];
+  const inSheet = new Set(labels.map((l) => l.threatId));
+  for (const id of expected.keys()) if (!inSheet.has(id)) problems.push(`${id} cites only gaps but is not in the sheet`);
+  for (const label of labels) {
+    const row = expected.get(label.threatId);
+    if (!row) {
+      problems.push(`${label.threatId} is not a gap-only threat of this result`);
+      continue;
+    }
+    if (row.gapKinds.join(";") !== label.gapKinds.join(";")) problems.push(`${label.threatId}: gapKinds differ from the result (${row.gapKinds.join(";")})`);
+    if (row.visible !== label.visible) problems.push(`${label.threatId}: visible is ${label.visible ? "y" : "n"} but the result says ${row.visible ? "y" : "n"}`);
+  }
+  return problems;
+}
+
+export type GapPrecision = {
+  correct: number;
+  wrong: number;
+  /** correct + wrong: every row is labelled, so this is the number of rows. */
+  n: number;
+  /** correct / n; null when there are no rows. */
+  precision: number | null;
+};
+export type GapKindTally = { kind: string; wrong: number; total: number };
+export type GapMetrics = { overall: GapPrecision; visible: GapPrecision; wrongByKind: GapKindTally[] };
+
+function precisionOf(labels: readonly GapLabeled[]): GapPrecision {
+  const correct = labels.filter((l) => l.label === "predicted_correct").length;
+  const n = labels.length;
+  return { correct, wrong: n - correct, n, precision: ratio(correct, n) };
+}
+
+/**
+ * gap_precision = predicted_correct / (predicted_correct + predicted_wrong), over every row
+ * and over the visible rows only. predicted_wrong is tallied by gap kind; a threat that
+ * cites several kinds counts once under each, so the kind tallies can exceed the row count.
+ */
+export function computeGapMetrics(labels: readonly GapLabeled[]): GapMetrics {
+  const kinds = new Map<string, GapKindTally>();
+  for (const label of labels) {
+    for (const kind of label.gapKinds) {
+      const tally = kinds.get(kind) ?? { kind, wrong: 0, total: 0 };
+      tally.total += 1;
+      if (label.label === "predicted_wrong") tally.wrong += 1;
+      kinds.set(kind, tally);
+    }
+  }
+  return {
+    overall: precisionOf(labels),
+    visible: precisionOf(labels.filter((l) => l.visible)),
+    wrongByKind: [...kinds.values()].sort((a, b) => b.wrong - a.wrong || a.kind.localeCompare(b.kind)),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Recall by class (from the expected file)
+// ---------------------------------------------------------------------------
+
+export type ClassRow = { cls: string; expected: number; found: number; missed: number; missedIds: string[] };
+
+/**
+ * The classes an answer-key item belongs to, from its owasp2013 note: "A2/A3/A5" is three,
+ * a trailing parenthetical is a note ("SSRF (tutorial ssrf.html)" is "SSRF"), and an item
+ * with no note is "unclassified".
+ */
+export function classesOf(owasp2013: string | undefined): string[] {
+  const parts = (owasp2013 ?? "")
+    .replace(/\s*\(.*\)\s*$/, "")
+    .split("/")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  return parts.length > 0 ? parts : ["unclassified"];
+}
+
+/** A1..A10 in numeric order, then any other class alphabetically. */
+function classOrder(cls: string): [number, number, string] {
+  const owasp = /^A(\d+)$/.exec(cls);
+  return owasp ? [0, Number(owasp[1]), cls] : [1, 0, cls];
+}
+
+/**
+ * Found and missed per class. `foundIds` must be the scorer's recalled set
+ * (RepoMetrics.matched, built by recalledIds), so the table can never disagree with the
+ * recall figure. An item in several classes counts in each.
+ */
+export function recallByClass(expected: ExpectedFile, foundIds: ReadonlySet<string>): ClassRow[] {
+  const rows = new Map<string, ClassRow>();
+  for (const threat of expected.expectedThreats) {
+    for (const cls of classesOf(threat.owasp2013)) {
+      const row = rows.get(cls) ?? { cls, expected: 0, found: 0, missed: 0, missedIds: [] };
+      row.expected += 1;
+      if (foundIds.has(threat.id)) row.found += 1;
+      else {
+        row.missed += 1;
+        row.missedIds.push(threat.id);
+      }
+      rows.set(cls, row);
+    }
+  }
+  return [...rows.values()].sort((a, b) => {
+    const [ag, an, as] = classOrder(a.cls);
+    const [bg, bn, bs] = classOrder(b.cls);
+    return ag - bg || an - bn || as.localeCompare(bs);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Second labeler: sampling and agreement
+// ---------------------------------------------------------------------------
+
+export type Agreement = {
+  n: number;
+  agreed: number;
+  /** agreed / n; null when n is 0. */
+  agreement: number | null;
+  /** Cohen's kappa; null when n is 0 or chance agreement is already 1 (nobody varied). */
+  kappa: number | null;
+};
+
+/** Simple agreement and Cohen's kappa over paired categorical labels. */
+export function agreementOf(pairs: readonly (readonly [string, string])[]): Agreement {
+  const n = pairs.length;
+  const agreed = pairs.filter(([a, b]) => a === b).length;
+  const first = new Map<string, number>();
+  const second = new Map<string, number>();
+  for (const [a, b] of pairs) {
+    first.set(a, (first.get(a) ?? 0) + 1);
+    second.set(b, (second.get(b) ?? 0) + 1);
+  }
+  let chance = 0; // sum over categories of count_a * count_b, over n*n
+  for (const [category, count] of first) chance += count * (second.get(category) ?? 0);
+  const kappa = n === 0 || chance === n * n ? null : (agreed / n - chance / (n * n)) / (1 - chance / (n * n));
+  return { n, agreed, agreement: ratio(agreed, n), kappa };
+}
+
+export type LabelerComparison = {
+  n: number;
+  /** supported (y/n): the label the unsupported rate and the sample are built on. */
+  supported: Agreement;
+  /**
+   * False when the second sheet's matchesExpected column is entirely blank, meaning that
+   * dimension was not labelled (the labeller never saw the answer key). matchesAny and
+   * matchesExact are then null: a blank must not be read as "matches nothing".
+   */
+  matchesLabelled: boolean;
+  /** Whether the row matches any expected item, or none; null when not labelled. */
+  matchesAny: Agreement | null;
+  /** Exact match of the whole matchesExpected set; simple agreement only; null when not labelled. */
+  matchesExact: Agreement | null;
+  /** Exact match of the evidenceCorrect cell (correct/total); simple agreement only. */
+  evidence: Agreement;
+  /** Threat ids whose supported label differs, for adjudication. */
+  supportedDisagreements: string[];
+};
+
+/** Problems that stop a second sheet being compared with the primary one. */
+export function secondSheetProblems(primary: readonly LabeledThreat[], second: readonly LabeledThreat[]): string[] {
+  const known = new Set(primary.map((l) => l.threatId));
+  const problems = second.filter((l) => !known.has(l.threatId)).map((l) => `${l.threatId} is not a threat in the primary sheet`);
+  if (second.length === 0) problems.push("the second sheet has no rows");
+  return problems;
+}
+
+/** A second labeller's cell meaning "this threat matches no expected item", as opposed to a blank. */
+export const NO_MATCH_MARKER = "none";
+
+export type SecondSheet = {
+  labels: LabeledThreat[];
+  /** False when matchesExpected is blank on every row: not labelled, not "matches nothing". */
+  matchesLabelled: boolean;
+};
+
+/**
+ * Reads a second labeller's sheet. It is parseLabels with one difference in how the
+ * matchesExpected column is read, because a second labeller may never have opened the answer
+ * key and a blank cell must not silently mean "matches nothing":
+ *  - blank on every row: that dimension was not labelled (matchesLabelled false);
+ *  - filled on every row: labelled, and "none" marks a row that matches no expected item;
+ *  - filled on some rows and blank on others: refused, listing the blank rows.
+ * Every other column, and every other problem, is handled exactly as parseLabels does. The
+ * primary sheet is unaffected: there a blank cell still means "matches nothing".
+ */
+export function parseSecondLabels(csvText: string, expectedIds: ReadonlySet<string>): SecondSheet {
+  const rows = parseCsv(csvText);
+  const header = rows[0]?.map((h) => h.trim()) ?? [];
+  const idCol = header.indexOf("threatId");
+  const matchCol = header.indexOf("matchesExpected");
+  if (rows.length < 2 || idCol === -1 || matchCol === -1) {
+    // Missing columns and an empty sheet get parseLabels' own message.
+    return { labels: parseLabels(csvText, expectedIds), matchesLabelled: true };
+  }
+  const isBlank = (row: string[]) => (row[matchCol] ?? "").trim() === "";
+  const data = rows.slice(1);
+  const blank = data.filter(isBlank);
+  const matchesLabelled = blank.length < data.length;
+
+  if (matchesLabelled && blank.length > 0) {
+    const ids = blank.map((row) => (row[idCol] ?? "").trim() || "no threatId");
+    throw new Error(
+      `second sheet is not fully labeled: matchesExpected is filled on ${data.length - blank.length} of ${data.length} rows and blank on ${ids.join(", ")}. ` +
+        `Fill every row (write "${NO_MATCH_MARKER}" for a threat that matches no expected item) or leave the whole column blank.`,
+    );
+  }
+  if (!matchesLabelled) return { labels: parseLabels(csvText, expectedIds), matchesLabelled: false };
+
+  const explicit = data.map((row) => row.map((cell, i) => (i === matchCol && cell.trim().toLowerCase() === NO_MATCH_MARKER ? "" : cell)));
+  return { labels: parseLabels(toCsv([rows[0], ...explicit]), expectedIds), matchesLabelled: true };
+}
+
+/**
+ * Compares a second person's labels with the primary ones, on the threats both labelled.
+ * With `matchesLabelled` false the match dimensions are left out (null), not scored as
+ * agreement or disagreement; supported and evidenceCorrect are compared as usual.
+ */
+export function compareLabelers(
+  primary: readonly LabeledThreat[],
+  second: readonly LabeledThreat[],
+  { matchesLabelled = true }: { matchesLabelled?: boolean } = {},
+): LabelerComparison {
+  const byId = new Map(primary.map((l) => [l.threatId, l]));
+  const pairs = second.flatMap((s) => {
+    const p = byId.get(s.threatId);
+    return p ? [{ p, s }] : [];
+  });
+  const set = (l: LabeledThreat) => [...l.matches].sort().join(";");
+  const yn = (l: LabeledThreat) => (l.supported ? "y" : "n");
+  const cell = (l: LabeledThreat) => `${l.evidenceCorrect}/${l.evidenceTotal}`;
+  return {
+    n: pairs.length,
+    supported: agreementOf(pairs.map(({ p, s }) => [yn(p), yn(s)])),
+    matchesLabelled,
+    matchesAny: matchesLabelled
+      ? agreementOf(pairs.map(({ p, s }) => [p.matches.length > 0 ? "match" : "none", s.matches.length > 0 ? "match" : "none"]))
+      : null,
+    matchesExact: matchesLabelled ? { ...agreementOf(pairs.map(({ p, s }) => [set(p), set(s)])), kappa: null } : null,
+    evidence: { ...agreementOf(pairs.map(({ p, s }) => [cell(p), cell(s)])), kappa: null },
+    supportedDisagreements: pairs.filter(({ p, s }) => p.supported !== s.supported).map(({ p }) => p.threatId),
+  };
+}
+
+export const SECOND_SAMPLE_SIZE = 20;
+/** Fixed, so the same primary sheet always yields the same sample. */
+export const SECOND_SAMPLE_SEED = 20260925;
+
+/** mulberry32: a small seeded generator, so a sample does not depend on Math.random. */
+export function seededRandom(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** The label values a sample is stratified on: supported (y/n) crossed with matches-an-expected-item. */
+export function strataKey(label: LabeledThreat): string {
+  return `${label.supported ? "supported" : "unsupported"}/${label.matches.length > 0 ? "match" : "nomatch"}`;
+}
+
+/**
+ * How many of `size` each stratum gets: proportional to its share, at least one each so a
+ * rare stratum is still checked, and exactly `size` in total (largest remainder, ties broken
+ * by stratum name). Throws when there are more strata than `size`.
+ */
+export function allocateStrata(counts: ReadonlyMap<string, number>, size: number): Map<string, number> {
+  const keys = [...counts.keys()].sort();
+  const total = keys.reduce((sum, key) => sum + (counts.get(key) as number), 0);
+  if (size > total) throw new Error(`cannot sample ${size} from ${total} rows`);
+  if (size < keys.length) throw new Error(`cannot sample ${size}: there are ${keys.length} strata`);
+  const ideal = new Map(keys.map((key) => [key, (size * (counts.get(key) as number)) / total]));
+  const quota = new Map(keys.map((key) => [key, Math.min(counts.get(key) as number, Math.max(1, Math.floor(ideal.get(key) as number)))]));
+  const sum = () => keys.reduce((s, key) => s + (quota.get(key) as number), 0);
+  while (sum() < size) {
+    const key = keys
+      .filter((k) => (quota.get(k) as number) < (counts.get(k) as number))
+      .sort((a, b) => (ideal.get(b) as number) - (quota.get(b) as number) - ((ideal.get(a) as number) - (quota.get(a) as number)) || a.localeCompare(b))[0];
+    quota.set(key, (quota.get(key) as number) + 1);
+  }
+  while (sum() > size) {
+    const key = keys
+      .filter((k) => (quota.get(k) as number) > 1)
+      .sort((a, b) => (quota.get(b) as number) - (ideal.get(b) as number) - ((quota.get(a) as number) - (ideal.get(a) as number)) || a.localeCompare(b))[0];
+    quota.set(key, (quota.get(key) as number) - 1);
+  }
+  return quota;
+}
+
+const byThreatNumber = (a: string, b: string): number => a.localeCompare(b, "en", { numeric: true });
+
+/** `size` threat ids, stratified on strataKey and drawn with a seeded shuffle, in threat-id order. */
+export function stratifiedSample(labels: readonly LabeledThreat[], size: number, seed: number): string[] {
+  const groups = new Map<string, string[]>();
+  for (const label of labels) groups.set(strataKey(label), [...(groups.get(strataKey(label)) ?? []), label.threatId]);
+  const quota = allocateStrata(new Map([...groups].map(([key, ids]) => [key, ids.length])), size);
+  const random = seededRandom(seed);
+  const picked: string[] = [];
+  for (const key of [...groups.keys()].sort()) {
+    const ids = [...(groups.get(key) as string[])].sort(byThreatNumber);
+    for (let i = ids.length - 1; i > 0; i--) {
+      const j = Math.floor(random() * (i + 1));
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+    }
+    picked.push(...ids.slice(0, quota.get(key) as number));
+  }
+  return picked.sort(byThreatNumber);
+}
+
+/** The columns a person fills in by hand: the labels and the notes. */
+const HAND_COLUMNS: readonly LabelColumn[] = ["matchesExpected", "supported", "evidenceCorrect", "notes"];
+
+/**
+ * A copy of the primary sheet restricted to `ids`, with every hand-filled cell emptied so the
+ * second labeler sees nothing the first decided. The columns stay, so the filled copy parses
+ * with parseLabels.
+ */
+export function blankSecondSheet(primaryCsv: string, ids: readonly string[]): string {
+  const rows = parseCsv(primaryCsv);
+  const header = rows[0].map((h) => h.trim());
+  const idCol = header.indexOf("threatId");
+  const blank = new Set(HAND_COLUMNS.map((c) => header.indexOf(c)));
+  const wanted = new Set(ids);
+  const kept = rows.slice(1).filter((row) => wanted.has((row[idCol] ?? "").trim()));
+  return toCsv([rows[0], ...kept.map((row) => rows[0].map((_, i) => (blank.has(i) ? "" : (row[i] ?? ""))))]);
+}
+
+// ---------------------------------------------------------------------------
+// Golden demo (scripts/export-golden-demo.ts)
+// ---------------------------------------------------------------------------
+
+/** How many dashboard-visible threats rest on evidence and how many on assumptions. */
+export function visibleBases(model: ThreatModel): { evidenceBacked: number; assumptionDependent: number } {
+  const visible = model.threats.filter((t) => !isHidden(t.confidence));
+  return {
+    evidenceBacked: visible.filter((t) => t.basis === "evidence_backed").length,
+    assumptionDependent: visible.filter((t) => t.basis === "assumption_dependent").length,
+  };
+}
+
+/** Why a model is not fit to be the golden demo; empty when it is. */
+export function goldenProblems(model: ThreatModel): string[] {
+  const { evidenceBacked, assumptionDependent } = visibleBases(model);
+  return [
+    ...(evidenceBacked === 0 ? ["no visible evidence_backed threat"] : []),
+    ...(assumptionDependent === 0 ? ["no visible assumption_dependent threat"] : []),
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// docs/evaluation.md: the extra sections
+// ---------------------------------------------------------------------------
+
+export type RepoExtras = { classes?: ClassRow[]; gaps?: GapMetrics; labelers?: LabelerComparison };
+
+const rate = (value: number | null): string => pct(value);
+const kappaText = (value: number | null): string => (value === null ? "n/a (no variation)" : value.toFixed(2));
+
+function agreementLine(name: string, a: Agreement, withKappa: boolean): string {
+  return `- **${name}**: ${a.agreed}/${a.n} agree (${rate(a.agreement)})${withKappa ? `, Cohen's kappa ${kappaText(a.kappa)}` : ""}`;
+}
+
+/** The per-class, gap-precision and second-labeler sections for one repo; empty when it has none. */
+export function renderExtras(repo: string, extras: RepoExtras | undefined): string[] {
+  if (!extras) return [];
+  const out: string[] = [];
+  if (extras.classes && extras.classes.length > 0) {
+    out.push(
+      `## Recall by class: ${repo}`,
+      "",
+      "Classes come from the answer key's `owasp2013` note; an item in several classes counts in each. Found uses the same rule as the recall column above: a supported row must match the item.",
+      "",
+      "| Class | Expected | Found | Missed | Missed ids |",
+      "| --- | ---: | ---: | ---: | --- |",
+      ...extras.classes.map((c) => `| ${c.cls} | ${c.expected} | ${c.found} | ${c.missed} | ${c.missedIds.join(", ") || "none"} |`),
+      "",
+    );
+  }
+  if (extras.gaps) {
+    const { overall, visible, wrongByKind } = extras.gaps;
+    const row = (label: string, g: GapPrecision) => `| ${label} | ${g.n} | ${g.correct} | ${g.wrong} | ${rate(g.precision)} |`;
+    out.push(
+      `## Gap precision: ${repo}`,
+      "",
+      "Threats whose cited evidence is only control gaps, labelled by a person as predicted_correct (the control really is missing) or predicted_wrong. **gap_precision** = predicted_correct / (predicted_correct + predicted_wrong). Visible means confidence at or above the 0.25 dashboard cutoff.",
+      "",
+      "| Threats | n | predicted_correct | predicted_wrong | Gap precision |",
+      "| --- | ---: | ---: | ---: | ---: |",
+      row("All", overall),
+      row("Visible only", visible),
+      "",
+      "predicted_wrong by gap kind (a threat citing several kinds counts under each):",
+      "",
+      "| Gap kind | predicted_wrong | Threats |",
+      "| --- | ---: | ---: |",
+      ...wrongByKind.map((k) => `| ${k.kind} | ${k.wrong} | ${k.total} |`),
+      "",
+    );
+  }
+  if (extras.labelers) {
+    const l = extras.labelers;
+    out.push(
+      `## Second labeler agreement: ${repo}`,
+      "",
+      `A second labeller labelled ${l.n} threats from the primary sheet without seeing its labels. Agreement is the share of threats with the same label.`,
+      "",
+      agreementLine("supported (y/n)", l.supported, true),
+      ...(l.matchesAny && l.matchesExact
+        ? [
+            agreementLine("matches any expected item (yes/no)", l.matchesAny, true),
+            agreementLine("matchesExpected, exact set", l.matchesExact, false),
+          ]
+        : ["- **matchesExpected**: not labelled by the second labeller (the column is blank on every row, not \"matches nothing\"); match agreement and kappa are omitted"]),
+      agreementLine("evidenceCorrect, exact cell", l.evidence, false),
+      `- **Supported disagreements**: ${l.supportedDisagreements.join(", ") || "none"}`,
+      "",
+    );
+  }
+  return out;
 }
