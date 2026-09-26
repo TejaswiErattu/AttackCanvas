@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 /**
- * The landing page: submission is real, every analysis level 0-4 is selectable, the
+ * The landing page: submission is real, levels 0-3 are selectable and 4 is refused with a message, the
  * server's own error copy is shown, and the hero graphic is labelled as an illustration.
  *
  * `fetch` is stubbed and next/navigation's router is mocked, so nothing leaves the test.
@@ -61,16 +61,24 @@ describe("HomePage", () => {
     render(<HomePage />);
 
     typeUrl("https://github.com/acme/acme-notes");
-    fireEvent.click(screen.getByLabelText(/Exhaustive/));
+    fireEvent.click(screen.getByLabelText(/Deep/));
     fireEvent.click(screen.getByRole("button", { name: "Analyze repository" }));
 
     await waitFor(() => expect(push).toHaveBeenCalledWith("/analyze/abc-123"));
     expect(calls).toEqual([
       {
         url: "/api/analyze",
-        body: { repoUrl: "https://github.com/acme/acme-notes", analysisLevel: 4 },
+        body: { repoUrl: "https://github.com/acme/acme-notes", analysisLevel: 3 },
       },
     ]);
+  });
+
+  it("refuses level 4 with a message and keeps the previous level selected", () => {
+    render(<HomePage />);
+    fireEvent.click(screen.getByLabelText(/Exhaustive/));
+    expect(screen.getByRole("alert").textContent).toMatch(/pick a level from 0 to 3/);
+    expect((screen.getByLabelText(/Exhaustive/) as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText(/Standard/) as HTMLInputElement).checked).toBe(true);
   });
 
   it("can submit level 0", async () => {

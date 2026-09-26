@@ -14,6 +14,20 @@ export const LEVEL_COST_RANGES: Readonly<Record<AnalysisLevel, { low: number; hi
   4: { low: 4, high: 6 },
 };
 
+/**
+ * Levels switched off on the hosted deployment: the most expensive one, so a shared,
+ * self-funded demo cannot be run up by testers. The picker refuses it with this message
+ * and POST /api/analyze enforces it, so a direct API call cannot get around the page.
+ */
+export const LOCKED_LEVELS: readonly AnalysisLevel[] = [4];
+
+export const LOCKED_LEVEL_MESSAGE =
+  "Level 4 is switched off for this demo: it costs about $4 to $6 a run, and this is a shared, self-funded deployment. Please pick a level from 0 to 3. Thank you!";
+
+export function isLevelLocked(level: number): boolean {
+  return (LOCKED_LEVELS as readonly number[]).includes(level);
+}
+
 export function formatCostRange(level: AnalysisLevel): string {
   const { low, high } = LEVEL_COST_RANGES[level];
   const usd = (n: number) => `$${Number.isInteger(n) ? String(n) : n.toFixed(2)}`;

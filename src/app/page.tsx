@@ -19,7 +19,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ANALYSIS_LEVEL_LABELS } from "@/shared/schema";
-import { formatCostRange } from "@/shared/levelCost";
+import { formatCostRange, isLevelLocked, LOCKED_LEVEL_MESSAGE } from "@/shared/levelCost";
 import type { AnalysisError } from "@/shared/viewModel";
 import { readApiError } from "@/client/useAnalysis";
 import ErrorState from "@/components/ErrorState";
@@ -34,7 +34,7 @@ const LEVEL_HINTS: Record<number, string> = {
   1: "Core entry points and obvious controls.",
   2: "Balanced depth; a good default.",
   3: "Wider file coverage and more threat detail.",
-  4: "Broadest coverage; slowest and most expensive.",
+  4: "Broadest coverage; slowest and most expensive. Switched off in this demo.",
 };
 
 /** What the pipeline actually does, in order. Descriptive copy, not data. */
@@ -61,6 +61,7 @@ export default function HomePage() {
   const router = useRouter();
   const [repoUrl, setRepoUrl] = useState("");
   const [analysisLevel, setAnalysisLevel] = useState<number>(2);
+  const [lockedNotice, setLockedNotice] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<AnalysisError | null>(null);
 
@@ -186,7 +187,14 @@ export default function HomePage() {
                           name="analysisLevel"
                           value={level}
                           checked={analysisLevel === level}
-                          onChange={() => setAnalysisLevel(level)}
+                          onChange={() => {
+                            if (isLevelLocked(level)) {
+                              setLockedNotice(true);
+                              return;
+                            }
+                            setLockedNotice(false);
+                            setAnalysisLevel(level);
+                          }}
                           aria-describedby="analysis-level-hint"
                           className="peer sr-only"
                         />
@@ -209,6 +217,11 @@ export default function HomePage() {
                 <p id="analysis-level-hint" className="mt-2 text-xs text-subtle" aria-live="polite">
                   {LEVEL_HINTS[analysisLevel] ?? ""}
                 </p>
+                {lockedNotice ? (
+                  <p role="alert" className="mt-2 text-xs font-medium text-fg">
+                    {LOCKED_LEVEL_MESSAGE}
+                  </p>
+                ) : null}
                 <p className="mt-1 text-xs text-subtle">
                   Costs are API usage estimates; larger repositories cost more.
                 </p>

@@ -241,8 +241,18 @@ describe("POST /api/analyze", () => {
     expect(createAnalysis).toHaveBeenCalledTimes(2);
   });
 
-  it("passes every valid analysisLevel (0-4) through unchanged", async () => {
-    for (const level of [0, 1, 2, 3, 4] as const) {
+  it("refuses level 4 with the friendly message, before any job, cap or rate-limit spend", async () => {
+    const response = await POST(postRequest({ repoUrl: VALID_URL, analysisLevel: 4 }, "7.7.7.7"));
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error.code).toBe("INVALID_REQUEST");
+    expect(body.error.message).toMatch(/pick a level from 0 to 3/);
+    expect(createAnalysis).not.toHaveBeenCalled();
+    expect(runAnalysis).not.toHaveBeenCalled();
+  });
+
+  it("passes every unlocked analysisLevel (0-3) through unchanged", async () => {
+    for (const level of [0, 1, 2, 3] as const) {
       vi.mocked(createAnalysis).mockReturnValue({ id: `job-${level}`, stage: "queued" } as never);
       vi.mocked(getAnalysis).mockReturnValue({ id: `job-${level}`, stage: "loading_repo" } as never);
 

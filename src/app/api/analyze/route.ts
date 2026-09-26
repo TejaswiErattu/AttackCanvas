@@ -38,6 +38,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { AnalysisRequestSchema } from "@/shared/schema";
+import { isLevelLocked, LOCKED_LEVEL_MESSAGE } from "@/shared/levelCost";
 import { parseGitHubUrl } from "@/server/ingest/urlParser";
 import {
   countActiveAnalyses,
@@ -147,6 +148,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   const isDemo = isGoldenDemo(parsedUrl);
+
+  // Locked levels (the costliest one) are refused before anything that counts or spends.
+  // The golden demo is exempt: it serves a canned result and calls no model.
+  if (!isDemo && isLevelLocked(analysisLevel)) {
+    return errorResponse(400, "INVALID_REQUEST", LOCKED_LEVEL_MESSAGE);
+  }
 
   // Optional owner allowlist (ATTACKCANVAS_ALLOWED_OWNERS). Checked right after the URL is
   // understood and before anything that counts or spends: a refused owner takes no job
