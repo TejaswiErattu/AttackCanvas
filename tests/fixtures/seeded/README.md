@@ -8,7 +8,7 @@ belong to anyone.
 | Repo | Stack | Files |
 |---|---|---|
 | `seeded-express` | Express 5, express-session in MongoDB (connect-mongo), helmet, cors, zod | 15 |
-| `seeded-next` | Next.js 15 App Router API routes, JWT (jsonwebtoken), pg, bcryptjs, pino, @upstash/ratelimit, zod | 19 |
+| `seeded-next` | Next.js 15 App Router API routes, JWT (jsonwebtoken), pg, bcryptjs, pino, @upstash/ratelimit, zod | 20 |
 | `seeded-monorepo` | pnpm workspace: `packages/api` (Express 4, cookie-session, pg) and `packages/auth`, imported through its `src/index.ts` barrel | 22 |
 
 The file counts include `expected.yaml`. They are read through `loadFixtureRepo(…, root:
