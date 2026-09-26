@@ -1387,6 +1387,14 @@ const LOGGING_DEPS = [
   "tslog",
   "npmlog",
   "dd-trace",
+  "pino-http",
+  "express-winston",
+  "koa-logger",
+  "koa-pino-logger",
+  "log4js",
+  "applicationinsights",
+  "newrelic",
+  "posthog-node",
 ];
 const LOGGING_PREFIX = [
   "@sentry/",
@@ -1394,7 +1402,20 @@ const LOGGING_PREFIX = [
   "@logtail/",
   "@datadog/",
   "@axiomhq/",
+  "@google-cloud/logging",
+  "@aws-sdk/client-cloudwatch-logs",
+  "@newrelic/",
+  "@honeycombio/",
 ];
+
+/** `logger.info(...)`, `this.logger.log(...)` (NestJS), `log.warn(...)`. */
+const LOGGER_METHOD_CALL =
+  /\b(?:logger|log)\s*\.\s*(?:info|warn|error|debug|fatal|trace|log|verbose)\s*\(/;
+/** A logging or audit helper called by name in the sensitive handler: `audit(req, "login")`. */
+const LOG_HELPER_CALL =
+  /\b(?:log|audit|logEvent|auditLog|logAudit|recordEvent|track|logger)\w*\s*\(/;
+/** Logging middleware applied with `.use()`: `app.use(requestLogger)`, `app.use(morgan("combined"))`. */
+const LOGGING_MIDDLEWARE = /log|morgan|audit|pino|winston/i;
 
 function loggingMissing(ctx: Ctx): Finding[] {
   const sensitive = ctx.routes.filter((route) => {
@@ -1406,14 +1427,14 @@ function loggingMissing(ctx: Ctx): Finding[] {
 
   if (hasAny(ctx.deps, LOGGING_DEPS) || hasPrefix(ctx.deps, LOGGING_PREFIX))
     return [];
+  if (anySource(ctx, LOGGER_METHOD_CALL)) return [];
+  if (ctx.useCalls.some((call) => call.names.some((name) => LOGGING_MIDDLEWARE.test(name))))
+    return [];
   if (
-    anySource(
-      ctx,
-      /\b(?:logger|log)\s*\.\s*(?:info|warn|error|debug|fatal|trace)\s*\(/,
+    sensitive.some(
+      (r) => /\bconsole\s*\.\s*\w+\s*\(/.test(ctx.body(r)) || LOG_HELPER_CALL.test(ctx.body(r)),
     )
   )
-    return [];
-  if (sensitive.some((r) => /\bconsole\s*\.\s*\w+\s*\(/.test(ctx.body(r))))
     return [];
 
   return [

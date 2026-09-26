@@ -1185,3 +1185,31 @@ describe("adversarial: password_storage_weak", () => {
     expect(kindsOf(expressRepo(login, { pg: "^8.0.0" }))).toContain("password_storage_weak");
   });
 });
+
+describe("adversarial: logging_missing", () => {
+  it.each([
+    ["a NestJS-style this.logger.log()", `app.post("/login", (req, res) => { this.logger.log("login"); res.end(); });`],
+    ["an audit helper called in the handler", `const { audit } = require("./audit");\napp.post("/login", (req, res) => { audit(req, "login"); res.end(); });`],
+    ["a re-exported log() function", `const { log } = require("@/lib/logger");\napp.post("/login", (req, res) => { log("login attempt"); res.end(); });`],
+  ])("9a: %s is logging", (_name, body) => {
+    expect(kindsOf(expressRepo(body))).not.toContain("logging_missing");
+  });
+
+  it.each([
+    ["requestLogger", `const requestLogger = require("./logging");\napp.use(requestLogger);`],
+    ["morgan", `const morgan = require("morgan");\napp.use(morgan("combined"));`],
+    ["pinoHttp", `const pinoHttp = require("pino-http");\napp.use(pinoHttp());`],
+  ])("9b: %s applied with .use() is logging", (_name, setup) => {
+    const repo = expressRepo(`${setup}\napp.post("/login", ${HANDLER});`);
+    expect(kindsOf(repo)).not.toContain("logging_missing");
+  });
+
+  it("9c: pino-http and cloud logging SDKs are logging dependencies", () => {
+    expect(kindsOf(expressRepo(`app.post("/login", ${HANDLER});`, { "pino-http": "^10.0.0" }))).not.toContain("logging_missing");
+    expect(kindsOf(expressRepo(`app.post("/login", ${HANDLER});`, { "@google-cloud/logging": "^11.0.0" }))).not.toContain("logging_missing");
+  });
+
+  it("still reports a login route with no logging anywhere", () => {
+    expect(kindsOf(CASES[8].absent)).toContain("logging_missing");
+  });
+});
