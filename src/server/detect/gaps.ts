@@ -1542,38 +1542,66 @@ const WILDCARD_ORIGIN =
   /\borigin\s*:\s*(?:(['"`])\*\1|true\b|req(?:uest)?\s*\.\s*headers\s*\.\s*origin\b)/;
 const WILDCARD_HEADER = /Access-Control-Allow-Origin['"]?\s*[,:]\s*['"]\*['"]/;
 
+/** A reflected origin: any caller's origin is echoed back, which browsers allow with credentials. */
+const REFLECTED_ORIGIN = /\borigin\s*:\s*(?:true\b|req(?:uest)?\s*\.\s*headers\s*\.\s*origin\b)/;
+/** Credentials allowed alongside: the combination that exposes a user's session cross-origin. */
+const CORS_CREDENTIALS = /\bcredentials\s*:\s*true\b|Access-Control-Allow-Credentials/i;
+
+/**
+ * A `cors` defined in the file itself (`function cors(options = { origin: ALLOWED })`,
+ * `const cors = (opts) => …`) is not the cors package: its defaults are its own and
+ * nothing here can read them, so its bare call is not reported. A `cors` bound by
+ * import or require, or never declared (mounted from a shared module), still is.
+ */
+const LOCAL_CORS_DEFINITION =
+  /\bfunction\s+cors\s*\(|\b(?:const|let|var)\s+cors\s*=\s*(?:async\s+)?(?:function\b|\(|[A-Za-z_$][\w$]*\s*=>)/;
+
+function definesCorsLocally(ctx: Ctx, file: DetectorInput): boolean {
+  return LOCAL_CORS_DEFINITION.test(ctx.code(file));
+}
+
 function corsInFile(ctx: Ctx, file: DetectorInput): Finding[] {
   const masked = ctx.code(file);
   const starts = lineStarts(file.content);
-  const lines = new Map<number, string>();
+  const lines = new Map<number, { how: string; reflected: boolean }>();
 
-  for (const match of masked.matchAll(/\bcors\s*\(/g)) {
-    const open = (match.index ?? 0) + match[0].length;
-    const { args, end } = splitCallArguments(file.content, open);
-    const bare = args.length === 0;
-    const wildcard = WILDCARD_ORIGIN.test(file.content.slice(open, end));
-    if (bare || wildcard)
-      lines.set(
-        lineAt(starts, match.index ?? 0),
-        bare ? "bare cors call" : "wildcard origin",
-      );
+  if (!definesCorsLocally(ctx, file)) {
+    for (const match of masked.matchAll(/\bcors\s*\(/g)) {
+      const open = (match.index ?? 0) + match[0].length;
+      const { args, end } = splitCallArguments(file.content, open);
+      const bare = args.length === 0;
+      const call = file.content.slice(open, end);
+      const wildcard = WILDCARD_ORIGIN.test(call);
+      if (bare || wildcard)
+        lines.set(lineAt(starts, match.index ?? 0), {
+          how: bare ? "bare cors call" : "wildcard origin",
+          reflected: REFLECTED_ORIGIN.test(call),
+        });
+    }
   }
 
   const header = WILDCARD_HEADER.exec(ctx.uncommented(file));
   if (header)
-    lines.set(lineAt(starts, header.index), "wildcard allow-origin header");
+    lines.set(lineAt(starts, header.index), { how: "wildcard allow-origin header", reflected: false });
 
-  return [...lines].map(([line, how]) => ({
-    scope: "file" as const,
-    expectation:
-      "Cross-origin access should be limited to the origins that need it",
-    summary: `${file.path} allows any origin (${how})`,
-    file: file.path,
-    line,
-    basisFacts: [how],
-    certainty: 0.9,
-    evidenceKind: "code" as const,
-  }));
+  // A literal `*` cannot carry credentials (browsers refuse the pair), so on its own it
+  // exposes public data only; a reflected origin with credentials exposes the session.
+  const credentials = CORS_CREDENTIALS.test(ctx.uncommented(file));
+  return [...lines].map(([line, { how, reflected }]) => {
+    const withSession = reflected || credentials;
+    return {
+      scope: "file" as const,
+      expectation: withSession
+        ? "Cross-origin access should be limited to the origins that need it"
+        : "Cross-origin access should be limited to the origins that need it; a literal wildcard cannot carry credentials, so this exposes only what the endpoint serves to anyone",
+      summary: `${file.path} allows any origin (${how})`,
+      file: file.path,
+      line,
+      basisFacts: [how, ...(withSession ? ["credentials or reflected origin"] : ["no credentials"])],
+      certainty: withSession ? 0.9 : 0.5,
+      evidenceKind: "code" as const,
+    };
+  });
 }
 
 function corsPermissive(ctx: Ctx): Finding[] {

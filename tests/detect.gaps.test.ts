@@ -209,7 +209,8 @@ describe("detectGaps: certainty", () => {
     expect(certaintyOf(CASES[4].absent, "security_headers_missing")).toBe(0.9);
     expect(certaintyOf(CASES[5].absent, "input_validation_missing")).toBe(0.55);
     expect(certaintyOf(CASES[9].absent, "error_handling_gap")).toBe(0.5);
-    expect(certaintyOf(CASES[10].absent, "cors_permissive")).toBe(0.9);
+    // A bare cors() with no credentials exposes public data only (adversarial 11a).
+    expect(certaintyOf(CASES[10].absent, "cors_permissive")).toBe(0.5);
   });
 
   it("reports a missing lockfile at 0.5 and a postinstall script at 0.9", () => {
@@ -1244,5 +1245,42 @@ describe("adversarial: error_handling_gap", () => {
 
   it("still reports an unguarded await with no handler registered", () => {
     expect(kindsOf(CASES[9].absent)).toContain("error_handling_gap");
+  });
+});
+
+describe("adversarial: cors_permissive", () => {
+  const CORS = { cors: "^2.8.5" };
+
+  it("11a: a bare cors() with no credentials exposes public data only, at 0.5", () => {
+    const repo = expressRepo(`app.use("/public", cors());\napp.get("/public/feed", ${HANDLER});`, CORS);
+    const gap = gapsOf(repo).find((g) => g.kind === "cors_permissive");
+    expect(gap?.certainty).toBe(0.5);
+    expect(gap?.basisFacts).toContain("no credentials");
+  });
+
+  it("11a: a reflected origin, or a wildcard beside credentials: true, stays at 0.9", () => {
+    const reflected = expressRepo(`const cors = require("cors");\napp.use(cors({ origin: true }));`, CORS);
+    expect(certaintyOf(reflected, "cors_permissive")).toBe(0.9);
+    const withCredentials = expressRepo(
+      `const cors = require("cors");\napp.use(cors());\napp.use((req, res, next) => { res.set("Access-Control-Allow-Credentials", "true"); next(); });`,
+      CORS,
+    );
+    expect(certaintyOf(withCredentials, "cors_permissive")).toBe(0.9);
+  });
+
+  it("11b: a locally defined cors() with restrictive defaults is not the package", () => {
+    const repo = [
+      manifest({ express: "^4.0.0" }),
+      LOCKFILE,
+      expressApp(
+        `function cors(options = { origin: "https://app.example.com" }) { return (req, res, next) => next(); }\napp.use(cors());`,
+      ),
+    ];
+    expect(kindsOf(repo)).not.toContain("cors_permissive");
+  });
+
+  it("still reports the package's bare call and a wildcard header", () => {
+    expect(kindsOf(CASES[10].absent)).toContain("cors_permissive");
+    expect(kindsOf(expressRepo(`app.use((req, res, next) => { res.setHeader("Access-Control-Allow-Origin", "*"); next(); });`))).toContain("cors_permissive");
   });
 });
