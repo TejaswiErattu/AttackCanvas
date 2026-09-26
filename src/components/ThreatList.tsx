@@ -13,6 +13,7 @@
 import type { ThreatCardData } from "@/shared/viewModel";
 import type { HiddenReason, HiddenSummary } from "@/client/useAnalysis";
 import ThreatCard from "@/components/ThreatCard";
+import { threatKey } from "@/client/drift";
 import type { IssueRepo } from "@/client/issueBody";
 import { statusOf, type FindingStatus, type StatusMap } from "@/client/findingStatus";
 
@@ -27,6 +28,8 @@ type ThreatListProps = {
   statuses?: StatusMap;
   onStatusChange?: (id: string, status: FindingStatus) => void;
   repo?: IssueRepo;
+  /** Threat keys (threatKey in src/client/drift.ts) that are new since the last run. */
+  newKeys?: ReadonlySet<string>;
 };
 
 const REASON_TEXT: Record<HiddenReason, string> = {
@@ -67,6 +70,7 @@ export default function ThreatList({
   statuses = {},
   onStatusChange,
   repo,
+  newKeys,
 }: ThreatListProps) {
   const items = Array.isArray(threats) ? threats : [];
 
@@ -93,6 +97,7 @@ export default function ThreatList({
               status={statusOf(statuses, threat.id)}
               onStatusChange={onStatusChange}
               repo={repo}
+              isNew={newKeys?.has(threatKey(threat)) ?? false}
             />
           </li>
         ))}

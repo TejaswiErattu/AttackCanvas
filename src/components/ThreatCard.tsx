@@ -61,6 +61,8 @@ type ThreatCardProps = {
   onStatusChange?: (id: string, status: FindingStatus) => void;
   /** The analysed repository and ref, for the GitHub issue link. Omitted: no issue actions. */
   repo?: IssueRepo;
+  /** True when this threat was not in the previous run of the repository. */
+  isNew?: boolean;
 };
 
 function Chip({ children, title }: { children: React.ReactNode; title?: string }) {
@@ -87,6 +89,7 @@ export default function ThreatCard({
   status = "open",
   onStatusChange,
   repo,
+  isNew = false,
 }: ThreatCardProps) {
   const [copied, setCopied] = useState<"idle" | "copied" | "failed">("idle");
   const issue = repo ? buildIssue(threat, repo) : null;
@@ -136,6 +139,14 @@ export default function ThreatCard({
             {threat.confidence}% &middot;{" "}
             {CONFIDENCE_TEXT[threat.confidenceLabel] ?? threat.confidenceLabel}
           </span>
+          {isNew ? (
+            <span
+              data-testid={`new-badge-${threat.id}`}
+              className="rounded-full border border-mint bg-mint-deep px-2.5 py-0.5 text-[11px] font-semibold text-fg"
+            >
+              New
+            </span>
+          ) : null}
           {status !== "open" ? (
             <span
               data-testid={`status-badge-${threat.id}`}

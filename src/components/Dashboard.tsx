@@ -42,6 +42,13 @@ import {
   type FindingStatus,
   type StatusMap,
 } from "@/client/findingStatus";
+import {
+  diffThreatModels,
+  newThreatKeys,
+  recordRun,
+  threatKey,
+  type DriftModel,
+} from "@/client/drift";
 import type { BasisCounts, HiddenSummary } from "@/client/useAnalysis";
 import ArchitectureGraph from "@/components/ArchitectureGraph";
 import ArchitectureLegend from "@/components/ArchitectureLegend";
@@ -57,6 +64,7 @@ const EXPOSURE_DESCRIPTIONS: Record<Exposure, string> = {
 import SectionLabel from "@/components/SectionLabel";
 import FilterBar from "@/components/FilterBar";
 import SeveritySummary from "@/components/SeveritySummary";
+import SinceLastRun from "@/components/SinceLastRun";
 import ThreatCard from "@/components/ThreatCard";
 import ThreatList from "@/components/ThreatList";
 
@@ -107,6 +115,19 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
   const statusCounts = useMemo(
     () => summarise(threats.map((t) => t.id), statuses),
     [threats, statuses],
+  );
+
+  // The run before this one, read once this run is recorded. undefined until then, so the
+  // first render (which must match the server's) shows nothing; null means no earlier run.
+  const [prevRun, setPrevRun] = useState<DriftModel | null | undefined>(undefined);
+  useEffect(() => {
+    const name = splitFullName(view.repo?.fullName ?? "");
+    setPrevRun(name ? recordRun(safeLocalStorage(), name.owner, name.repo, view) : null);
+  }, [view]);
+  const drift = useMemo(() => (prevRun ? diffThreatModels(prevRun, view) : null), [prevRun, view]);
+  const newKeys = useMemo(
+    () => (prevRun ? newThreatKeys(prevRun, view) : new Set<string>()),
+    [prevRun, view],
   );
 
   const issueRepo = view.repo?.fullName && view.repo.ref
@@ -389,6 +410,8 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
         </div>
       </div>
 
+      {prevRun !== undefined ? <SinceLastRun drift={drift} /> : null}
+
       {view.fixNow?.length ? (
         <section aria-labelledby="fix-now-heading">
           <h2 id="fix-now-heading" className="font-display text-xl font-semibold text-fg">
@@ -411,6 +434,7 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
                   status={statuses[threat.id] ?? "open"}
                   onStatusChange={statusKey ? handleStatusChange : undefined}
                   repo={issueRepo}
+                  isNew={newKeys.has(threatKey(threat))}
                 />
               </li>
             ))}
@@ -440,6 +464,7 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
               statuses={statuses}
               onStatusChange={statusKey ? handleStatusChange : undefined}
               repo={issueRepo}
+              newKeys={newKeys}
             />
           </div>
         </div>
