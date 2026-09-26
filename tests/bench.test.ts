@@ -12,7 +12,7 @@
 import { describe, expect, it } from "vitest";
 import { runBench } from "../scripts/eval/benchLib";
 
-/** Measured 2026-09-25 at commit 67f52f4, detectors only: 15 TP, 1 FP, 0 FN, 3 skipped; 1 of 17 controls produced a gap. */
+/** Measured 2026-09-25 at commit 11cc13d (rerun at 1d3237a, unchanged), detectors only: 15 TP, 1 FP, 0 FN, 3 skipped; 1 of 17 controls produced a gap. */
 const BASELINE = {
   date: "2026-09-25",
   recall: 1,
