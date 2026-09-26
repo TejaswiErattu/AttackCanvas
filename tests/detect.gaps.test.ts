@@ -1414,3 +1414,10 @@ describe("adversarial: certainty lowerings", () => {
     expect(certaintyOf([manifest({ express: "^4.0.0" })], "supply_chain_integrity")).toBe(0.35);
   });
 });
+
+describe("adversarial: supply_chain_integrity lockfiles", () => {
+  it("12 (deno.lock): a Deno lockfile pins the tree", () => {
+    const repo = [manifest({ express: "^4.0.0" }), file("deno.lock", "{}")];
+    expect(kindsOf(repo)).not.toContain("supply_chain_integrity");
+  });
+});
