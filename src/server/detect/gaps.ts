@@ -658,20 +658,48 @@ const RATE_LIMIT_DEPS = [
   "@nestjs/throttler",
   "hono-rate-limiter",
   "limiter",
+  "express-brute",
+  "rate-limit-redis",
+  "koa2-ratelimit",
+  "elysia-rate-limit",
+];
+const RATE_LIMIT_PREFIXES = ["@hono-rate-limiter/"];
+
+/**
+ * Server-side OIDC handlers that own the login route and redirect it to a hosted
+ * provider. Narrower than delegatesAuth on purpose: a Next app on Clerk can sit beside an
+ * Express service with its own /login, and that one still needs a limiter.
+ */
+const LOGIN_DELEGATED_DEPS = [
+  "express-openid-connect",
+  "keycloak-connect",
+  "passport-auth0",
+  "passport-openidconnect",
+  "@clerk/express",
+  "supertokens-node",
 ];
 
+/** A limiter named for the mechanism, or for the behaviour it stops (a login lockout). */
 const RATE_LIMIT_USAGE =
-  /\brate[_-]?limit|\bthrottl(?:e|er|ing)\b|\bslowDown\b/i;
+  /\brate[_-]?limit|\bthrottl(?:e|er|ing)\b|\bslowDown\b|\bbrute[_-]?force|\block(?:out|Account)|\battempts?(?:Remaining|Left|Count)\b/i;
 
 function authRoutes(ctx: Ctx): Route[] {
   return ctx.routes.filter((route) => AUTH_PATH.test(route.normalizedPath));
 }
 
-/** Rate limiting applied at a gateway or platform is written in config, not code. */
+/** Reverse-proxy and platform configuration: the files a gateway-level control lives in. */
+const CONFIG_FILE = /\.(?:ya?ml|json|toml|conf)$|(?:^|\/)(?:Caddyfile|nginx\.conf|haproxy\.cfg)$/i;
+
+/**
+ * Rate limiting applied at a gateway or platform is written in config, not code: nginx
+ * `limit_req`, HAProxy `stick-table`, Caddy `rate_limit`, Kong `rate-limiting`.
+ */
+const CONFIG_RATE_LIMIT = /throttl|rate[_-]?limit|ratelimit|limit_req|limit_conn|stick-table/i;
+
 function configMentions(ctx: Ctx, pattern: RegExp): boolean {
   return ctx.files.some(
     (file) =>
-      /\.(?:ya?ml|json|toml|conf)$/i.test(file.path) &&
+      CONFIG_FILE.test(file.path) &&
       !isManifest(file.path) &&
       pattern.test(maskComments(file.content)),
   );
@@ -680,9 +708,11 @@ function configMentions(ctx: Ctx, pattern: RegExp): boolean {
 function rateLimitMissing(ctx: Ctx): Finding[] {
   const [route] = authRoutes(ctx);
   if (!route) return [];
-  if (hasAny(ctx.deps, RATE_LIMIT_DEPS)) return [];
+  // The login route is the identity provider's redirect: the brute-force target is theirs.
+  if (hasAny(ctx.deps, LOGIN_DELEGATED_DEPS)) return [];
+  if (hasAny(ctx.deps, RATE_LIMIT_DEPS) || hasPrefix(ctx.deps, RATE_LIMIT_PREFIXES)) return [];
   if (anySource(ctx, RATE_LIMIT_USAGE)) return [];
-  if (configMentions(ctx, /throttl|rate[_-]?limit/i)) return [];
+  if (configMentions(ctx, CONFIG_RATE_LIMIT)) return [];
 
   return [
     {
@@ -1107,6 +1137,7 @@ const KDF_DEPS = [
   "lucia",
 ];
 const DELEGATED_EXACT = [
+  "express-openid-connect",
   "firebase",
   "firebase-admin",
   "auth0",
@@ -1587,7 +1618,7 @@ function workerProxyWithoutRateLimit(ctx: Ctx): Finding[] {
   );
   if (workers.size === 0) return [];
   if (hasAny(ctx.deps, RATE_LIMIT_DEPS)) return [];
-  if (configMentions(ctx, /ratelimit|rate[_-]?limit|throttl/i)) return [];
+  if (configMentions(ctx, CONFIG_RATE_LIMIT)) return [];
 
   const found: Finding[] = [];
   for (const file of ctx.source) {

@@ -942,3 +942,43 @@ describe("adversarial: authn_missing", () => {
     expect(kindsOf(repo)).toContain("authn_missing");
   });
 });
+
+describe("adversarial: rate_limit_missing", () => {
+  const login = `app.post("/login", ${HANDLER});`;
+
+  it.each([
+    ["nginx limit_req", "nginx.conf", `limit_req_zone $binary_remote_addr zone=login:10m rate=5r/m;\nserver { location /login { limit_req zone=login; } }\n`],
+    ["Caddy rate_limit", "Caddyfile", `example.com {\n  rate_limit { zone login { key {remote_host} events 5 window 1m } }\n}\n`],
+    ["HAProxy stick-table", "haproxy.cfg", `frontend web\n  stick-table type ip size 100k expire 30s store http_req_rate(10s)\n`],
+  ])("3a: %s in proxy config is rate limiting", (_name, path, content) => {
+    const repo = [...expressRepo(login), file(path, content)];
+    expect(kindsOf(repo)).not.toContain("rate_limit_missing");
+  });
+
+  it("3b: express-brute is a rate limiter", () => {
+    const repo = expressRepo(
+      `const ExpressBrute = require("express-brute");\nconst brute = new ExpressBrute(store);\napp.post("/login", brute.prevent, ${HANDLER});`,
+      { "express-brute": "^1.0.1" },
+    );
+    expect(kindsOf(repo)).not.toContain("rate_limit_missing");
+  });
+
+  it("3c: a hand-rolled brute-force guard counts by name", () => {
+    const repo = expressRepo(
+      `const bruteForce = require("./bruteForce");\napp.post("/login", bruteForce, ${HANDLER});`,
+    );
+    expect(kindsOf(repo)).not.toContain("rate_limit_missing");
+  });
+
+  it("3d: a login delegated to a hosted identity provider has no local brute-force target", () => {
+    const repo = expressRepo(
+      `app.get("/login", (req, res) => res.oidc.login());`,
+      { "express-openid-connect": "^2.17.0" },
+    );
+    expect(kindsOf(repo)).not.toContain("rate_limit_missing");
+  });
+
+  it("still reports a bare login route", () => {
+    expect(kindsOf(expressRepo(login))).toContain("rate_limit_missing");
+  });
+});
