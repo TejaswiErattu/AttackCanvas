@@ -22,6 +22,12 @@ import { useMemo, useState } from "react";
 import type { DashboardViewModel } from "@/shared/viewModel";
 import { assignBoundaries } from "@/client/layoutGraph";
 import {
+  DIAGRAM_VIEWS,
+  DIAGRAM_VIEW_LABELS,
+  selectDiagramView,
+  type DiagramView,
+} from "@/client/diagramViews";
+import {
   EMPTY_FILTERS,
   filterThreats,
   type ThreatFilters,
@@ -51,6 +57,8 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
   const [filters, setFilters] = useState<ThreatFilters>({ ...EMPTY_FILTERS });
   const [selectedThreatId, setSelectedThreatId] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  // Which sub-view of the diagram is shown. Presentation only: the threat list ignores it.
+  const [diagramView, setDiagramView] = useState<DiagramView>("overall");
 
   const threats = useMemo(() => view.threats ?? [], [view.threats]);
   const visible = useMemo(() => filterThreats(threats, filters), [threats, filters]);
@@ -96,9 +104,26 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
   const repo = view.repo;
   // Falls back to the list length only for a partial response that lacks the total.
   const fixNowTotal = view.fixNowTotal ?? view.fixNow?.length ?? 0;
-  const nodes = view.nodes ?? [];
-  const boundaries = view.boundaries ?? [];
-  const layoutNotes = assignBoundaries(boundaries, nodes).notes;
+  const nodes = useMemo(() => view.nodes ?? [], [view.nodes]);
+  const boundaries = useMemo(() => view.boundaries ?? [], [view.boundaries]);
+  // The sub-view's nodes and edges. Hidden items are removed, not dimmed, so the diagram
+  // lays itself out again for what is left.
+  const shown = useMemo(() => {
+    const selection = selectDiagramView(
+      { nodes, edges: view.edges ?? [], threats },
+      diagramView,
+    );
+    const nodeIds = new Set(selection.nodeIds);
+    const edgeIds = new Set(selection.edgeIds);
+    return {
+      nodes: nodes.filter((node) => nodeIds.has(node.id)),
+      edges: (view.edges ?? []).filter((edge) => edgeIds.has(edge.id)),
+    };
+  }, [nodes, view.edges, threats, diagramView]);
+  const layoutNotes = useMemo(
+    () => assignBoundaries(boundaries, shown.nodes).notes,
+    [boundaries, shown.nodes],
+  );
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? null;
   const assumptions = view.assumptions ?? [];
   const limitations = view.limitations ?? [];
@@ -138,17 +163,45 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
             Select a component to see the threats that involve it, or select a threat to
             highlight what it touches.
           </p>
+          <div
+            role="radiogroup"
+            aria-label="Diagram view"
+            className="mt-3 inline-flex flex-wrap gap-1 rounded-full border border-line bg-surface-2 p-1"
+          >
+            {DIAGRAM_VIEWS.map((name) => {
+              const active = diagramView === name;
+              return (
+                <button
+                  key={name}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  onClick={() => setDiagramView(name)}
+                  className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                    active ? "bg-mint text-white shadow-sm" : "text-muted hover:text-fg"
+                  }`}
+                >
+                  {DIAGRAM_VIEW_LABELS[name]}
+                </button>
+              );
+            })}
+          </div>
           <div className="mt-3">
             <ArchitectureGraph
-              nodes={nodes}
-              edges={view.edges ?? []}
+              nodes={shown.nodes}
+              edges={shown.edges}
+              emptyMessage={
+                diagramView === "overall"
+                  ? undefined
+                  : `Nothing in this analysis belongs in the "${DIAGRAM_VIEW_LABELS[diagramView]}" view.`
+              }
               boundaries={boundaries}
               highlightNodeIds={highlight.nodeIds}
               highlightEdgeIds={highlight.edgeIds}
               selectedNodeId={selectedNodeId}
               onSelectNode={handleSelectNode}
             />
-            <ArchitectureLegend nodes={nodes} notes={layoutNotes} />
+            <ArchitectureLegend nodes={shown.nodes} notes={layoutNotes} />
           </div>
 
           {nodes.length > 0 ? (

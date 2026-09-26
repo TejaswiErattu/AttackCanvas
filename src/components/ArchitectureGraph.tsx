@@ -28,7 +28,7 @@ import ReactFlow, {
 import "reactflow/dist/style.css";
 import type { GraphEdge, GraphNode, TrustBoundaryView } from "@/shared/viewModel";
 import { layoutGraph, NODE_HEIGHT, NODE_WIDTH } from "@/client/layoutGraph";
-import { edgeColor, edgeMarker, edgeRoutes, reverseEdgeShape } from "@/client/graphEdges";
+import { edgeColor, edgeMarker, edgeRoutes, handlesFor, reverseEdgeShape } from "@/client/graphEdges";
 import ArchitectureNode, {
   BoundaryGroup,
   type ArchitectureNodeData,
@@ -53,6 +53,8 @@ function shortLabel(label: string | undefined, full: boolean): string | undefine
 type ArchitectureGraphProps = {
   nodes: readonly GraphNode[];
   edges: readonly GraphEdge[];
+  /** Shown instead of the diagram when there are no nodes; a default covers "no diagram". */
+  emptyMessage?: string;
   /** Drawn as groups around their components; a component in none stays top-level. */
   boundaries?: readonly TrustBoundaryView[];
   /**
@@ -71,6 +73,7 @@ const NODE_TYPES = { component: ArchitectureNode, boundary: BoundaryGroup };
 export default function ArchitectureGraph({
   nodes,
   edges,
+  emptyMessage,
   boundaries = [],
   highlightNodeIds,
   highlightEdgeIds,
@@ -128,6 +131,10 @@ export default function ArchitectureGraph({
   }, [layout.nodes, layout.groups, highlightedNodes, dimming, selectedNodeId]);
 
   const routes = useMemo(() => edgeRoutes(layout.edges), [layout.edges]);
+  const xOf = useMemo(
+    () => new Map(layout.nodes.map((node) => [node.id, node.position.x])),
+    [layout.nodes],
+  );
 
   const flowEdges = useMemo<Edge[]>(
     () =>
@@ -137,6 +144,7 @@ export default function ArchitectureGraph({
           id: edge.id,
           source: edge.source,
           target: edge.target,
+          ...handlesFor(xOf.get(edge.source) ?? 0, xOf.get(edge.target) ?? 0),
           // Every flow points the way its data moves, dotted crossings included.
           markerEnd: { ...edgeMarker(edge, { on, dimming }), type: MarkerType.ArrowClosed },
           ...reverseEdgeShape(routes[index]),
@@ -166,13 +174,13 @@ export default function ArchitectureGraph({
           },
         } as Edge;
       }),
-    [layout.edges, routes, highlightedEdges, dimming],
+    [layout.edges, routes, xOf, highlightedEdges, dimming],
   );
 
   if (layout.nodes.length === 0) {
     return (
       <p className="rounded-2xl border border-dashed border-line-strong p-8 text-center text-sm text-muted">
-        This analysis did not produce an architecture diagram.
+        {emptyMessage ?? "This analysis did not produce an architecture diagram."}
       </p>
     );
   }
@@ -184,6 +192,9 @@ export default function ArchitectureGraph({
       role="group"
     >
       <ReactFlow
+        // fitView runs only when React Flow mounts, so a new node set (a sub-view) remounts
+        // it to fit the diagram that is now shown.
+        key={layout.nodes.map((node) => node.id).join("|")}
         nodes={flowNodes}
         edges={flowEdges}
         nodeTypes={NODE_TYPES}
@@ -192,7 +203,7 @@ export default function ArchitectureGraph({
         }}
         onPaneClick={() => onSelectNode(null)}
         fitView
-        fitViewOptions={{ padding: 0.15 }}
+        fitViewOptions={{ padding: 0.15, maxZoom: 1 }}
         minZoom={0.2}
         // The wheel scrolls the page, not the diagram: the map sits mid-page, and hijacking
         // the wheel there traps people reading the results. Zoom with the controls or pinch.

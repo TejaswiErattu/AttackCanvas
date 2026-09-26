@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ARROW_CLOSED, edgeMarker, edgeRoutes, reverseEdgeShape } from "@/client/graphEdges";
+import { ARROW_CLOSED, HANDLES, edgeMarker, edgeRoutes, handlesFor, reverseEdgeShape } from "@/client/graphEdges";
 
 const e = (id: string, source: string, target: string) => ({ id, source, target });
 
@@ -34,5 +34,16 @@ describe("edgeMarker", () => {
   it("colours the arrowhead like the stroke", () => {
     expect(edgeMarker({ crossesTrustBoundary: true }, { on: false, dimming: false }).color).toBe("var(--color-boundary)");
     expect(edgeMarker({ crossesTrustBoundary: false }, { on: true, dimming: false }).color).toBe("var(--color-mint)");
+  });
+});
+
+describe("handlesFor", () => {
+  it("uses right-out/left-in for a left-to-right or same-column flow", () => {
+    expect(handlesFor(0, 400)).toEqual({ sourceHandle: HANDLES.out, targetHandle: HANDLES.in });
+    expect(handlesFor(400, 400)).toEqual({ sourceHandle: HANDLES.out, targetHandle: HANDLES.in });
+  });
+
+  it("uses left-out/right-in for a flow that runs right to left", () => {
+    expect(handlesFor(800, 400)).toEqual({ sourceHandle: HANDLES.outLeft, targetHandle: HANDLES.inRight });
   });
 });

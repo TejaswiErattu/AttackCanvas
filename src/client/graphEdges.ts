@@ -62,3 +62,23 @@ export function edgeMarker(
 export function reverseEdgeShape(route: EdgeRoute): { type?: string; pathOptions?: { offset: number } } {
   return route.reverse ? { type: "smoothstep", pathOptions: { offset: REVERSE_OFFSET } } : {};
 }
+
+/** Handle ids the custom node exposes: the usual right-out/left-in pair, and its mirror. */
+export const HANDLES = {
+  out: "out",
+  in: "in",
+  outLeft: "out-left",
+  inRight: "in-right",
+} as const;
+
+/**
+ * Which sides a flow leaves and enters by. The diagram reads left to right, so a flow
+ * that runs right to left (a webhook from an external service back into the api) leaves
+ * its source on the left and enters its target on the right, instead of looping around
+ * both nodes. Same-column flows keep the usual pair.
+ */
+export function handlesFor(sourceX: number, targetX: number): { sourceHandle: string; targetHandle: string } {
+  return targetX < sourceX
+    ? { sourceHandle: HANDLES.outLeft, targetHandle: HANDLES.inRight }
+    : { sourceHandle: HANDLES.out, targetHandle: HANDLES.in };
+}
