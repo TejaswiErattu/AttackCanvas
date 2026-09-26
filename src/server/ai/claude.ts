@@ -35,6 +35,7 @@ import {
   type TokenCounts,
   type UsageLedger,
 } from "@/server/ai/usage";
+import { categorizeProviderError, type ProviderErrorCategory } from "@/server/ai/providerError";
 import { assertNoSecretsInPrompt, redact } from "@/server/security/redactor";
 import {
   isWellFormedText,
@@ -207,6 +208,11 @@ export type ValidationIssue = { path: string; message: string };
  */
 export type RequestDiagnostic = {
   status: number;
+  /**
+   * Why the provider rejected it, from a fixed allowlist (src/server/ai/providerError.ts);
+   * "unknown" when the provider's message matched none. Never the message itself.
+   */
+  category: ProviderErrorCategory;
   /** The provider's error type ("invalid_request_error", ...), when it is a safe code. */
   errorType?: string;
   requestId?: string;
@@ -729,6 +735,10 @@ function clientErrorDiagnostic(
   if (status === undefined || status < 400 || status > 499) return {};
   const body = (error as { error?: { error?: { type?: unknown }; type?: unknown } } | null)?.error;
   const errorType = safeCode(body?.error?.type) ?? safeCode(body?.type);
+  // Read for matching only; categorizeProviderError returns a constant and keeps no text.
+  const providerMessage =
+    (body as { error?: { message?: unknown } } | null | undefined)?.error?.message ??
+    (error as { message?: unknown } | null)?.message;
   const rawId =
     (error as { request_id?: unknown; requestID?: unknown } | null)?.request_id ??
     (error as { requestID?: unknown } | null)?.requestID;
@@ -737,6 +747,7 @@ function clientErrorDiagnostic(
   return {
     request: {
       status,
+      category: categorizeProviderError(status, providerMessage),
       ...(errorType ? { errorType } : {}),
       ...(requestId ? { requestId } : {}),
       stage,

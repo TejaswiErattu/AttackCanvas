@@ -373,6 +373,7 @@ describe("fail() failure log: 4xx request structure", () => {
     const state = createAnalysis("acme/canary");
     const request = {
       status: 400,
+      category: "unknown" as const,
       errorType: "invalid_request_error",
       requestId: "req_0123456789abcdef",
       stage: "stride" as const,
