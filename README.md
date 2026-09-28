@@ -1,226 +1,201 @@
 # AttackCanvas
+https://youtu.be/OvXUEcqchVY?si=Y8fg_BZrGzPMwaOb 
+**Paste a public GitHub URL, get an evidence-backed STRIDE threat model in minutes.**
+AttackCanvas reads a repository without running it. It maps the architecture and finds
+missing security controls. Each threat is scored by code, not by the model, so every
+score can be audited.
 
-## What it does
+**Live demo:** https://attackcanvas.onrender.com
+The first load after idle can take about a minute. Levels 0 to 3 are open; level 4 is
+switched off on the hosted demo to cap cost.
 
-You paste a public GitHub repository URL. AttackCanvas reads it without running it, maps its
-architecture, and raises STRIDE threats mapped to the OWASP Top 10:2025 and CWE. Each threat
-shows its evidence, a confidence computed by code rather than by the model, and whether it
-rests on something observed or on a missing control, all on an interactive diagram.
+![Overall view](docs/img/diagram-overall.png)
 
-## Demo
+## Who it is for
 
-Hosted: `<HOSTED_URL>`
+- **Developers:** what to fix first, with the file, the line and a mitigation.
+- **Security engineers:** components, data flows, trust boundaries and triage.
 
-**Demo mode works offline.** Set `DEMO_FALLBACK=1` and point `GOLDEN_REPO_URL` at the demo
-repository. Submitting that URL then serves a saved threat model instead of running the
-pipeline. It needs no GitHub token, no Anthropic key, no Docker and no Semgrep, and it makes
-no model call. It still walks the same stages with real delays and pauses for developer
-questions, like a live run.
+## Why it exists
 
-The saved model is `fixtures/demo-analysis.json`, a synthetic application, `acme/acme-notes`.
-`fixtures/golden-demo.json` would take its place if present; it does not exist. A saved
-NodeGoat result is kept at `fixtures/samples/nodegoat-a3118b6.json`, but nothing serves it,
-so a real repository URL never returns a canned result.
+Threat modelling catches architectural flaws, but it is slow and expert-dependent, so most
+teams skip it. Code scanners flag risky lines, but the worst problems are often something
+**missing**: an ownership check, CSRF protection, a rate limit. A missing control has no
+line to flag.
+
+| Approach | Limitation |
+|---|---|
+| Snyk, Checkmarx, CodeQL | Pattern-level scanning, no architecture reasoning |
+| "Paste your code into a chatbot" | No evidence grounding, no scoring |
+| Manual STRIDE workshops | Accurate, but slow, expensive and expert-dependent |
+| **AttackCanvas** | Architecture from code, missing-control detection, code-computed scores, about $3 a run |
+
+## How it works
+
+1. **Load.** The GitHub MCP server fetches the files read-only, with 6 allowlisted tools.
+   It keeps the top 300 files / 2 MB, ranked by security relevance.
+2. **Redact.** Secrets are removed before anything else sees them. Repository text is data,
+   never instructions.
+3. **Detect.** Deterministic detectors find frameworks, routes, auth and datastores, plus 13
+   kinds of missing control.
+4. **Scan.** Semgrep (13 custom rules, via MCP) and OSV (known CVEs in npm dependencies) add
+   evidence.
+5. **Model.** Claude maps the components, flows and trust boundaries. It then writes STRIDE
+   threats mapped to OWASP Top 10:2025 and CWE, each citing evidence.
+6. **Score.** Code, never the model, computes severity, confidence, basis and priority
+   (`src/server/scoring`).
+7. **Ask.** Up to 3 developer questions refine the confidence scores.
+8. **Show.** An interactive diagram and a prioritised threat list (Fix now / Fix soon /
+   Monitor).
+
+## Scoring
+
+- **Risk** = impact × likelihood, each 1 to 5. The bands are Critical 20–25, High 12–19,
+  Medium 6–11 and Low 1–5.
+- **Confidence** (0 to 1) is a sum of evidence points:
+
+  | Evidence | Points |
+  |---|---|
+  | Code evidence | +0.35 |
+  | OSV advisory | +0.30 |
+  | Developer answer | +0.30 |
+  | Missing control | +0.30 × certainty |
+  | Semgrep match | +0.25 |
+  | Second independent source | +0.10 |
+  | Inference only | +0.20 |
+  | Unconfirmed assumption | −0.15 |
+
+  Evidence at the same file and line counts once.
+- **Fix now** means Critical, or High with confidence of at least 0.50.
+- **Basis:** every threat is either **Confirmed** (a scanner or detector saw it) or
+  **Predicted** (a control is missing).
+- **Below 25% confidence:** the threat is still listed, but last and greyed, marked
+  "unverified, review before acting". It never enters Fix now.
+
+## Features
+
+| View | What it shows |
+|---|---|
+| Overall | The whole system |
+| Identity and auth | Authentication and identity components |
+| Data flows | How data moves between components |
+| External systems | Third-party services and providers |
+
+- Trust boundaries are drawn as dashed groups, and flows that cross one are dashed.
+- Each entity type has its own icon. An exposure badge marks each component External, Edge
+  or Internal.
+- The threat list filters by severity, confidence, priority, basis, STRIDE, OWASP,
+  component and status.
+- Each finding shows its attack scenario, evidence at file and line, CWE and OWASP tags,
+  the reasons for its confidence, and a mitigation.
+- A pre-filled GitHub issue per finding: you review and submit it.
+- **Triage status** (Open, Fixed, Accepted risk, False positive). A status is saved against
+  the threat's title, components and OWASP categories, so it follows the same threat to the
+  next run.
+- **Since last run** shows how many threats are new and how many were not found again.
+  "Not found" never means fixed; only a status you set says that.
+- Status and history are stored in your browser (`localStorage`), not on a server.
+- Five analysis levels trade depth for cost:
+
+  | Level | Cost per run |
+  |---|---|
+  | 0 Snapshot | $0.30–$0.60 |
+  | 1 Basic | $1–$1.50 |
+  | 2 Standard | $3–$4 |
+  | 3 Deep | $3.50–$5 |
+  | 4 Exhaustive | $4–$6 |
+
+## Security of the tool itself
+
+AttackCanvas assumes the repository it reads may be hostile.
+
+- **Prompt injection.** Repository content is wrapped and escaped. A security preamble
+  heads every system prompt. The model calls that reason about the code have no tools
+  attached. Injection-like text becomes evidence, and the model's output is checked
+  afterwards.
+- **Gap suppression.** Missing controls come from deterministic code, so a README saying
+  "auth is handled by our gateway" cannot remove the finding. A canary test proves the
+  output is byte-identical.
+- **Secrets.** Secrets are redacted before any model call, checked again at every boundary,
+  and never logged.
+- **Abuse.** There is a limit of 5 analyses per hour per IP and 2 at once, and an optional
+  owner allowlist. MCP tools are allowlisted, and the MCP image is pinned by digest.
+
+Details: [docs/security-design.md](docs/security-design.md).
+
+## Results
+
+All runs use OWASP NodeGoat at a pinned commit, level 2, labelled by hand against the source:
+
+| Measure | Result |
+|---|---|
+| Recall of known vulnerabilities | 17 of 19 (89.5%) |
+| Recall at 25% confidence or above | 10 of 19 |
+| Threats at 25%+ that were wrong | 4 of 37 (11%) |
+| Evidence accuracy | 127 of 146 (87%) |
+| Second labeller agreement | 16 of 20 (80%), Cohen's kappa 0.47 |
+| Seeded benchmark (3 apps, no model) | 15 TP / 1 FP / 0 FN; 1 false gap in 17 planted controls |
+| Cost, level 2 (6 runs) | $2.84–$4.07, mean $3.37 |
+| Tests | ~3,950 passing, 96% statement coverage |
+
+**Caveats:**
+- NodeGoat documents its own bugs, so its recall is guided.
+- The seeded apps were written with the detectors in view, so 100% recall there is an
+  upper bound.
+- Run-to-run consistency has not been measured yet.
+
+See [docs/evaluation.md](docs/evaluation.md) and [docs/cost.md](docs/cost.md).
+
+## Limits
+
+- The deterministic detectors and Semgrep rules read JavaScript and TypeScript only, and
+  OSV checks npm only. On other languages (tested on Java with AltoroJ), the architecture
+  maps correctly, but findings rest on the model alone and stay low-confidence.
+- Only public repositories are supported. Runtime configuration and infrastructure outside
+  the repository are never seen.
+- Model output varies between runs. Detectors, scoring and ordering do not.
+
+More: [docs/coverage.md](docs/coverage.md) and
+[docs/known-limitations.md](docs/known-limitations.md).
+
+## Run it locally
+
+Requirements: Node 22+, pnpm (`corepack enable`), Docker (for the GitHub MCP server) and
+Semgrep 1.176.0.
+
+```bash
+pnpm install
+cp .env.example .env.local   # set ANTHROPIC_API_KEY and GITHUB_PERSONAL_ACCESS_TOKEN
+docker pull ghcr.io/github/github-mcp-server:v1.12.2@sha256:508a0857ec762b1ab1cece29193345b501fab1dd9d1228a7b617062954cecac6
+pipx install semgrep==1.176.0
+pnpm dev
+```
+
+**Offline demo** (no keys, no Docker, no model calls; it serves a saved synthetic result):
 
 ```bash
 DEMO_FALLBACK=1 GOLDEN_REPO_URL=https://github.com/acme/acme-notes pnpm dev
 ```
 
-Open http://localhost:3000 and submit `https://github.com/acme/acme-notes`.
+Then open http://localhost:3000 and submit `https://github.com/acme/acme-notes`.
 
-Run `pnpm install` once while online (Setup below). Once installed, the demo needs no
-network. The fonts come from `next/font/google`, so without a connection `next dev` uses a
-fallback system font for any font it has not already downloaded.
-
-| Overall | Identity and auth |
-|---|---|
-| ![Overall view](docs/img/diagram-overall.png) | ![Identity and auth view](docs/img/diagram-identity-and-auth.png) |
-| **Data flows** | **External systems** |
-| ![Data flows view](docs/img/diagram-data-flows.png) | ![External systems view](docs/img/diagram-external-systems.png) |
-
-## Setup
-
-Requirements: Node 22 or later, pnpm (through `corepack enable`), Docker for the GitHub MCP
-server, and Semgrep CLI 1.176.0. Demo mode needs only Node and pnpm.
+**Checks** (none of them call a model):
 
 ```bash
-corepack enable
-pnpm install
-cp .env.example .env.local
+pnpm typecheck && pnpm test && pnpm lint && pnpm bench
 ```
 
-Fill in `.env.local`. The full table is in [docs/setup.md](docs/setup.md).
+Full setup is in [docs/setup.md](docs/setup.md).
 
-| Variable | What it is |
-|---|---|
-| `ANTHROPIC_API_KEY` | Claude API key. Never logged. |
-| `GITHUB_PERSONAL_ACCESS_TOKEN` | Fine-grained token, public read access only, no write scopes. |
-| `ATTACKCANVAS_MODEL_PROFILE` | `dev` (default) or `demo`. See Cost. |
-| `ATTACKCANVAS_ALLOWED_OWNERS` | Optional comma-separated owner allowlist. Blank allows every owner. |
+## Stack
 
-Pull the pinned GitHub MCP server image and install Semgrep:
-
-```bash
-docker pull ghcr.io/github/github-mcp-server:v1.12.2@sha256:508a0857ec762b1ab1cece29193345b501fab1dd9d1228a7b617062954cecac6
-pipx install semgrep==1.176.0
-semgrep --version
-```
-
-`semgrep --version` should print `1.176.0`. The app starts the MCP server itself; you do not
-run the container by hand. Then:
-
-```bash
-pnpm dev
-```
-
-Checks, none of which call a model:
-
-```bash
-pnpm typecheck
-pnpm test
-pnpm lint
-pnpm bench
-```
-
-`Dockerfile` builds a production image for hosts without Docker-in-Docker. It copies the
-same pinned GitHub MCP server binary and installs Semgrep 1.176.0.
-
-## How it works
-
-1. **Load.** The GitHub MCP server (read-only, six allowed tools) fetches the repository tree and files.
-2. **Filter and redact.** Files are ranked, capped by count and size, and secrets are redacted before anything else sees them.
-3. **Detect.** Deterministic detectors find frameworks, routes, auth, datastores and 13 kinds of missing control.
-4. **Scan.** Semgrep (13 of our own rules, via MCP) and OSV (known vulnerabilities in direct npm dependencies) add evidence.
-5. **Map the architecture.** Claude drafts components, data flows and trust boundaries, then code reconciles the draft with the detected facts.
-6. **Raise threats.** Claude writes STRIDE threats per batch of elements, mapped to OWASP Top 10:2025 and CWE, citing evidence ids.
-7. **Score.** Code, never the model, computes severity, confidence, basis and priority (`src/server/scoring`).
-8. **Ask and show.** Up to three developer questions refine the scores, and the result opens as an interactive dashboard.
-
-Repository content is data, never instructions. It reaches the model only inside
-`<repo_file>` tags, and every model reply is validated with Zod.
-
-## Confirmed findings and predicted risks
-
-Every threat card says which kind it is. A **confirmed finding** (`evidence_backed`) rests on
-something a scanner or detector observed in the code: a Semgrep match, a vulnerable dependency,
-a detected route or configuration. A **predicted risk** (`assumption_dependent`) rests on a
-control that should be present but could not be found, such as an ownership check on a route or
-a rate limit on login. It is a prediction from absence, and its confidence is lower.
-
-Predictions matter because some OWASP categories have no vulnerable line to point at: broken
-access control (A01), security misconfiguration (A02), vulnerable and outdated components
-(A06) and authentication failures (A07) are often a missing check, not a bad one. The gaps come
-from deterministic detector code, not from the model, so text in the repository cannot argue
-them away.
-
-**Gap precision on NodeGoat: 39/39 rows (15/15 visible).** Read this with care: the 39 rows
-represent only **four distinct gap claims** in **one intentionally vulnerable repository**, where
-each control is missing by design. It is not evidence that gap predictions are generally 100%
-accurate. The seeded benchmark, where controls are planted so the detectors can be wrong, found
-1 false gap in 17 planted controls (5.9%). See [docs/evaluation.md](docs/evaluation.md).
-
-## Evaluation
-
-From [docs/evaluation.md](docs/evaluation.md). All runs are OWASP NodeGoat at `c5cb68a`,
-level 2, demo profile, labelled by hand against the pinned source.
-
-| run | threats | visible | recall | visible recall | unsupported | visible unsupported | evidence acc |
-|---|---|---|---|---|---|---|---|
-| after-fix (corrected) | 109 | 11 | 12/19 | 4/19 | 23/109 | 3/11 | 87/111 |
-| c8dd73f | 118 | 16 | 16/19 | 7/19 | 28/118 | 3/16 | 97/117 |
-| 7a0fb27 | 98 | 35 | 13/19 | 8/19 | 23/98 | 10/35 | 92/102 |
-| f64cfa8 | 89 | 24 | 14/19 | 7/19 | 25/89 | 4/24 | 93/105 |
-| **a3118b6** | 136 | 37 | **17/19** | **10/19** | 32/136 | **4/37** | 127/146 |
-
-NodeGoat documents its own vulnerabilities in files the model reads, so its recall is guided,
-not blind discovery. The a3118b6 run still misses NG-WEAK-PASSWORD-POLICY and NG-VULNERABLE-DEPS.
-
-**Seeded benchmark** (three repositories with planted issues and controls, no model, from
-`eval/bench/report.md` at `1d3237a`):
-
-| Mode | TP/FP/FN | Precision | Recall | False-gap rate | Deterministic |
-| --- | --- | ---: | ---: | ---: | --- |
-| detectors | 15/1/0 | 93.8% | 100.0% | 1/17 (5.9%) | yes |
-| detectors+semgrep | 18/1/0 | 94.7% | 100.0% | 1/17 (5.9%) | yes |
-
-The seeded apps were written with the detectors in view, so 100% recall is an upper bound.
-
-**Labeller agreement.** A second labeller, a separate blind model session rather than a
-person, labelled a stratified sample of n = 20 a3118b6 threats. It agreed on `supported` for
-16/20 (80.0%), Cohen's kappa 0.47, and on the exact `evidenceCorrect` cell for 17/20 (85.0%).
-All four disagreements are listed in docs/evaluation.md.
-
-**Run-to-run consistency has not yet been measured.** A three-run check at level 2 is
-planned. What is fixed and what varies between runs is described in
-[docs/reproducibility.md](docs/reproducibility.md).
-
-**Tests.** 100 test files, 3,954 tests (3,953 passed, 1 skipped: a live test that needs an
-API key). Coverage over `src/`: 96.05% statements, 89.53% branches, 94.83% functions, 96.85%
-lines. Both figures were measured on `final-sprint` after the lint fixes; see [docs/testing.md](docs/testing.md).
-
-## Cost
-
-From [docs/cost.md](docs/cost.md). All figures are Claude API usage at list price for a
-NodeGoat-sized repository. Larger repositories cost more. The level picker shows the "Shown
-range" column. Measured and estimated figures are kept apart: only level 2 has been measured.
-
-| Level | Models (demo) | What changes | Shown range | Measured | Estimated |
-|---|---|---|---|---|---|
-| 0 Snapshot | Sonnet 5 | context 20,000, at most 3 STRIDE batches, no questions | $0.30 to $0.60 | not yet measured | $0.30 to $0.60 |
-| 1 Basic | Sonnet 5, Haiku on classify | same budgets as level 2 | $1 to $1.50 | not yet measured | $1.10 to $1.60 |
-| 2 Standard | Opus 5 on architecture and STRIDE | today's demo profile | $3 to $4 | $2.84 to $4.07 | — |
-| 3 Deep | as level 2 | architecture context 90,000 | $3.50 to $5 | — | $3.20 to $4.60 |
-| 4 Exhaustive | as level 2 | level 3 plus adaptive thinking on STRIDE, output budget 16,000 | $4 to $6 | — | $3.50 to $5.90 |
-
-Level 2's measured range comes from six NodeGoat runs (mean $3.37). With
-`ATTACKCANVAS_MODEL_PROFILE=dev`, or unset, every level runs on the cheaper dev models.
-
-## Diagram
-
-- **Entity types.** Actor, frontend, backend, API, database, storage, external service, auth
-  provider, worker and queue, each with its own icon.
-- **Trust boundaries.** Boundaries are drawn as dashed groups around their components. A
-  flow that crosses one has a dashed edge.
-- **Four views.** Overall, Identity and auth (OWASP A01 and A07, STRIDE Spoofing and
-  Elevation of privilege), Data flows, and External systems. A view changes only the
-  diagram, never the threat list.
-- **Exposure badge.** Each component is marked External (someone else runs it), Edge (it
-  takes input from outside) or Internal (reachable only through another component). The
-  badge describes a component; it never changes a score.
-
-## Working with findings
-
-- **Status.** Mark a finding Open, Fixed, Accepted risk or False positive. A status is your
-  own triage note and never changes severity, confidence or priority. It is saved against
-  the threat's identity (title, components and OWASP categories), not its per-run number,
-  so a Fixed status follows the same threat to the next run.
-- **Low-confidence threats.** Every scored threat is listed and counted in the severity
-  tiles. Threats below 25% confidence come last in the list, greyed and marked "Below 25%
-  confidence: unverified, review before acting", and never enter Fix now. A toggle can take
-  them out of the list.
-- **Fix now** is always on the page. When no threat meets the bar (Critical, or High with at
-  least 50% confidence), it says so and points to the full list.
-- **Issue links.** Each finding can open a pre-filled GitHub issue (title, evidence, severity,
-  confidence and basis) in the analysed repository. You review and submit it; nothing is
-  created for you. A finding too long for a link offers "Copy as Markdown" instead.
-- **Drift.** "Since last run" is two lines: how many threats are new, and how many from the
-  previous run were not found this run (and how many of those you have not marked Fixed or
-  False positive). "Not found" never means fixed: only a status you set says that.
-
-Status and drift history are stored **per browser**, in `localStorage`. Nothing is saved on
-a server, so another browser, device or teammate does not see them.
-
-## Coverage and limits
-
-What each OWASP Top 10:2025 category can be evidenced by, and what the tool cannot see:
-[docs/coverage.md](docs/coverage.md). Known weaknesses of the detectors and the security
-review: [docs/known-limitations.md](docs/known-limitations.md).
-
-## Security of the tool itself
-
-The threat model of AttackCanvas itself covers prompt injection, secret leakage, MCP tool
-surface and cost abuse, with the control and the test for each:
-[docs/security-design.md](docs/security-design.md).
+- Next.js (App Router), strict TypeScript, React Flow and Tailwind.
+- The Claude API: Opus 5 for architecture and STRIDE, Sonnet 5 for questions, Haiku 4.5
+  for classification.
+- The GitHub MCP server, the Semgrep MCP server and the OSV API.
+- Zod, to validate every model response.
+- Vitest for the tests.
+- Docker, deployed on Render.
 
 ## Coming soon
 
@@ -237,24 +212,21 @@ surface and cost abuse, with the control and the test for each:
 ## Repository layout
 
 ```
-src/app/            Next.js pages and API routes (/api/analyze)
-src/components/     React components: dashboard, diagram, threat cards
-src/client/         Pure client logic: view model, diagram views, drift, status, issue links
-src/server/ingest/  Repository loading, filtering and caps
-src/server/mcp/     GitHub and Semgrep MCP clients (allowlist, timeouts, size caps)
-src/server/detect/  Deterministic detectors and the 13 gap kinds
-src/server/scanners/ Semgrep normalisation and OSV
+src/app/             Pages and API routes
+src/components/      Dashboard, diagram, threat cards
+src/client/          View model, diagram views, drift, status, issue links
+src/server/ingest/   Loading, filtering, caps
+src/server/mcp/      GitHub and Semgrep MCP clients
+src/server/detect/   Deterministic detectors and the 13 gap kinds
+src/server/scanners/ Semgrep normalisation, OSV
 src/server/analysis/ Pipeline, architecture, threats, assembly
-src/server/ai/      Claude calls, model profiles, level plans
-src/server/scoring/ Severity, confidence, basis and priority
-src/server/security/ Redaction, injection handling
-src/shared/         The schema contract (src/shared/schema), labels, roadmap
-prompts/            Versioned model prompts
-fixtures/           Demo and sample threat models
-eval/               Answer keys, labels, results, reviews, seeded bench report
-scripts/            Try scripts and the evaluation runner
-tests/              Vitest suites and fixtures, including the seeded repositories
-docs/               Setup, security design, evaluation, cost, coverage, limits
+src/server/ai/       Claude calls, model profiles, levels
+src/server/scoring/  Severity, confidence, basis, priority
+src/server/security/ Redaction and injection handling
+src/shared/schema/   The ThreatModel contract
+prompts/  eval/  tests/  docs/
 ```
 
-See [CLAUDE.md](CLAUDE.md) for the engineering rules.
+Engineering rules: [CLAUDE.md](CLAUDE.md).
+
+Built by Tejaswi Erattu Taj and Jasnoor Chimni for AI Defense Lab 2026, Track 3.
