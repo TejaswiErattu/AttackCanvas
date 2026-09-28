@@ -1,0 +1,78 @@
+# Labels for seeded-monorepo. Written by hand before the bench was first run.
+# See tests/fixtures/seeded/README.md for the matching rules.
+repo: seeded-monorepo
+issues:
+  - id: m-authz-project
+    class: Any signed-in user can rename any project (IDOR)
+    owasp: A01:2025
+    file: packages/api/src/routes/projects.ts
+    line: 21
+    gapKind: authz_missing
+  - id: m-csrf-form
+    class: Cookie-session form post with no CSRF protection
+    owasp: A01:2025
+    file: packages/api/src/routes/account.ts
+    line: 11
+    gapKind: csrf_missing
+  - id: m-no-headers
+    class: No security response headers
+    owasp: A02:2025
+    file: packages/api/package.json
+    line: 13
+    gapKind: security_headers_missing
+  - id: m-tls-off
+    class: Database TLS certificate verification disabled
+    owasp: A04:2025
+    file: packages/api/src/db.ts
+    line: 6
+    gapKind: transport_insecure
+  - id: m-eval-filter
+    class: Report filter compiled from a query parameter with new Function
+    owasp: A05:2025
+    file: packages/api/src/routes/reports.ts
+    line: 13
+    gapKind: input_validation_missing
+    ruleId: attackcanvas-eval-user-input
+  - id: m-hardcoded-apikey
+    class: Billing API key hard-coded in the shared package
+    owasp: A07:2025
+    file: packages/auth/src/serviceAccount.ts
+    line: 3
+    ruleId: attackcanvas-hardcoded-credentials
+controls:
+  - id: m-ctl-barrel-guard
+    gapKind: authn_missing
+    file: packages/api/src/routes/projects.ts
+    how: POST /api/projects runs requireAuth, imported from the @acme/auth workspace package through its src/index.ts barrel
+    type: cross-package guard
+    review: "2b"
+  - id: m-ctl-cross-pkg-owner
+    gapKind: authz_missing
+    file: packages/api/src/routes/documents.ts
+    how: GET /api/documents/:documentId runs guard from @acme/auth, whose body (packages/auth/src/guard.ts) returns 404 unless the caller owns the record
+    type: cross-package guard
+    review: "1d"
+  - id: m-ctl-cross-pkg-kdf
+    gapKind: password_storage_weak
+    file: packages/api/src/routes/auth.ts
+    how: login verifies with verifyPassword from @acme/auth, which uses scrypt from node:crypto (packages/auth/src/password.ts)
+    type: cross-package guard
+    review: "8d"
+  - id: m-ctl-error-mw
+    gapKind: error_handling_gap
+    file: packages/api/src/routes/documents.ts
+    how: "app.use(errorHandler({ log: true })) in src/app.ts registers the error middleware Express 4 needs for async handlers"
+    type: app-level middleware
+    review: "10a"
+  - id: m-ctl-limiter-pkg
+    gapKind: rate_limit_missing
+    file: packages/api/src/routes/auth.ts
+    how: login runs loginLimiter, an express-rate-limit instance declared only in packages/auth/package.json and exported by the barrel
+    type: cross-package guard
+    review: "3e"
+  - id: m-ctl-request-logger
+    gapKind: logging_missing
+    file: packages/api/src/routes/auth.ts
+    how: app.use(requestLogger) in src/app.ts logs every request, login included, with no logging package
+    type: app-level middleware
+    review: "9b"

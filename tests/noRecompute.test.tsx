@@ -138,6 +138,8 @@ const VIEW: DashboardViewModel = {
   },
   // Deliberately not the tally of `threats` below.
   counts: { critical: 7, high: 4, medium: 2, low: 1 },
+  hiddenThreats: [],
+  hiddenCounts: { critical: 0, high: 0, medium: 0, low: 0 },
   // Deliberately omits QUIET_GAP even though its priority is fix_now.
   fixNow: [LOUD_CRITICAL],
   // Deliberately neither fixNow.length (1) nor the fix_now threats listed below (1).

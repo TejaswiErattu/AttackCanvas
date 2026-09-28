@@ -5,7 +5,7 @@ import type { ControlGap, DetectorResult } from "@/server/detect/types";
 import type { LoadedFile, LoadedTier } from "@/server/ingest/loader";
 import { modelBoundFiles } from "@/server/ingest/loader";
 import { assertNoSecrets, assertNoSecretsInPrompt, redact } from "@/server/security/redactor";
-import { sliceWithoutSplitting } from "@/server/security/unicode";
+import { neutraliseBidiControls, sliceWithoutSplitting } from "@/server/security/unicode";
 
 /**
  * Turns everything learned about a repository into the text a model reads (Prompt L).
@@ -94,9 +94,14 @@ export function buildRepoFacts(input: {
 // Escaping
 // ---------------------------------------------------------------------------
 
-/** Neutralises any literal repo_file tag, so content cannot close or open a wrapper. */
+/**
+ * Neutralises what repository text could use to break out of its wrapper or to be read
+ * differently from how it is written: a literal repo_file tag becomes inert text, and a
+ * bidirectional control becomes a visible [U+XXXX] marker. Every excerpt, path, name and
+ * fact on the model path goes through here, so this is the one place both are handled.
+ */
 export function escapeRepoFileTags(text: string): string {
-  return text.replace(/<(\/?repo_file)/gi, "&lt;$1");
+  return neutraliseBidiControls(text).replace(/<(\/?repo_file)/gi, "&lt;$1");
 }
 
 function escapeAttribute(value: string): string {

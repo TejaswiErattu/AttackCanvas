@@ -1,0 +1,1392 @@
+{
+  "semgrep": "run",
+  "modes": [
+    {
+      "deterministic": true,
+      "hashes": [
+        "496129fce554387d088ced5036d3a597e1cb828e1b59a5860fc87473fc43005d",
+        "496129fce554387d088ced5036d3a597e1cb828e1b59a5860fc87473fc43005d",
+        "496129fce554387d088ced5036d3a597e1cb828e1b59a5860fc87473fc43005d"
+      ],
+      "mode": "detectors",
+      "repos": [
+        {
+          "repo": "seeded-express",
+          "issues": [
+            {
+              "id": "x-authz-invoice",
+              "owasp": "A01:2025",
+              "file": "src/routes/invoices.js",
+              "status": "TP",
+              "matchedBy": [
+                "gap:authz_missing@30"
+              ]
+            },
+            {
+              "id": "x-cors-reflect",
+              "owasp": "A02:2025",
+              "file": "src/app.js",
+              "status": "TP",
+              "matchedBy": [
+                "gap:cors_permissive@17"
+              ]
+            },
+            {
+              "id": "x-md5-password",
+              "owasp": "A04:2025",
+              "file": "src/services/passwords.js",
+              "status": "TP",
+              "matchedBy": [
+                "gap:password_storage_weak@9"
+              ]
+            },
+            {
+              "id": "x-plain-webhook",
+              "owasp": "A04:2025",
+              "file": "src/services/notify.js",
+              "status": "TP",
+              "matchedBy": [
+                "gap:transport_insecure@2"
+              ]
+            },
+            {
+              "id": "x-export-cmd",
+              "owasp": "A05:2025",
+              "file": "src/routes/reports.js",
+              "status": "TP",
+              "matchedBy": [
+                "gap:input_validation_missing@11"
+              ]
+            },
+            {
+              "id": "x-login-ratelimit",
+              "owasp": "A07:2025",
+              "file": "src/routes/auth.js",
+              "status": "TP",
+              "matchedBy": [
+                "gap:rate_limit_missing@11"
+              ]
+            }
+          ],
+          "controls": [
+            {
+              "id": "x-ctl-admin-prefix",
+              "gapKind": "authz_missing",
+              "type": "app-level middleware",
+              "file": "src/routes/admin.js",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            },
+            {
+              "id": "x-ctl-express5-async",
+              "gapKind": "error_handling_gap",
+              "type": "framework default",
+              "file": "src/routes/invoices.js",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            },
+            {
+              "id": "x-ctl-barrel-login",
+              "gapKind": "authn_missing",
+              "type": "barrel-imported guard",
+              "file": "src/routes/invoices.js",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            },
+            {
+              "id": "x-ctl-helmet-app",
+              "gapKind": "security_headers_missing",
+              "type": "app-level middleware",
+              "file": "src/app.js",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            },
+            {
+              "id": "x-ctl-cross-pkg-authz",
+              "gapKind": "authz_missing",
+              "type": "cross-package guard",
+              "file": "src/routes/reports.js",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            }
+          ],
+          "findings": [
+            {
+              "source": "gap",
+              "kind": "cors_permissive",
+              "file": "src/app.js",
+              "line": 17,
+              "scope": "file",
+              "certainty": 0.9,
+              "matches": [
+                "x-cors-reflect"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "gap",
+              "kind": "rate_limit_missing",
+              "file": "src/routes/auth.js",
+              "line": 11,
+              "scope": "repository",
+              "certainty": 0.85,
+              "matches": [
+                "x-login-ratelimit"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "gap",
+              "kind": "authz_missing",
+              "file": "src/routes/invoices.js",
+              "line": 30,
+              "scope": "route",
+              "certainty": 0.7,
+              "matches": [
+                "x-authz-invoice"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "gap",
+              "kind": "input_validation_missing",
+              "file": "src/routes/reports.js",
+              "line": 11,
+              "scope": "route",
+              "certainty": 0.55,
+              "matches": [
+                "x-export-cmd"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "gap",
+              "kind": "transport_insecure",
+              "file": "src/services/notify.js",
+              "line": 2,
+              "scope": "file",
+              "certainty": 0.75,
+              "matches": [
+                "x-plain-webhook"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "gap",
+              "kind": "password_storage_weak",
+              "file": "src/services/passwords.js",
+              "line": 9,
+              "scope": "repository",
+              "certainty": 0.95,
+              "matches": [
+                "x-md5-password"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            }
+          ],
+          "counts": {
+            "tp": 6,
+            "fp": 0,
+            "fn": 0,
+            "skipped": 0,
+            "duplicates": 0,
+            "precision": 1,
+            "recall": 1,
+            "controls": 5,
+            "falseGaps": 0,
+            "falseGapRate": 0,
+            "assertedFalseGaps": 0,
+            "assertedFalseGapRate": 0
+          }
+        },
+        {
+          "repo": "seeded-next",
+          "issues": [
+            {
+              "id": "n-export-unauth",
+              "owasp": "A01:2025",
+              "file": "app/api/exports/route.ts",
+              "status": "TP",
+              "matchedBy": [
+                "gap:authn_missing@11"
+              ]
+            },
+            {
+              "id": "n-cors-wildcard",
+              "owasp": "A02:2025",
+              "file": "app/api/profile/route.ts",
+              "status": "TP",
+              "matchedBy": [
+                "gap:cors_permissive@6"
+              ]
+            },
+            {
+              "id": "n-jwt-none",
+              "owasp": "A04:2025",
+              "file": "lib/tokens.ts",
+              "status": "skipped",
+              "matchedBy": []
+            },
+            {
+              "id": "n-sql-concat",
+              "owasp": "A05:2025",
+              "file": "app/api/search/route.ts",
+              "status": "TP",
+              "matchedBy": [
+                "gap:input_validation_missing@4"
+              ]
+            },
+            {
+              "id": "n-token-storage",
+              "owasp": "A07:2025",
+              "file": "app/login/page.tsx",
+              "status": "TP",
+              "matchedBy": [
+                "gap:client_secret_storage@20"
+              ]
+            },
+            {
+              "id": "n-jwt-literal",
+              "owasp": "A07:2025",
+              "file": "lib/tokens.ts",
+              "status": "skipped",
+              "matchedBy": []
+            }
+          ],
+          "controls": [
+            {
+              "id": "n-ctl-with-auth-barrel",
+              "gapKind": "authn_missing",
+              "type": "barrel-imported guard",
+              "file": "app/api/orders/route.ts",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            },
+            {
+              "id": "n-ctl-with-role",
+              "gapKind": "authz_missing",
+              "type": "barrel-imported guard",
+              "file": "app/api/admin/users/[id]/route.ts",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            },
+            {
+              "id": "n-ctl-middleware-headers",
+              "gapKind": "security_headers_missing",
+              "type": "app-level middleware",
+              "file": "middleware.ts",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            },
+            {
+              "id": "n-ctl-next-errors",
+              "gapKind": "error_handling_gap",
+              "type": "framework default",
+              "file": "app/api/orders/route.ts",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            },
+            {
+              "id": "n-ctl-zod-barrel",
+              "gapKind": "input_validation_missing",
+              "type": "barrel-imported guard",
+              "file": "app/api/orders/route.ts",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            },
+            {
+              "id": "n-ctl-login-limiter",
+              "gapKind": "rate_limit_missing",
+              "type": "barrel-imported guard",
+              "file": "app/api/auth/login/route.ts",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            }
+          ],
+          "findings": [
+            {
+              "source": "gap",
+              "kind": "authn_missing",
+              "file": "app/api/exports/route.ts",
+              "line": 11,
+              "scope": "route",
+              "certainty": 0.9,
+              "matches": [
+                "n-export-unauth"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "gap",
+              "kind": "cors_permissive",
+              "file": "app/api/profile/route.ts",
+              "line": 6,
+              "scope": "file",
+              "certainty": 0.5,
+              "matches": [
+                "n-cors-wildcard"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "gap",
+              "kind": "input_validation_missing",
+              "file": "app/api/search/route.ts",
+              "line": 4,
+              "scope": "route",
+              "certainty": 0.55,
+              "matches": [
+                "n-sql-concat"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "gap",
+              "kind": "client_secret_storage",
+              "file": "app/login/page.tsx",
+              "line": 20,
+              "scope": "file",
+              "certainty": 0.75,
+              "matches": [
+                "n-token-storage"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            }
+          ],
+          "counts": {
+            "tp": 4,
+            "fp": 0,
+            "fn": 0,
+            "skipped": 2,
+            "duplicates": 0,
+            "precision": 1,
+            "recall": 1,
+            "controls": 6,
+            "falseGaps": 0,
+            "falseGapRate": 0,
+            "assertedFalseGaps": 0,
+            "assertedFalseGapRate": 0
+          }
+        },
+        {
+          "repo": "seeded-monorepo",
+          "issues": [
+            {
+              "id": "m-authz-project",
+              "owasp": "A01:2025",
+              "file": "packages/api/src/routes/projects.ts",
+              "status": "TP",
+              "matchedBy": [
+                "gap:authz_missing@21"
+              ]
+            },
+            {
+              "id": "m-csrf-form",
+              "owasp": "A01:2025",
+              "file": "packages/api/src/routes/account.ts",
+              "status": "TP",
+              "matchedBy": [
+                "gap:csrf_missing@11"
+              ]
+            },
+            {
+              "id": "m-no-headers",
+              "owasp": "A02:2025",
+              "file": "packages/api/package.json",
+              "status": "TP",
+              "matchedBy": [
+                "gap:security_headers_missing@13"
+              ]
+            },
+            {
+              "id": "m-tls-off",
+              "owasp": "A04:2025",
+              "file": "packages/api/src/db.ts",
+              "status": "TP",
+              "matchedBy": [
+                "gap:transport_insecure@6"
+              ]
+            },
+            {
+              "id": "m-eval-filter",
+              "owasp": "A05:2025",
+              "file": "packages/api/src/routes/reports.ts",
+              "status": "TP",
+              "matchedBy": [
+                "gap:input_validation_missing@7"
+              ]
+            },
+            {
+              "id": "m-hardcoded-apikey",
+              "owasp": "A07:2025",
+              "file": "packages/auth/src/serviceAccount.ts",
+              "status": "skipped",
+              "matchedBy": []
+            }
+          ],
+          "controls": [
+            {
+              "id": "m-ctl-barrel-guard",
+              "gapKind": "authn_missing",
+              "type": "cross-package guard",
+              "file": "packages/api/src/routes/projects.ts",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            },
+            {
+              "id": "m-ctl-cross-pkg-owner",
+              "gapKind": "authz_missing",
+              "type": "cross-package guard",
+              "file": "packages/api/src/routes/documents.ts",
+              "falseGap": true,
+              "asserted": true,
+              "gaps": [
+                "packages/api/src/routes/documents.ts:8 certainty 0.7"
+              ]
+            },
+            {
+              "id": "m-ctl-cross-pkg-kdf",
+              "gapKind": "password_storage_weak",
+              "type": "cross-package guard",
+              "file": "packages/api/src/routes/auth.ts",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            },
+            {
+              "id": "m-ctl-error-mw",
+              "gapKind": "error_handling_gap",
+              "type": "app-level middleware",
+              "file": "packages/api/src/routes/documents.ts",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            },
+            {
+              "id": "m-ctl-limiter-pkg",
+              "gapKind": "rate_limit_missing",
+              "type": "cross-package guard",
+              "file": "packages/api/src/routes/auth.ts",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            },
+            {
+              "id": "m-ctl-request-logger",
+              "gapKind": "logging_missing",
+              "type": "app-level middleware",
+              "file": "packages/api/src/routes/auth.ts",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            }
+          ],
+          "findings": [
+            {
+              "source": "gap",
+              "kind": "security_headers_missing",
+              "file": "packages/api/package.json",
+              "line": 13,
+              "scope": "repository",
+              "certainty": 0.9,
+              "matches": [
+                "m-no-headers"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "gap",
+              "kind": "transport_insecure",
+              "file": "packages/api/src/db.ts",
+              "line": 6,
+              "scope": "file",
+              "certainty": 0.75,
+              "matches": [
+                "m-tls-off"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "gap",
+              "kind": "csrf_missing",
+              "file": "packages/api/src/routes/account.ts",
+              "line": 11,
+              "scope": "repository",
+              "certainty": 0.8,
+              "matches": [
+                "m-csrf-form"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "gap",
+              "kind": "authz_missing",
+              "file": "packages/api/src/routes/documents.ts",
+              "line": 8,
+              "scope": "route",
+              "certainty": 0.7,
+              "matches": [],
+              "duplicate": false,
+              "falsifies": [
+                "m-ctl-cross-pkg-owner"
+              ]
+            },
+            {
+              "source": "gap",
+              "kind": "authz_missing",
+              "file": "packages/api/src/routes/projects.ts",
+              "line": 21,
+              "scope": "route",
+              "certainty": 0.7,
+              "matches": [
+                "m-authz-project"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "gap",
+              "kind": "input_validation_missing",
+              "file": "packages/api/src/routes/reports.ts",
+              "line": 7,
+              "scope": "route",
+              "certainty": 0.55,
+              "matches": [
+                "m-eval-filter"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            }
+          ],
+          "counts": {
+            "tp": 5,
+            "fp": 1,
+            "fn": 0,
+            "skipped": 1,
+            "duplicates": 0,
+            "precision": 0.8333333333333334,
+            "recall": 1,
+            "controls": 6,
+            "falseGaps": 1,
+            "falseGapRate": 0.16666666666666666,
+            "assertedFalseGaps": 1,
+            "assertedFalseGapRate": 0.16666666666666666
+          }
+        }
+      ],
+      "total": {
+        "tp": 15,
+        "fp": 1,
+        "fn": 0,
+        "skipped": 3,
+        "duplicates": 0,
+        "precision": 0.9375,
+        "recall": 1,
+        "controls": 17,
+        "falseGaps": 1,
+        "falseGapRate": 0.058823529411764705,
+        "assertedFalseGaps": 1,
+        "assertedFalseGapRate": 0.058823529411764705
+      },
+      "perOwasp": [
+        {
+          "owasp": "A01:2025",
+          "planted": 4,
+          "detected": 4,
+          "missed": 0,
+          "skipped": 0
+        },
+        {
+          "owasp": "A02:2025",
+          "planted": 3,
+          "detected": 3,
+          "missed": 0,
+          "skipped": 0
+        },
+        {
+          "owasp": "A04:2025",
+          "planted": 4,
+          "detected": 3,
+          "missed": 0,
+          "skipped": 1
+        },
+        {
+          "owasp": "A05:2025",
+          "planted": 3,
+          "detected": 3,
+          "missed": 0,
+          "skipped": 0
+        },
+        {
+          "owasp": "A07:2025",
+          "planted": 4,
+          "detected": 2,
+          "missed": 0,
+          "skipped": 2
+        }
+      ]
+    },
+    {
+      "deterministic": true,
+      "hashes": [
+        "26367ee327c09ed590ca0d939b31522d794fa2e826e50c6756ca52d733a700a5",
+        "26367ee327c09ed590ca0d939b31522d794fa2e826e50c6756ca52d733a700a5",
+        "26367ee327c09ed590ca0d939b31522d794fa2e826e50c6756ca52d733a700a5"
+      ],
+      "mode": "detectors+semgrep",
+      "repos": [
+        {
+          "repo": "seeded-express",
+          "issues": [
+            {
+              "id": "x-authz-invoice",
+              "owasp": "A01:2025",
+              "file": "src/routes/invoices.js",
+              "status": "TP",
+              "matchedBy": [
+                "gap:authz_missing@30"
+              ]
+            },
+            {
+              "id": "x-cors-reflect",
+              "owasp": "A02:2025",
+              "file": "src/app.js",
+              "status": "TP",
+              "matchedBy": [
+                "gap:cors_permissive@17"
+              ]
+            },
+            {
+              "id": "x-md5-password",
+              "owasp": "A04:2025",
+              "file": "src/services/passwords.js",
+              "status": "TP",
+              "matchedBy": [
+                "gap:password_storage_weak@9",
+                "semgrep:attackcanvas-weak-hash@9"
+              ]
+            },
+            {
+              "id": "x-plain-webhook",
+              "owasp": "A04:2025",
+              "file": "src/services/notify.js",
+              "status": "TP",
+              "matchedBy": [
+                "gap:transport_insecure@2"
+              ]
+            },
+            {
+              "id": "x-export-cmd",
+              "owasp": "A05:2025",
+              "file": "src/routes/reports.js",
+              "status": "TP",
+              "matchedBy": [
+                "gap:input_validation_missing@11",
+                "semgrep:attackcanvas-command-injection@12"
+              ]
+            },
+            {
+              "id": "x-login-ratelimit",
+              "owasp": "A07:2025",
+              "file": "src/routes/auth.js",
+              "status": "TP",
+              "matchedBy": [
+                "gap:rate_limit_missing@11"
+              ]
+            }
+          ],
+          "controls": [
+            {
+              "id": "x-ctl-admin-prefix",
+              "gapKind": "authz_missing",
+              "type": "app-level middleware",
+              "file": "src/routes/admin.js",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            },
+            {
+              "id": "x-ctl-express5-async",
+              "gapKind": "error_handling_gap",
+              "type": "framework default",
+              "file": "src/routes/invoices.js",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            },
+            {
+              "id": "x-ctl-barrel-login",
+              "gapKind": "authn_missing",
+              "type": "barrel-imported guard",
+              "file": "src/routes/invoices.js",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            },
+            {
+              "id": "x-ctl-helmet-app",
+              "gapKind": "security_headers_missing",
+              "type": "app-level middleware",
+              "file": "src/app.js",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            },
+            {
+              "id": "x-ctl-cross-pkg-authz",
+              "gapKind": "authz_missing",
+              "type": "cross-package guard",
+              "file": "src/routes/reports.js",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            }
+          ],
+          "findings": [
+            {
+              "source": "gap",
+              "kind": "cors_permissive",
+              "file": "src/app.js",
+              "line": 17,
+              "scope": "file",
+              "certainty": 0.9,
+              "matches": [
+                "x-cors-reflect"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "gap",
+              "kind": "rate_limit_missing",
+              "file": "src/routes/auth.js",
+              "line": 11,
+              "scope": "repository",
+              "certainty": 0.85,
+              "matches": [
+                "x-login-ratelimit"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "gap",
+              "kind": "authz_missing",
+              "file": "src/routes/invoices.js",
+              "line": 30,
+              "scope": "route",
+              "certainty": 0.7,
+              "matches": [
+                "x-authz-invoice"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "gap",
+              "kind": "input_validation_missing",
+              "file": "src/routes/reports.js",
+              "line": 11,
+              "scope": "route",
+              "certainty": 0.55,
+              "matches": [
+                "x-export-cmd"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "semgrep",
+              "kind": "attackcanvas-command-injection",
+              "file": "src/routes/reports.js",
+              "line": 12,
+              "matches": [
+                "x-export-cmd"
+              ],
+              "duplicate": true,
+              "falsifies": []
+            },
+            {
+              "source": "gap",
+              "kind": "transport_insecure",
+              "file": "src/services/notify.js",
+              "line": 2,
+              "scope": "file",
+              "certainty": 0.75,
+              "matches": [
+                "x-plain-webhook"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "gap",
+              "kind": "password_storage_weak",
+              "file": "src/services/passwords.js",
+              "line": 9,
+              "scope": "repository",
+              "certainty": 0.95,
+              "matches": [
+                "x-md5-password"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "semgrep",
+              "kind": "attackcanvas-weak-hash",
+              "file": "src/services/passwords.js",
+              "line": 9,
+              "matches": [
+                "x-md5-password"
+              ],
+              "duplicate": true,
+              "falsifies": []
+            }
+          ],
+          "counts": {
+            "tp": 6,
+            "fp": 0,
+            "fn": 0,
+            "skipped": 0,
+            "duplicates": 2,
+            "precision": 1,
+            "recall": 1,
+            "controls": 5,
+            "falseGaps": 0,
+            "falseGapRate": 0,
+            "assertedFalseGaps": 0,
+            "assertedFalseGapRate": 0
+          }
+        },
+        {
+          "repo": "seeded-next",
+          "issues": [
+            {
+              "id": "n-export-unauth",
+              "owasp": "A01:2025",
+              "file": "app/api/exports/route.ts",
+              "status": "TP",
+              "matchedBy": [
+                "gap:authn_missing@11"
+              ]
+            },
+            {
+              "id": "n-cors-wildcard",
+              "owasp": "A02:2025",
+              "file": "app/api/profile/route.ts",
+              "status": "TP",
+              "matchedBy": [
+                "gap:cors_permissive@6"
+              ]
+            },
+            {
+              "id": "n-jwt-none",
+              "owasp": "A04:2025",
+              "file": "lib/tokens.ts",
+              "status": "TP",
+              "matchedBy": [
+                "semgrep:attackcanvas-jwt-verify-none@15"
+              ]
+            },
+            {
+              "id": "n-sql-concat",
+              "owasp": "A05:2025",
+              "file": "app/api/search/route.ts",
+              "status": "TP",
+              "matchedBy": [
+                "gap:input_validation_missing@4",
+                "semgrep:attackcanvas-sql-string-concat@8"
+              ]
+            },
+            {
+              "id": "n-token-storage",
+              "owasp": "A07:2025",
+              "file": "app/login/page.tsx",
+              "status": "TP",
+              "matchedBy": [
+                "gap:client_secret_storage@20"
+              ]
+            },
+            {
+              "id": "n-jwt-literal",
+              "owasp": "A07:2025",
+              "file": "lib/tokens.ts",
+              "status": "TP",
+              "matchedBy": [
+                "semgrep:attackcanvas-hardcoded-jwt-secret@9"
+              ]
+            }
+          ],
+          "controls": [
+            {
+              "id": "n-ctl-with-auth-barrel",
+              "gapKind": "authn_missing",
+              "type": "barrel-imported guard",
+              "file": "app/api/orders/route.ts",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            },
+            {
+              "id": "n-ctl-with-role",
+              "gapKind": "authz_missing",
+              "type": "barrel-imported guard",
+              "file": "app/api/admin/users/[id]/route.ts",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            },
+            {
+              "id": "n-ctl-middleware-headers",
+              "gapKind": "security_headers_missing",
+              "type": "app-level middleware",
+              "file": "middleware.ts",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            },
+            {
+              "id": "n-ctl-next-errors",
+              "gapKind": "error_handling_gap",
+              "type": "framework default",
+              "file": "app/api/orders/route.ts",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            },
+            {
+              "id": "n-ctl-zod-barrel",
+              "gapKind": "input_validation_missing",
+              "type": "barrel-imported guard",
+              "file": "app/api/orders/route.ts",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            },
+            {
+              "id": "n-ctl-login-limiter",
+              "gapKind": "rate_limit_missing",
+              "type": "barrel-imported guard",
+              "file": "app/api/auth/login/route.ts",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            }
+          ],
+          "findings": [
+            {
+              "source": "gap",
+              "kind": "authn_missing",
+              "file": "app/api/exports/route.ts",
+              "line": 11,
+              "scope": "route",
+              "certainty": 0.9,
+              "matches": [
+                "n-export-unauth"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "gap",
+              "kind": "cors_permissive",
+              "file": "app/api/profile/route.ts",
+              "line": 6,
+              "scope": "file",
+              "certainty": 0.5,
+              "matches": [
+                "n-cors-wildcard"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "gap",
+              "kind": "input_validation_missing",
+              "file": "app/api/search/route.ts",
+              "line": 4,
+              "scope": "route",
+              "certainty": 0.55,
+              "matches": [
+                "n-sql-concat"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "semgrep",
+              "kind": "attackcanvas-sql-string-concat",
+              "file": "app/api/search/route.ts",
+              "line": 8,
+              "matches": [
+                "n-sql-concat"
+              ],
+              "duplicate": true,
+              "falsifies": []
+            },
+            {
+              "source": "gap",
+              "kind": "client_secret_storage",
+              "file": "app/login/page.tsx",
+              "line": 20,
+              "scope": "file",
+              "certainty": 0.75,
+              "matches": [
+                "n-token-storage"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "semgrep",
+              "kind": "attackcanvas-hardcoded-jwt-secret",
+              "file": "lib/tokens.ts",
+              "line": 9,
+              "matches": [
+                "n-jwt-literal"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "semgrep",
+              "kind": "attackcanvas-jwt-verify-none",
+              "file": "lib/tokens.ts",
+              "line": 15,
+              "matches": [
+                "n-jwt-none"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            }
+          ],
+          "counts": {
+            "tp": 6,
+            "fp": 0,
+            "fn": 0,
+            "skipped": 0,
+            "duplicates": 1,
+            "precision": 1,
+            "recall": 1,
+            "controls": 6,
+            "falseGaps": 0,
+            "falseGapRate": 0,
+            "assertedFalseGaps": 0,
+            "assertedFalseGapRate": 0
+          }
+        },
+        {
+          "repo": "seeded-monorepo",
+          "issues": [
+            {
+              "id": "m-authz-project",
+              "owasp": "A01:2025",
+              "file": "packages/api/src/routes/projects.ts",
+              "status": "TP",
+              "matchedBy": [
+                "gap:authz_missing@21"
+              ]
+            },
+            {
+              "id": "m-csrf-form",
+              "owasp": "A01:2025",
+              "file": "packages/api/src/routes/account.ts",
+              "status": "TP",
+              "matchedBy": [
+                "gap:csrf_missing@11"
+              ]
+            },
+            {
+              "id": "m-no-headers",
+              "owasp": "A02:2025",
+              "file": "packages/api/package.json",
+              "status": "TP",
+              "matchedBy": [
+                "gap:security_headers_missing@13"
+              ]
+            },
+            {
+              "id": "m-tls-off",
+              "owasp": "A04:2025",
+              "file": "packages/api/src/db.ts",
+              "status": "TP",
+              "matchedBy": [
+                "gap:transport_insecure@6"
+              ]
+            },
+            {
+              "id": "m-eval-filter",
+              "owasp": "A05:2025",
+              "file": "packages/api/src/routes/reports.ts",
+              "status": "TP",
+              "matchedBy": [
+                "gap:input_validation_missing@7",
+                "semgrep:attackcanvas-eval-user-input@13"
+              ]
+            },
+            {
+              "id": "m-hardcoded-apikey",
+              "owasp": "A07:2025",
+              "file": "packages/auth/src/serviceAccount.ts",
+              "status": "TP",
+              "matchedBy": [
+                "semgrep:attackcanvas-hardcoded-credentials@3"
+              ]
+            }
+          ],
+          "controls": [
+            {
+              "id": "m-ctl-barrel-guard",
+              "gapKind": "authn_missing",
+              "type": "cross-package guard",
+              "file": "packages/api/src/routes/projects.ts",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            },
+            {
+              "id": "m-ctl-cross-pkg-owner",
+              "gapKind": "authz_missing",
+              "type": "cross-package guard",
+              "file": "packages/api/src/routes/documents.ts",
+              "falseGap": true,
+              "asserted": true,
+              "gaps": [
+                "packages/api/src/routes/documents.ts:8 certainty 0.7"
+              ]
+            },
+            {
+              "id": "m-ctl-cross-pkg-kdf",
+              "gapKind": "password_storage_weak",
+              "type": "cross-package guard",
+              "file": "packages/api/src/routes/auth.ts",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            },
+            {
+              "id": "m-ctl-error-mw",
+              "gapKind": "error_handling_gap",
+              "type": "app-level middleware",
+              "file": "packages/api/src/routes/documents.ts",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            },
+            {
+              "id": "m-ctl-limiter-pkg",
+              "gapKind": "rate_limit_missing",
+              "type": "cross-package guard",
+              "file": "packages/api/src/routes/auth.ts",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            },
+            {
+              "id": "m-ctl-request-logger",
+              "gapKind": "logging_missing",
+              "type": "app-level middleware",
+              "file": "packages/api/src/routes/auth.ts",
+              "falseGap": false,
+              "asserted": false,
+              "gaps": []
+            }
+          ],
+          "findings": [
+            {
+              "source": "gap",
+              "kind": "security_headers_missing",
+              "file": "packages/api/package.json",
+              "line": 13,
+              "scope": "repository",
+              "certainty": 0.9,
+              "matches": [
+                "m-no-headers"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "gap",
+              "kind": "transport_insecure",
+              "file": "packages/api/src/db.ts",
+              "line": 6,
+              "scope": "file",
+              "certainty": 0.75,
+              "matches": [
+                "m-tls-off"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "gap",
+              "kind": "csrf_missing",
+              "file": "packages/api/src/routes/account.ts",
+              "line": 11,
+              "scope": "repository",
+              "certainty": 0.8,
+              "matches": [
+                "m-csrf-form"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "gap",
+              "kind": "authz_missing",
+              "file": "packages/api/src/routes/documents.ts",
+              "line": 8,
+              "scope": "route",
+              "certainty": 0.7,
+              "matches": [],
+              "duplicate": false,
+              "falsifies": [
+                "m-ctl-cross-pkg-owner"
+              ]
+            },
+            {
+              "source": "gap",
+              "kind": "authz_missing",
+              "file": "packages/api/src/routes/projects.ts",
+              "line": 21,
+              "scope": "route",
+              "certainty": 0.7,
+              "matches": [
+                "m-authz-project"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "gap",
+              "kind": "input_validation_missing",
+              "file": "packages/api/src/routes/reports.ts",
+              "line": 7,
+              "scope": "route",
+              "certainty": 0.55,
+              "matches": [
+                "m-eval-filter"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            },
+            {
+              "source": "semgrep",
+              "kind": "attackcanvas-eval-user-input",
+              "file": "packages/api/src/routes/reports.ts",
+              "line": 13,
+              "matches": [
+                "m-eval-filter"
+              ],
+              "duplicate": true,
+              "falsifies": []
+            },
+            {
+              "source": "semgrep",
+              "kind": "attackcanvas-hardcoded-credentials",
+              "file": "packages/auth/src/serviceAccount.ts",
+              "line": 3,
+              "matches": [
+                "m-hardcoded-apikey"
+              ],
+              "duplicate": false,
+              "falsifies": []
+            }
+          ],
+          "counts": {
+            "tp": 6,
+            "fp": 1,
+            "fn": 0,
+            "skipped": 0,
+            "duplicates": 1,
+            "precision": 0.8571428571428571,
+            "recall": 1,
+            "controls": 6,
+            "falseGaps": 1,
+            "falseGapRate": 0.16666666666666666,
+            "assertedFalseGaps": 1,
+            "assertedFalseGapRate": 0.16666666666666666
+          }
+        }
+      ],
+      "total": {
+        "tp": 18,
+        "fp": 1,
+        "fn": 0,
+        "skipped": 0,
+        "duplicates": 4,
+        "precision": 0.9473684210526315,
+        "recall": 1,
+        "controls": 17,
+        "falseGaps": 1,
+        "falseGapRate": 0.058823529411764705,
+        "assertedFalseGaps": 1,
+        "assertedFalseGapRate": 0.058823529411764705
+      },
+      "perOwasp": [
+        {
+          "owasp": "A01:2025",
+          "planted": 4,
+          "detected": 4,
+          "missed": 0,
+          "skipped": 0
+        },
+        {
+          "owasp": "A02:2025",
+          "planted": 3,
+          "detected": 3,
+          "missed": 0,
+          "skipped": 0
+        },
+        {
+          "owasp": "A04:2025",
+          "planted": 4,
+          "detected": 4,
+          "missed": 0,
+          "skipped": 0
+        },
+        {
+          "owasp": "A05:2025",
+          "planted": 3,
+          "detected": 3,
+          "missed": 0,
+          "skipped": 0
+        },
+        {
+          "owasp": "A07:2025",
+          "planted": 4,
+          "detected": 4,
+          "missed": 0,
+          "skipped": 0
+        }
+      ]
+    }
+  ]
+}

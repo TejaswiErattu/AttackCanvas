@@ -4,14 +4,18 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  isThreatKeyEntry,
   loadStatuses,
+  migrateStatuses,
   orderByStatus,
   setStatus,
   splitFullName,
+  statusesById,
   statusStorageKey,
   summarise,
   type StatusStorage,
 } from "@/client/findingStatus";
+import { threatKey } from "@/client/drift";
 import { EMPTY_FILTERS, filterThreats, hasActiveFilters } from "@/client/filterThreats";
 import type { Priority } from "@/shared/schema";
 import type { ThreatCardData } from "@/shared/viewModel";
@@ -161,5 +165,98 @@ describe("status facet in filterThreats", () => {
 
   it("counts the status facet as an active filter", () => {
     expect(hasActiveFilters({ ...EMPTY_FILTERS, statuses: ["fixed"] })).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Keyed by threatKey across runs
+// ---------------------------------------------------------------------------
+
+function card(id: string, title: string, components: string[], owasp: string[]): ThreatCardData {
+  return {
+    id,
+    title,
+    componentNames: components,
+    owasp: owasp.map((code) => ({ code, label: code })),
+  } as unknown as ThreatCardData;
+}
+
+describe("threatKey stability", () => {
+  it("is the same for the same threat under a new id, title case and component order", () => {
+    const a = card("threat-1", "SQL injection in login", ["API", "DB"], ["A05:2025"]);
+    const b = card("threat-7", "  sql Injection in login!", ["DB", "API"], ["A05:2025"]);
+    expect(threatKey(a)).toBe(threatKey(b));
+  });
+
+  it("differs when the components or OWASP codes differ", () => {
+    const a = card("threat-1", "Same", ["API"], ["A05:2025"]);
+    expect(threatKey(card("x", "Same", ["Worker"], ["A05:2025"]))).not.toBe(threatKey(a));
+    expect(threatKey(card("x", "Same", ["API"], ["A01:2025"]))).not.toBe(threatKey(a));
+  });
+
+  it("marks key entries apart from legacy id entries", () => {
+    expect(isThreatKeyEntry(threatKey(card("t", "X", [], [])))).toBe(true);
+    expect(isThreatKeyEntry("threat-3")).toBe(false);
+    expect(isThreatKeyEntry("[not json")).toBe(false);
+  });
+});
+
+describe("statusesById", () => {
+  it("lets a Fixed status follow the same threat to the next run under a new id", () => {
+    const run1 = card("threat-1", "Weak cookie", ["API"], ["A07:2025"]);
+    const storage = memoryStorage();
+    const saved = setStatus(storage, KEY, {}, threatKey(run1), "fixed");
+    const run2 = [
+      card("threat-1", "Open redirect", ["API"], ["A01:2025"]),
+      card("threat-2", "Weak cookie", ["API"], ["A07:2025"]),
+    ];
+    const reloaded = loadStatuses(storage, KEY);
+    expect(reloaded).toEqual(saved);
+    expect(statusesById(run2, reloaded)).toEqual({ "threat-2": "fixed" });
+  });
+});
+
+describe("migrateStatuses", () => {
+  const savedOn = {
+    threats: [card("threat-1", "Weak cookie", ["API"], ["A07:2025"])],
+    hiddenThreats: [card("threat-2", "Quiet one", ["API"], ["A01:2025"])],
+  };
+
+  it("rewrites id entries to threatKey entries using the run they were saved on", () => {
+    const { statuses, changed } = migrateStatuses(
+      { "threat-1": "fixed", "threat-2": "false_positive" },
+      savedOn,
+    );
+    expect(changed).toBe(true);
+    expect(statuses).toEqual({
+      [threatKey(savedOn.threats[0])]: "fixed",
+      [threatKey(savedOn.hiddenThreats[0])]: "false_positive",
+    });
+  });
+
+  it("drops id entries the saved run does not have, and keeps existing key entries", () => {
+    const existing = threatKey(card("x", "Other", ["API"], []));
+    const { statuses } = migrateStatuses(
+      { "threat-9": "fixed", [existing]: "accepted_risk" },
+      savedOn,
+    );
+    expect(statuses).toEqual({ [existing]: "accepted_risk" });
+  });
+
+  it("lets an existing key entry win over a migrated one", () => {
+    const key = threatKey(savedOn.threats[0]);
+    const { statuses } = migrateStatuses({ "threat-1": "fixed", [key]: "accepted_risk" }, savedOn);
+    expect(statuses).toEqual({ [key]: "accepted_risk" });
+  });
+
+  it("runs once: a migrated map has nothing left to migrate", () => {
+    const first = migrateStatuses({ "threat-1": "fixed" }, savedOn);
+    const second = migrateStatuses(first.statuses, null);
+    expect(second.changed).toBe(false);
+    expect(second.statuses).toBe(first.statuses);
+  });
+
+  it("drops every id entry when there is no saved run to read them against", () => {
+    expect(migrateStatuses({ "threat-1": "fixed" }, null)).toEqual({ statuses: {}, changed: true });
   });
 });

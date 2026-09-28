@@ -290,8 +290,11 @@ export function assembleThreatModel(input: AssembleInput): AssembleResult {
     schemaVersion: "1.0",
     analysisLevel: input.analysisLevel,
     repo: input.repo,
-    components: [...input.components],
-    dataFlows: [...input.dataFlows],
+    // By id, byte order: the model's arrays must not depend on the order a stage happened
+    // to list things in. (Trust boundaries and unknowns keep theirs: the diagram puts a
+    // component in the first boundary that lists it, and unknowns are ranked.)
+    components: [...input.components].sort((a, b) => cmp(a.id, b.id)),
+    dataFlows: [...input.dataFlows].sort((a, b) => cmp(a.id, b.id)),
     trustBoundaries: [...input.trustBoundaries],
     unknowns: [...input.unknowns],
     evidence,

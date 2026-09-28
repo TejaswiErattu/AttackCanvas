@@ -21,6 +21,7 @@ import { z } from "zod";
 import { callStructured, type ClaudeDeps } from "@/server/ai/claude";
 import { loadPrompt } from "@/server/ai/prompts";
 import type { CallUsage } from "@/server/ai/usage";
+import type { ModelId } from "@/server/ai/models";
 import type { ControlGap, Deployment } from "@/server/detect/types";
 import {
   CandidateQuestionSchema,
@@ -129,6 +130,8 @@ export type QuestionEffects = {
 };
 
 export type SelectQuestionsInput = {
+  /** Defaults to modelFor("questions"); the pipeline passes its level plan's. */
+  model?: ModelId;
   unknowns: readonly Unknown[];
   /** Scored threats -- the value formula needs each one's confidence. */
   threats: readonly Threat[];
@@ -277,6 +280,7 @@ export async function selectQuestions(
     jsonSchema: questionsJsonSchema,
     maxTokens: input.maxTokens ?? QUESTIONS_MAX_TOKENS,
     thinking: QUESTIONS_THINKING,
+    model: input.model,
     analysisId: input.analysisId,
     deps: input.deps,
   });

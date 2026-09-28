@@ -6,6 +6,7 @@ import type { EngineThreat } from "@/server/analysis/threats";
 import type { ControlGap } from "@/server/detect/types";
 import type {
   Component,
+  DataFlow,
   DraftThreat,
   Evidence,
   Owasp2025,
@@ -465,6 +466,75 @@ describe("assembleThreatModel", () => {
     if (first.ok && second.ok) {
       expect(first.model).toEqual(second.model);
     }
+  });
+
+  describe("byte-identical output", () => {
+    const comps: Component[] = ["web", "api", "db", "queue"].map((id) => ({ ...component, id, name: id.toUpperCase() }));
+    const flow = (id: string, source: string, target: string): DataFlow => ({
+      id,
+      sourceId: source,
+      targetId: target,
+      label: `${source} to ${target}`,
+      dataClassification: "internal",
+      crossesTrustBoundary: false,
+    });
+    const flows = [flow("f-3", "api", "queue"), flow("f-1", "web", "api"), flow("f-2", "api", "db")];
+    const g = gap({ id: "gap-1", certainty: 0.95 });
+    const gEv = gapEvidence(g);
+    const codeEv = ev({ kind: "code" });
+    const otherEv = ev({ id: "ev-code-2", kind: "config" });
+    const threats = [
+      threat("threat-10", { evidenceIds: [otherEv.id], componentIds: ["db", "api"] }),
+      threat("threat-2", { evidenceIds: [gEv.id], owasp: [] }),
+      threat("threat-1", { evidenceIds: [codeEv.id, otherEv.id] }),
+    ];
+    const json = (input: AssembleInput) => {
+      const result = assembleThreatModel(input);
+      expect(result.ok).toBe(true);
+      return JSON.stringify(result.ok ? result.model : null);
+    };
+
+    it("gives byte-identical JSON when the same inputs are assembled twice", () => {
+      const input = baseInput({ components: comps, dataFlows: flows, evidence: [gEv, codeEv, otherEv], threats, gaps: [g] });
+      expect(json(input)).toBe(json(input));
+    });
+
+    it("gives byte-identical JSON however the inputs are ordered", () => {
+      const reference = json(
+        baseInput({ components: comps, dataFlows: flows, evidence: [gEv, codeEv, otherEv], threats, gaps: [g], assumptions: ["a assumption", "b assumption"] }),
+      );
+      const shuffled = baseInput({
+        components: [comps[2], comps[0], comps[3], comps[1]],
+        dataFlows: [flows[1], flows[2], flows[0]],
+        evidence: [otherEv, gEv, codeEv],
+        threats: [threats[2], threats[0], threats[1]],
+        gaps: [g],
+        assumptions: ["b assumption", "a assumption"],
+      });
+      expect(json(shuffled)).toBe(reference);
+    });
+
+    it("orders components, flows, evidence and threats by id", () => {
+      const result = assembleThreatModel(
+        baseInput({ components: [comps[2], comps[0], comps[3], comps[1]], dataFlows: [flows[0], flows[2], flows[1]], evidence: [otherEv, gEv, codeEv], threats: [threats[0], threats[2], threats[1]], gaps: [g] }),
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const ids = (items: readonly { id: string }[]) => items.map((i) => i.id);
+      expect(ids(result.model.components)).toEqual(["api", "db", "queue", "web"]);
+      expect(ids(result.model.dataFlows)).toEqual(["f-1", "f-2", "f-3"]);
+      expect(ids(result.model.evidence)).toEqual([...ids(result.model.evidence)].sort());
+      expect(ids(result.model.threats)).toEqual(["threat-1", "threat-2", "threat-10"]);
+    });
+
+    it("leaves trust boundaries in the order given, since order decides which boundary a component is drawn in", () => {
+      const boundaries = [
+        { id: "z-edge", name: "Edge", componentIds: ["web"], description: "d" },
+        { id: "a-core", name: "Core", componentIds: ["api"], description: "d" },
+      ];
+      const result = assembleThreatModel(baseInput({ components: comps, trustBoundaries: boundaries }));
+      expect(result.ok && result.model.trustBoundaries.map((b) => b.id)).toEqual(["z-edge", "a-core"]);
+    });
   });
 
   it("does not touch src/shared/schema and never sends a partially valid model on failure", () => {

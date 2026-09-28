@@ -23,13 +23,13 @@ describe("parseRunArgs", () => {
   const parse = (argv: string[]) => parseRunArgs(argv, PIPELINE_TIMEOUT_MS, MAX_TIMEOUT_MS);
 
   it("defaults to the pipeline timeout when the flag is absent", () => {
-    expect(parse(["nodegoat"])).toEqual({ ok: true, value: { names: ["nodegoat"], timeoutMs: PIPELINE_TIMEOUT_MS } });
-    expect(parse([])).toEqual({ ok: true, value: { names: [], timeoutMs: PIPELINE_TIMEOUT_MS } });
+    expect(parse(["nodegoat"])).toEqual({ ok: true, value: { names: ["nodegoat"], timeoutMs: PIPELINE_TIMEOUT_MS, level: 2 } });
+    expect(parse([])).toEqual({ ok: true, value: { names: [], timeoutMs: PIPELINE_TIMEOUT_MS, level: 2 } });
   });
 
   it("accepts --timeout before or after repo names", () => {
-    expect(parse(["nodegoat", "--timeout", "1200000"])).toEqual({ ok: true, value: { names: ["nodegoat"], timeoutMs: 1_200_000 } });
-    expect(parse(["--timeout", "1200000", "a", "b"])).toEqual({ ok: true, value: { names: ["a", "b"], timeoutMs: 1_200_000 } });
+    expect(parse(["nodegoat", "--timeout", "1200000"])).toEqual({ ok: true, value: { names: ["nodegoat"], timeoutMs: 1_200_000, level: 2 } });
+    expect(parse(["--timeout", "1200000", "a", "b"])).toEqual({ ok: true, value: { names: ["a", "b"], timeoutMs: 1_200_000, level: 2 } });
   });
 
   it.each([["0"], ["-5"], ["1.5"], ["1e6"], ["abc"], [" 100"], [String(MAX_TIMEOUT_MS + 1)]])(

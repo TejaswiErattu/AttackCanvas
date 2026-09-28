@@ -1,8 +1,15 @@
 # Pending evaluation requirements (NodeGoat)
 
-Status: **pending, not implemented.** Recorded 2026-09-24 from the human labeler's decisions.
-`scripts/eval/lib.ts` and `scripts/eval/score.ts` do **not** yet implement the metric changes
-below. Do not run `score.ts` for the final NodeGoat report until they do.
+Status: **R1 implemented (2026-09-25, branch `eval-gap-sheet`); R2 still pending.** Recorded
+2026-09-24 from the human labeler's decisions. `recalledIds` in `scripts/eval/lib.ts` builds
+recall from supported rows only, and the per-class table reads the same set. `score.ts` still
+reports a single all-result recall, so do not use it for the final NodeGoat report's visible
+recall until R2 is done.
+
+R1 reproduces every reviewed all-result recall from the saved label sheets: after-fix 12/19,
+7f7211d 16/19, 7a0fb27 13/19, f64cfa8 14/19 and a3118b6 17/19. The previous any-row rule gave
+15, 19, 14, 17 and 18. For a3118b6, the difference is exactly `NG-VULNERABLE-DEPS`, matched
+only by threat-70 (`supported = n`). `tests/evalGaps.test.ts` pins that case.
 
 ## Metric decisions
 
@@ -13,8 +20,8 @@ An expected item counts as recalled only when **at least one** label row lists i
 - A row with `matchesExpected` filled and `supported = n` (e.g. after-fix threat-63,
   `NG-VULNERABLE-DEPS`, `n`) does **not** make that item recalled on its own. It still counts
   toward the unsupported rate.
-- Current code differs: `computeRepoMetrics` builds `matchedSet` from every row's
-  `matchesExpected` regardless of `supported` (`scripts/eval/lib.ts`, lines 368-371).
+- Implemented: `computeRepoMetrics` now builds `matchedSet` with `recalledIds`, which keeps
+  only rows with `supported = y`.
 
 ### R2. Two recall figures
 Report both, per repo and pooled:

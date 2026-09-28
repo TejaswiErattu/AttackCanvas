@@ -13,6 +13,10 @@
  * model call still in flight when the deadline fires is orphaned, not cancelled, and is
  * billed. Validated before any paid work; an invalid value exits 1 having done nothing.
  *
+ * --level <0-4> is the analysis level passed to createAnalysis and recorded in the saved
+ * result (default 2). The pipeline reads it through planFor (src/server/ai/levels.ts,
+ * Prompt H): it picks the models, budgets, STRIDE batch cap and whether questions run.
+ *
  * Refuses to start if any selected repo already has eval/results/<name>.json, before the
  * API key check or any network work; there is no override (move the file, or add a new
  * repo name).
@@ -77,7 +81,7 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  const { names, timeoutMs } = args.value;
+  const { names, timeoutMs, level } = args.value;
   const config = parseYamlWith(readFileSync(`${ROOT}/eval/repos.yaml`, "utf8"), ReposFileSchema, "eval/repos.yaml");
   const repos = selectRepos(config.repos, names);
   // Fail on a blank URL before spending anything on the earlier repos.
@@ -101,11 +105,11 @@ async function main(): Promise<void> {
 
   for (const repo of repos) {
     console.log(
-      `\n${repo.name}: analysing ${repo.url} (profile ${PROFILE}, questions skipped, ` +
+      `\n${repo.name}: analysing ${repo.url} (profile ${PROFILE}, level ${level}, questions skipped, ` +
         `timeout ${(timeoutMs / 1000).toFixed(0)}s per phase)`,
     );
     try {
-      const outcome = await analyseRepo(PIPELINE, repo, { timeoutMs, profile: PROFILE });
+      const outcome = await analyseRepo(PIPELINE, repo, { timeoutMs, profile: PROFILE, level });
       if (!outcome.ok) {
         for (const line of formatRunFailure(outcome.failure)) console.error(line);
         process.exitCode = 1;

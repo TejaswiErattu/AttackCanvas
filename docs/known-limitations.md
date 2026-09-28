@@ -41,8 +41,40 @@ certainty for exactly this reason.
   count. React Native `AsyncStorage` and encrypted wrappers (`secure-ls`, `secureStorage`)
   are out of scope. Writes in test, mock and storybook files are filtered by the
   source-file rule (`isScannable`), which is what keeps fixtures from reporting.
+- **Seeded bench (2026-09-25).** Two results from `pnpm bench` (`eval/bench/report.md`):
+  - *authz_missing, cross-package guard, package loaded.* `requireAuth, guard` from a loaded
+    workspace package (`@acme/auth`) is still reported at 0.7. Role and ownership checks
+    are read only from the route's own text and middleware names, never from an imported
+    definition. So 1d applies whether or not the package was loaded.
+  - *authz_missing, fragile pass.* A route whose last middleware is named `can…`
+    (`requireLogin, canReadReport`) is credited with a "permission call". This only happens
+    because the joined middleware names and the handler text put `canReadReport` next to
+    the handler's `(`. Reorder the middleware, or name it `ownsReport`, and the same route
+    is reported.
 - **General.** Every "absent" finding is bounded by what was loaded. A repository over the
   300-file or 2 MiB caps can have its control in a file that was never fetched.
+
+## Findings across runs
+
+The dashboard compares runs in the browser (`src/client/drift.ts`); nothing checks the code.
+
+- **"Not found this run" is not "fixed".** A model run can miss a threat an earlier run
+  reported. The drift panel counts those as "not found this run", never "resolved", and
+  says how many are not marked Fixed or False positive.
+- **Run-to-run variation.** The threats themselves come from a model, so two runs of an
+  unchanged repository can differ. Listing and counting every scored threat, including those
+  below 25% confidence, keeps the dashboard from swinging between "nothing" and "many"
+  because of the cutoff, but it does not remove the model's own variation.
+- **Only one run back.** The comparison is with the previous run alone.
+- **Identity is by name.** A threat is matched across runs by normalised title, component
+  names and OWASP codes. A reworded title or a renamed component reads as a different
+  threat, so its status does not follow and it shows as new.
+- **Status migration guesses the run.** Statuses saved by per-run number before they were
+  keyed by threat identity are converted once, against the last run stored in this
+  browser. If that is not the run they were set on, some are dropped or land on another
+  threat.
+- **Not-closed count covers confident threats only.** A threat that was already below 25% in
+  the last run and is gone now counts as "not found" but not in "not marked Fixed".
 
 ## Security review
 

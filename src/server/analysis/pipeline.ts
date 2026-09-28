@@ -99,7 +99,6 @@ import { normalizeSemgrep } from "@/server/scanners/semgrep";
 import { scanDependencies, type ScanFile } from "@/server/scanners/osv";
 import { buildRepoFacts, buildContext } from "@/server/analysis/context";
 import {
-  ARCHITECTURE_CONTEXT_TOKENS,
   inferArchitecture,
   mergeArchitecture,
 } from "@/server/analysis/architecture";
@@ -110,6 +109,8 @@ import { selectQuestions, type QuestionEffects } from "@/server/questions";
 import { applyAnswers, type DeveloperAnswer } from "@/server/analysis/answers";
 import { AiError, type CallFailure, type ClaudeDeps, type RequestDiagnostic } from "@/server/ai/claude";
 import { usageLedger } from "@/server/ai/usage";
+import { activeProfile } from "@/server/ai/models";
+import { planFor } from "@/server/ai/levels";
 import { log } from "@/server/log";
 import { isHidden } from "@/server/scoring";
 
@@ -142,6 +143,17 @@ export const ANALYSIS_TTL_MS = 60 * 60 * 1000;
 /** Shown once when a threat title repeats wording aimed at automated tools. */
 export const INJECTION_ECHO_LIMITATION =
   "A threat title repeats wording found in the repository that addresses automated tools. Read that threat critically: the repository may have tried to steer the analysis.";
+
+/**
+ * Reader-facing: a level-0 run capped its STRIDE batches, so some elements have no
+ * threats. Pure, so the wording is testable.
+ */
+export function skippedElementsLimitation(skipped: number, total: number): string {
+  return (
+    `This quick analysis looked for threats in ${total - skipped} of ${total} architecture ` +
+    `elements; ${skipped} were not analysed. Run level 1 or higher to cover them.`
+  );
+}
 
 export const NO_GAPS_LIMITATION =
   "No control gaps were detected. This may mean the project is well configured, or " +
@@ -853,8 +865,13 @@ async function runSteps(state: AnalysisState, deps: PipelineDeps): Promise<Analy
   // C. mapping_architecture (PAID) ------------------------------------------
   setStage(state, "mapping_architecture");
 
-  const context = buildContext(facts, ARCHITECTURE_CONTEXT_TOKENS);
+  // The level decides budgets, batching and questions; the profile may override models.
+  const plan = planFor(state.analysisLevel, activeProfile());
+  const context = buildContext(facts, plan.architecture.contextTokens);
   const { draft } = await deps.inferArchitecture({
+    model: plan.models.architecture,
+    maxTokens: plan.architecture.maxTokens,
+    thinking: plan.architecture.thinking,
     repo: { owner: parsed.owner, name: parsed.repo },
     context,
     analysisId: state.id,
@@ -874,6 +891,10 @@ async function runSteps(state: AnalysisState, deps: PipelineDeps): Promise<Analy
     routePaths: detector.routes.map((route) => route.normalizedPath),
     files: loaded.files,
     sessionCookies: detector.sessionCookies,
+    model: plan.models.stride,
+    maxTokens: plan.stride.maxTokens,
+    thinking: plan.stride.thinking,
+    ...(plan.stride.maxBatches === null ? {} : { maxBatches: plan.stride.maxBatches }),
     analysisId: state.id,
     deps: deps.ai,
     // Checked before every batch: no new provider request once the job is cancelled or
@@ -939,17 +960,27 @@ async function runSteps(state: AnalysisState, deps: PipelineDeps): Promise<Analy
     ? [INJECTION_ECHO_LIMITATION]
     : [];
   if (noGaps) extraLimitations.push(NO_GAPS_LIMITATION);
+  const skippedCount = engine.skippedElementIds?.length ?? 0;
+  if (skippedCount > 0) {
+    extraLimitations.push(
+      skippedElementsLimitation(skippedCount, engine.elementCount ?? skippedCount),
+    );
+  }
 
   // E. questions engine (PAID only if a candidate qualifies) ----------------
-  const q = await deps.selectQuestions({
-    unknowns: assembled.model.unknowns,
-    threats: assembled.model.threats, // scored -- this is why this runs after assemble
-    gaps: detector.gaps,
-    components: assembled.model.components,
-    deployment: detector.deployment,
-    analysisId: state.id,
-    deps: deps.ai,
-  });
+  // Levels without questions (level 0) skip the call and go straight to results.
+  const q = plan.questions
+    ? await deps.selectQuestions({
+        model: plan.models.questions,
+        unknowns: assembled.model.unknowns,
+        threats: assembled.model.threats, // scored -- this is why this runs after assemble
+        gaps: detector.gaps,
+        components: assembled.model.components,
+        deployment: detector.deployment,
+        analysisId: state.id,
+        deps: deps.ai,
+      })
+    : { questions: [], effects: new Map(), limitations: [], skippedReasons: [] };
   if (q.skippedReasons.length > 0) logSkippedUnknowns(q.skippedReasons);
   // REQUIRED, not hygiene: everything from here on (section F/G) writes to `state`
   // (questions, pending, threatModel) with no further await in between, so this is the

@@ -1,0 +1,74 @@
+# Labels for seeded-express. Written by hand before the bench was first run.
+# issue.file/line: where the finding is reported (for a repository-wide absence, the
+# detector's anchor). A finding matches an issue when the file is the same and its kind
+# equals the issue's gapKind or ruleId. control.file: where a false gap of that kind would
+# be reported. See tests/fixtures/seeded/README.md.
+repo: seeded-express
+issues:
+  - id: x-authz-invoice
+    class: Invoice read by id with no ownership check (IDOR)
+    owasp: A01:2025
+    file: src/routes/invoices.js
+    line: 30
+    gapKind: authz_missing
+  - id: x-cors-reflect
+    class: CORS reflects any origin with credentials
+    owasp: A02:2025
+    file: src/app.js
+    line: 17
+    gapKind: cors_permissive
+  - id: x-md5-password
+    class: Passwords hashed with salted MD5
+    owasp: A04:2025
+    file: src/services/passwords.js
+    line: 9
+    gapKind: password_storage_weak
+    ruleId: attackcanvas-weak-hash
+  - id: x-plain-webhook
+    class: Invoice data posted to a partner over plain HTTP
+    owasp: A04:2025
+    file: src/services/notify.js
+    line: 2
+    gapKind: transport_insecure
+  - id: x-export-cmd
+    class: Shell command built from an unvalidated query parameter
+    owasp: A05:2025
+    file: src/routes/reports.js
+    line: 12
+    gapKind: input_validation_missing
+    ruleId: attackcanvas-command-injection
+  - id: x-login-ratelimit
+    class: Login has no rate limiting or lockout
+    owasp: A07:2025
+    file: src/routes/auth.js
+    line: 11
+    gapKind: rate_limit_missing
+controls:
+  - id: x-ctl-admin-prefix
+    gapKind: authz_missing
+    file: src/routes/admin.js
+    how: app.use("/api/admin", requireAdmin) in src/app.js guards every route of the admin router mounted at the same prefix
+    type: app-level middleware
+    review: "1b"
+  - id: x-ctl-express5-async
+    gapKind: error_handling_gap
+    file: src/routes/invoices.js
+    how: Express 5 passes a rejected async handler's error to the default error handler, so awaits with no try/catch are handled
+    type: framework default
+  - id: x-ctl-barrel-login
+    gapKind: authn_missing
+    file: src/routes/invoices.js
+    how: POST /api/invoices runs requireLogin, imported through the src/middleware/index.js barrel rather than the file that defines it
+    type: barrel-imported guard
+    review: "2b"
+  - id: x-ctl-helmet-app
+    gapKind: security_headers_missing
+    file: src/app.js
+    how: app.use(helmet()) sets security headers for the whole app
+    type: app-level middleware
+  - id: x-ctl-cross-pkg-authz
+    gapKind: authz_missing
+    file: src/routes/reports.js
+    how: GET /api/reports/:reportId runs canReadReport from the private @northwind/policy package, which checks the caller may read that report; its code is not in this repository
+    type: cross-package guard
+    review: "1d"

@@ -8,6 +8,7 @@ import {
   lastRunKey,
   newThreatKeys,
   prevRunKey,
+  readLastRun,
   recordRun,
   threatKey,
   type DriftModel,
@@ -32,9 +33,10 @@ function threat(
   title: string,
   componentNames: string[],
   owasp: string[],
+  confidence = 60,
 ): ThreatCardData {
   return {
-    id, title, componentNames,
+    id, title, componentNames, severity: "high", confidence,
     owasp: owasp.map((code) => ({ code, label: code })),
   } as unknown as ThreatCardData;
 }
@@ -98,10 +100,17 @@ describe("diffThreatModels", () => {
     expect(d.flows.removed.map((f) => f.label)).toEqual(["old"]);
   });
 
-  it("classifies threats as new, persisting and resolved", () => {
+  it("classifies threats as new, persisting and not found this run", () => {
     expect(diff.threats.new.map((t) => t.title)).toEqual(["Open redirect"]);
-    expect(diff.threats.resolved.map((t) => t.title)).toEqual(["Weak session cookie"]);
+    expect(diff.threats.notFound.map((t) => t.title)).toEqual(["Weak session cookie"]);
+    expect(diff.threats.droppedBelowCutoff).toEqual([]);
     expect(diff.threats.persisting).toHaveLength(1);
+  });
+
+  it("has no resolved group: absence is never reported as resolved or fixed", () => {
+    expect(Object.keys(diff.threats).sort()).toEqual(
+      ["droppedBelowCutoff", "new", "notFound", "persisting"],
+    );
   });
 
   it("matches a threat despite title case, punctuation, spacing and component order", () => {
@@ -121,7 +130,7 @@ describe("diffThreatModels", () => {
     expect(d.components).toEqual({ added: [], removed: [] });
     expect(d.flows).toEqual({ added: [], removed: [] });
     expect(d.threats.new).toEqual([]);
-    expect(d.threats.resolved).toEqual([]);
+    expect(d.threats.notFound).toEqual([]);
     expect(d.threats.persisting).toHaveLength(2);
   });
 
@@ -134,10 +143,102 @@ describe("diffThreatModels", () => {
   });
 });
 
+describe("diffThreatModels over visible and below-25% threats", () => {
+  const sqli = threat("t1", "SQL injection in login", ["API"], A, 70);
+  const cookie = threat("t2", "Weak session cookie", ["API"], ["A07:2025"], 55);
+  const csrf = threat("t3", "Missing CSRF token", ["API"], ["A01:2025"], 40);
+  const before = { nodes: [], edges: [], threats: [sqli, cookie, csrf], hiddenThreats: [] };
+
+  it("reports a threat now below 25% as dropped, not as not found", () => {
+    const after = {
+      nodes: [], edges: [],
+      threats: [threat("n1", "SQL injection in login", ["API"], A, 70)],
+      hiddenThreats: [threat("n2", "Weak session cookie", ["API"], ["A07:2025"], 12)],
+    };
+    const d = diffThreatModels(before, after);
+    expect(d.threats.droppedBelowCutoff.map((t) => [t.title, t.confidence])).toEqual([
+      ["Weak session cookie", 12],
+    ]);
+    expect(d.threats.notFound.map((t) => t.title)).toEqual(["Missing CSRF token"]);
+    expect(d.threats.persisting.map((t) => t.title)).toEqual(["SQL injection in login"]);
+    expect(d.threats.new).toEqual([]);
+  });
+
+  it("reproduces the AltoroJ case: every threat below 25% is dropped, none not found", () => {
+    const after = {
+      nodes: [], edges: [], threats: [],
+      hiddenThreats: [
+        threat("n1", "SQL injection in login", ["API"], A, 20),
+        threat("n2", "Weak session cookie", ["API"], ["A07:2025"], 20),
+        threat("n3", "Missing CSRF token", ["API"], ["A01:2025"], 20),
+        threat("n4", "Something else", ["API"], ["A05:2025"], 10),
+      ],
+    };
+    const d = diffThreatModels(before, after);
+    expect(d.threats.droppedBelowCutoff).toHaveLength(3);
+    expect(d.threats.notFound).toEqual([]);
+    // A threat new this run but below 25% is not listed as new.
+    expect(d.threats.new).toEqual([]);
+  });
+
+  it("counts a threat hidden last run and visible now as persisting", () => {
+    const d = diffThreatModels(
+      { nodes: [], edges: [], threats: [], hiddenThreats: [threat("h", "Weak session cookie", ["API"], ["A07:2025"], 10)] },
+      { nodes: [], edges: [], threats: [cookie] },
+    );
+    expect(d.threats.persisting.map((t) => t.title)).toEqual(["Weak session cookie"]);
+    expect(d.threats.new).toEqual([]);
+  });
+
+  it("lists a threat hidden last run and gone now as not found, flagged below cutoff", () => {
+    const d = diffThreatModels(
+      { nodes: [], edges: [], threats: [], hiddenThreats: [threat("h", "Old", ["API"], A, 10)] },
+      { nodes: [], edges: [], threats: [] },
+    );
+    expect(d.threats.notFound.map((t) => [t.title, t.belowCutoff])).toEqual([["Old", true]]);
+  });
+
+  it("does not list a threat hidden in both runs in any group", () => {
+    const h = threat("h", "Quiet", ["API"], A, 10);
+    const d = diffThreatModels(
+      { nodes: [], edges: [], threats: [], hiddenThreats: [h] },
+      { nodes: [], edges: [], threats: [], hiddenThreats: [h] },
+    );
+    expect(d.threats).toEqual({ new: [], persisting: [], notFound: [], droppedBelowCutoff: [] });
+  });
+
+  it("reads an old snapshot without hiddenThreats as having none", () => {
+    const oldSnapshot = { nodes: [], edges: [], threats: [sqli, cookie] } as DriftModel;
+    const d = diffThreatModels(oldSnapshot, {
+      nodes: [], edges: [], threats: [sqli],
+      hiddenThreats: [threat("n2", "Weak session cookie", ["API"], ["A07:2025"], 12)],
+    });
+    expect(d.threats.droppedBelowCutoff.map((t) => t.title)).toEqual(["Weak session cookie"]);
+    expect(d.threats.notFound).toEqual([]);
+  });
+
+  it("carries severity and confidence on each ref", () => {
+    const d = diffThreatModels(before, { nodes: [], edges: [], threats: [] });
+    expect(d.threats.notFound[0]).toMatchObject({
+      title: "SQL injection in login", severity: "high", confidence: 70, belowCutoff: false,
+      key: threatKey(sqli),
+    });
+  });
+});
+
 describe("newThreatKeys", () => {
   it("returns the keys of threats absent from the previous run", () => {
     const keys = newThreatKeys(prev, next);
     expect([...keys]).toEqual([threatKey(next.threats[1])]);
+  });
+
+  it("does not badge a threat that was below 25% last run as new", () => {
+    const h = threat("h", "Quiet", ["API"], A, 10);
+    const keys = newThreatKeys(
+      { nodes: [], edges: [], threats: [], hiddenThreats: [h] },
+      { nodes: [], edges: [], threats: [threat("v", "Quiet", ["API"], A, 50)] },
+    );
+    expect(keys.size).toBe(0);
   });
 });
 
@@ -176,6 +277,24 @@ describe("recordRun", () => {
     const again = recordRun(storage, "acme", "shop", next);
     expect(again?.nodes[0].id).toBe("c1");
     expect(JSON.parse(storage.data[prevRunKey("acme", "shop")]).nodes[0].id).toBe("c1");
+  });
+
+  it("stores hidden threats in the snapshot and returns them with it", () => {
+    const storage = memoryStorage();
+    const withHidden = { ...prev, hiddenThreats: [threat("h", "Quiet", ["API"], A, 10)] };
+    recordRun(storage, "acme", "shop", withHidden);
+    expect(JSON.parse(storage.data[lastRunKey("acme", "shop")]).hiddenThreats).toHaveLength(1);
+    expect(recordRun(storage, "acme", "shop", next)?.hiddenThreats).toHaveLength(1);
+  });
+
+  it("loads an old snapshot without hiddenThreats, and drops one whose hiddenThreats is junk", () => {
+    const storage = memoryStorage();
+    storage.data[lastRunKey("acme", "shop")] = JSON.stringify({ nodes: [], edges: [], threats: [] });
+    expect(readLastRun(storage, "acme", "shop")).toEqual({ nodes: [], edges: [], threats: [] });
+    storage.data[lastRunKey("acme", "shop")] = JSON.stringify({
+      nodes: [], edges: [], threats: [], hiddenThreats: "nope",
+    });
+    expect(readLastRun(storage, "acme", "shop")).toBeNull();
   });
 
   it("keeps repositories apart", () => {

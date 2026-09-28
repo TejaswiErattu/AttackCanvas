@@ -3,10 +3,12 @@
 /**
  * Severity headline for the dashboard.
  *
- * Every number shown here is read straight from the server view model: `counts` is
- * DashboardViewModel.counts and `basisCounts` is the route's own derived count. Nothing is
- * re-tallied from the threat list, because the counts are part of the scored result
- * (CLAUDE.md rule 2), not a display convenience.
+ * Every number shown here is read from the server view model. Each severity tile is
+ * DashboardViewModel.counts (threats at 25% confidence or above) plus hiddenCounts (threats
+ * below it), so the tiles cover every scored threat and match the threat list, which lists
+ * them all. The line under the tiles says how many are below 25%. Fix now is the server's
+ * fixNowTotal alone: a threat below 25% never counts toward it. Nothing is re-tallied from
+ * the threat list (CLAUDE.md rule 2).
  *
  * The severity palette is exported because ThreatCard and ArchitectureGraph must colour
  * the same severity identically; it lives here rather than in a new shared module.
@@ -69,6 +71,8 @@ type SeveritySummaryProps = {
   fixNowCount: number;
   /** The reader's own triage counts over the listed threats; omitted when not tracked. */
   statusCounts?: StatusCounts;
+  /** Counts of threats below 25% confidence, added to the tiles. */
+  hiddenCounts?: SeverityCounts | null;
 };
 
 function readCount(counts: SeverityCounts | undefined, severity: Severity): number {
@@ -81,11 +85,12 @@ export default function SeveritySummary({
   basisCounts,
   fixNowCount,
   statusCounts,
+  hiddenCounts = null,
 }: SeveritySummaryProps) {
-  const total = SEVERITY_ORDER.reduce(
-    (sum, severity) => sum + readCount(counts, severity),
-    0,
-  );
+  const low = (severity: Severity) => readCount(hiddenCounts ?? undefined, severity);
+  const all = (severity: Severity) => readCount(counts, severity) + low(severity);
+  const total = SEVERITY_ORDER.reduce((sum, severity) => sum + all(severity), 0);
+  const lowTotal = SEVERITY_ORDER.reduce((sum, severity) => sum + low(severity), 0);
 
   return (
     <section
@@ -107,7 +112,7 @@ export default function SeveritySummary({
               {SEVERITY_TEXT[severity]}
             </dt>
             <dd className="mt-1 font-display text-3xl font-semibold tabular-nums text-fg">
-              {readCount(counts, severity)}
+              {all(severity)}
             </dd>
           </div>
         ))}
@@ -120,7 +125,7 @@ export default function SeveritySummary({
       {total > 0 ? (
         <div aria-hidden="true" className="mt-4 flex h-1.5 w-full overflow-hidden rounded-full bg-surface-3">
           {SEVERITY_ORDER.map((severity) => {
-            const count = readCount(counts, severity);
+            const count = all(severity);
             return count > 0 ? (
               <span
                 key={severity}
@@ -132,9 +137,11 @@ export default function SeveritySummary({
         </div>
       ) : null}
 
-      <p className="mt-4 text-sm text-muted">
-        {total} threat{total === 1 ? "" : "s"} shown. Threats below 25% confidence are
-        hidden by the analysis.
+      <p data-testid="scored-line" className="mt-4 text-sm text-muted">
+        {total} threat{total === 1 ? "" : "s"} scored
+        {lowTotal > 0
+          ? `, ${lowTotal} of them below 25% confidence: unverified, greyed in the list and never in Fix now.`
+          : "."}
       </p>
 
       {statusCounts ? (
@@ -148,9 +155,7 @@ export default function SeveritySummary({
       ) : null}
 
       {basisCounts ? (
-        // Labelled "all scored threats" on purpose: the route derives basisCounts from the
-        // full model, while the list above is the >= 0.25 confidence view. See
-        // docs/build-log.md.
+        // The route derives basisCounts from the full model, the same set the tiles count.
         <p className="mt-1 text-sm text-muted">
           Across all scored threats: {basisCounts.evidence_backed}{" "}
           {BASIS_LABELS.evidence_backed.toLowerCase()}, {basisCounts.assumption_dependent}{" "}

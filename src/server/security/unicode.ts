@@ -43,6 +43,22 @@ export function toWellFormedText(text: string): string {
 }
 
 /**
+ * Bidirectional formatting controls: embeddings and overrides (U+202A-U+202E) and isolates
+ * (U+2066-U+2069). They change how a line is DRAWN without changing its bytes, so a reader
+ * (or a model) can be shown text in a different order from the one a parser sees, the
+ * "Trojan Source" trick. Repository text has no honest need for them in source or config.
+ */
+export const BIDI_CONTROLS = /[\u202A-\u202E\u2066-\u2069]/g;
+
+/** `text` with every bidirectional control written out as a visible [U+XXXX] marker. */
+export function neutraliseBidiControls(text: string): string {
+  return text.replace(
+    BIDI_CONTROLS,
+    (char) => `[U+${char.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}]`,
+  );
+}
+
+/**
  * The first `max` UTF-16 code units of `text`, one fewer when the cut would fall between
  * the two halves of a surrogate pair. Identical to text.slice(0, max) otherwise, so ASCII
  * and BMP-only text is cut exactly as before.

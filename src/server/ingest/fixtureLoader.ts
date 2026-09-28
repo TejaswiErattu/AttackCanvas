@@ -176,6 +176,20 @@ export function isPlainFileWithinRoot(root: string, absPath: string): boolean {
   return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 
+function realpathOrUndefined(path: string): string | undefined {
+  try {
+    return realpathSync(path);
+  } catch {
+    return undefined;
+  }
+}
+
+/** True when real path `inner` is `outer` itself or a path inside it. */
+function isSameOrInside(outer: string, inner: string): boolean {
+  const rel = relative(outer, inner);
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
 /** Every plain file under `dir`, as repository-relative POSIX paths, sorted for determinism. */
 function listFixtureFiles(dir: string): string[] {
   return readdirSync(dir, { recursive: true, withFileTypes: true })
@@ -197,11 +211,17 @@ function listFixtureFiles(dir: string): string[] {
  * Deliberately does NOT enforce loadRepository's MIN_SOURCE_FILES: the canary repo
  * exists to prove an injection defense, not to look like a real codebase, and has only
  * two source files.
+ *
+ * `root` lets code (never a URL: the pipeline's dispatch passes three arguments) read a
+ * fixture from a subdirectory such as tests/fixtures/seeded, which the seeded bench
+ * (scripts/eval/bench.ts) uses. It must resolve to FIXTURE_ROOT or a directory inside it,
+ * so it widens nothing beyond tests/fixtures/; the repo name keeps NAME_PATTERN.
  */
 export async function loadFixtureRepo(
   owner: string,
   repo: string,
   ref?: string,
+  root: string = FIXTURE_ROOT,
 ): Promise<LoadedRepo> {
   if (!fixturesEnabled()) {
     throw new IngestError("REPO_NOT_FOUND", "fixture repos are not available");
@@ -213,7 +233,17 @@ export async function loadFixtureRepo(
     throw new IngestError("REPO_NOT_FOUND", `invalid fixture name "${repo}"`);
   }
 
-  const dir = join(FIXTURE_ROOT, repo);
+  const realFixtureRoot = realpathOrUndefined(FIXTURE_ROOT);
+  const realRoot = realpathOrUndefined(root);
+  if (
+    realFixtureRoot === undefined ||
+    realRoot === undefined ||
+    !isSameOrInside(realFixtureRoot, realRoot)
+  ) {
+    throw new IngestError("REPO_NOT_FOUND", "fixture root is outside the fixture directory");
+  }
+
+  const dir = join(root, repo);
   let isDirectory: boolean;
   try {
     // Real stat (follows symlinks): a symlinked fixture directory that ultimately
@@ -227,12 +257,10 @@ export async function loadFixtureRepo(
     throw new IngestError("REPO_NOT_FOUND", `no fixture repo named "${repo}"`);
   }
 
-  // The whole fixture directory must itself resolve inside FIXTURE_ROOT -- guards
-  // against tests/fixtures/<repo> being a symlink to somewhere else entirely.
-  const realRoot = realpathSync(FIXTURE_ROOT);
+  // The whole fixture directory must itself resolve inside the root -- guards against
+  // tests/fixtures/<repo> being a symlink to somewhere else entirely.
   const realDir = realpathSync(dir);
-  const dirRel = relative(realRoot, realDir);
-  if (dirRel === ".." || dirRel.startsWith(`..${sep}`) || isAbsolute(dirRel)) {
+  if (!isSameOrInside(realRoot, realDir) || realDir === realRoot) {
     throw new IngestError("REPO_NOT_FOUND", `fixture "${repo}" escapes the fixture root`);
   }
 

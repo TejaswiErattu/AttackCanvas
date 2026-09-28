@@ -8,6 +8,10 @@
  * component never re-sorts — filtering narrows the list but leaves the sequence intact.
  * (The dashboard alone moves handled findings after open ones within a priority band; see
  * orderByStatus in src/client/findingStatus.ts.)
+ *
+ * Every scored threat is listed. Threats below 25% confidence come after the others,
+ * greyed and badged as unverified; the "Show N low-confidence threats" toggle (on by
+ * default) can take them out of the list. They never enter Fix now.
  */
 
 import type { ThreatCardData } from "@/shared/viewModel";
@@ -30,7 +34,19 @@ type ThreatListProps = {
   repo?: IssueRepo;
   /** Threat keys (threatKey in src/client/drift.ts) that are new since the last run. */
   newKeys?: ReadonlySet<string>;
+  /** Filtered below-25% threats (the view model's hiddenThreats), shown after the list when `showHidden` is on. */
+  hiddenThreats?: readonly ThreatCardData[];
+  /** All below-25% threats before filtering, for the toggle's "Show N" label. */
+  hiddenTotal?: number;
+  showHidden?: boolean;
+  onShowHiddenChange?: (show: boolean) => void;
 };
+
+export const SHOW_HIDDEN_ID = "show-low-confidence";
+
+export function showHiddenLabel(n: number): string {
+  return `Show ${n} low-confidence threat${n === 1 ? "" : "s"}`;
+}
 
 const REASON_TEXT: Record<HiddenReason, string> = {
   no_evidence: "no cited evidence",
@@ -71,37 +87,88 @@ export default function ThreatList({
   onStatusChange,
   repo,
   newKeys,
+  hiddenThreats = [],
+  hiddenTotal = 0,
+  showHidden = false,
+  onShowHiddenChange,
 }: ThreatListProps) {
   const items = Array.isArray(threats) ? threats : [];
+  const lowItems = showHidden && Array.isArray(hiddenThreats) ? hiddenThreats : [];
+  const canToggle = hiddenTotal > 0 && onShowHiddenChange !== undefined;
 
-  if (items.length === 0) {
+  const card = (threat: ThreatCardData, belowCutoff: boolean) => (
+    <li key={threat.id}>
+      <ThreatCard
+        threat={threat}
+        selected={selectedId === threat.id}
+        onSelect={onSelect}
+        status={statusOf(statuses, threat.id)}
+        onStatusChange={onStatusChange}
+        repo={repo}
+        isNew={newKeys?.has(threatKey(threat)) ?? false}
+        belowCutoff={belowCutoff}
+      />
+    </li>
+  );
+
+  const toggle = canToggle ? (
+    <label className="mb-3 flex items-center gap-2 text-sm text-muted">
+      <input
+        id={SHOW_HIDDEN_ID}
+        type="checkbox"
+        checked={showHidden}
+        onChange={(event) => onShowHiddenChange?.(event.target.checked)}
+        className="h-4 w-4 accent-mint"
+      />
+      {showHiddenLabel(hiddenTotal)}
+    </label>
+  ) : null;
+
+  const shown = items.length + lowItems.length;
+  const total = totalCount + (showHidden ? hiddenTotal : 0);
+
+  if (shown === 0) {
     return (
-      <p className="rounded-2xl border border-dashed border-line-strong p-8 text-center text-sm text-muted">
-        {emptyMessage(totalCount, hiddenSummary)}
-      </p>
+      <div>
+        {toggle}
+        <p className="rounded-2xl border border-dashed border-line-strong p-8 text-center text-sm text-muted">
+          {emptyMessage(total, hiddenSummary)}
+          {canToggle && !showHidden ? (
+            <>
+              {" "}
+              <button
+                type="button"
+                onClick={() => onShowHiddenChange?.(true)}
+                aria-controls={SHOW_HIDDEN_ID}
+                className="text-mint underline underline-offset-2"
+              >
+                {showHiddenLabel(hiddenTotal)}
+              </button>
+            </>
+          ) : null}
+        </p>
+      </div>
     );
   }
 
   return (
     <div>
+      {toggle}
       <p className="mb-3 text-sm text-muted" aria-live="polite">
-        Showing {items.length} of {totalCount} threat{totalCount === 1 ? "" : "s"}
+        Showing {shown} of {total} threat{total === 1 ? "" : "s"}
+        {lowItems.length ? `, ${lowItems.length} below 25% confidence` : ""}
       </p>
-      <ul className="space-y-3">
-        {items.map((threat) => (
-          <li key={threat.id}>
-            <ThreatCard
-              threat={threat}
-              selected={selectedId === threat.id}
-              onSelect={onSelect}
-              status={statusOf(statuses, threat.id)}
-              onStatusChange={onStatusChange}
-              repo={repo}
-              isNew={newKeys?.has(threatKey(threat)) ?? false}
-            />
-          </li>
-        ))}
-      </ul>
+      {items.length ? (
+        <ul className="space-y-3">{items.map((threat) => card(threat, false))}</ul>
+      ) : null}
+      {lowItems.length ? (
+        <section aria-label="Low-confidence threats" className="mt-6">
+          <h3 className="mb-3 text-[11px] font-medium uppercase tracking-[0.14em] text-muted">
+            Below 25% confidence ({lowItems.length})
+          </h3>
+          <ul className="space-y-3">{lowItems.map((threat) => card(threat, true))}</ul>
+        </section>
+      ) : null}
     </div>
   );
 }

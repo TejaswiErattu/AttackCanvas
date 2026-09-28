@@ -367,6 +367,9 @@ function resolveDeps(overrides?: Partial<ClaudeDeps>): ClaudeDeps {
 // Public shape
 // ---------------------------------------------------------------------------
 
+/** Extended-thinking setting sent with a call. Opus 5 and Sonnet 5 reject budget_tokens. */
+export type ThinkingSetting = { type: "disabled" } | { type: "adaptive" };
+
 export type CallStructuredOptions<T> = {
   stage: AiStage;
   /** Instructions. Ours, never repository-derived. Sent as a cacheable block. */
@@ -394,9 +397,13 @@ export type CallStructuredOptions<T> = {
    * Extended-thinking control. Left out (the default), the request carries no `thinking`
    * field and the model behaves as it always has for this stage. `{ type: "disabled" }`
    * turns thinking off for this call only: reasoning tokens count against `max_tokens`
-   * and can consume all of it, leaving no room for the JSON. Set per call, never globally.
+   * and can consume all of it, leaving no room for the JSON. `{ type: "adaptive" }` lets
+   * the model think (level 4 STRIDE); the caller raises maxTokens to leave room for it.
+   * Set per call, never globally.
    */
-  thinking?: { type: "disabled" };
+  thinking?: ThinkingSetting;
+  /** The model to call. Defaults to modelFor(stage); the pipeline passes its level plan's. */
+  model?: ModelId;
   /**
    * Distinguishes several calls of one stage in the same analysis (a threat batch's
    * index), so their development dumps do not overwrite one another. Letters, digits,
@@ -445,7 +452,7 @@ export async function callStructured<T>(
     );
   }
   const deps = resolveDeps(options.deps);
-  const model = modelFor(stage);
+  const model = options.model ?? modelFor(stage);
 
   // Rule 3. Before anything else, and before any debug dump: if a secret survived the
   // redactor this call must not happen, and the dump must not be written either. The
@@ -603,7 +610,7 @@ async function send(args: {
   onResponse: (received: Received) => void;
   /** The validation attempt this request belongs to (1 or 2). */
   attempt: number;
-  thinking?: { type: "disabled" };
+  thinking?: ThinkingSetting;
   stage: AiStage;
 }): Promise<SendResult> {
   const { deps, model, jsonSchema, maxTokens, signal } = args;
