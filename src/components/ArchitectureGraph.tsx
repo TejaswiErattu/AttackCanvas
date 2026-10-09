@@ -45,6 +45,8 @@ import FlowEdge, { type FlowEdgeData } from "@/components/FlowEdge";
 import { useFullscreen, type FullscreenMode } from "@/client/useFullscreen";
 import ArchitectureNode, {
   BoundaryGroup,
+  STUB_HEIGHT,
+  STUB_WIDTH,
   type ArchitectureNodeData,
   type BoundaryGroupData,
 } from "@/components/ArchitectureNode";
@@ -66,6 +68,11 @@ function shortLabel(label: string | undefined, full: boolean): string | undefine
 
 type ArchitectureGraphProps = {
   nodes: readonly GraphNode[];
+  /**
+   * Ids in `nodes` that are drawn as small greyed "outside this view" stubs instead of
+   * components: top-level (in no boundary), not selectable, with no threat counts.
+   */
+  stubIds?: readonly string[];
   edges: readonly GraphEdge[];
   /** Shown instead of the diagram when there are no nodes; a default covers "no diagram". */
   emptyMessage?: string;
@@ -145,6 +152,7 @@ const EDGE_TYPES = { flow: FlowEdge };
 
 export default function ArchitectureGraph({
   nodes,
+  stubIds = [],
   edges,
   emptyMessage,
   boundaries = [],
@@ -156,9 +164,18 @@ export default function ArchitectureGraph({
 }: ArchitectureGraphProps) {
   // Layout depends only on the graph itself, so it is not recomputed when the selection
   // changes — which also keeps node positions stable while a user clicks around.
+  const stubs = useMemo(() => new Set(stubIds), [stubIds]);
+  // A stub belongs to no boundary: it is only a marker for something outside this view.
+  const layoutBoundaries = useMemo(
+    () =>
+      stubs.size === 0
+        ? boundaries
+        : boundaries.map((b) => ({ ...b, componentIds: b.componentIds.filter((id) => !stubs.has(id)) })),
+    [boundaries, stubs],
+  );
   const layout = useMemo(
-    () => layoutGraph(nodes, edges, { ...LAYOUT_OPTIONS, boundaries }),
-    [nodes, edges, boundaries],
+    () => layoutGraph(nodes, edges, { ...LAYOUT_OPTIONS, boundaries: layoutBoundaries }),
+    [nodes, edges, layoutBoundaries],
   );
 
   const highlightedNodes = useMemo(
@@ -190,29 +207,41 @@ export default function ArchitectureGraph({
       zIndex: -1,
     }));
     const components: Node<ArchitectureNodeData>[] = layout.nodes.map((node) => {
-        const on = highlightedNodes.has(node.id);
+        const stub = stubs.has(node.id);
+        const on = !stub && highlightedNodes.has(node.id);
         const parent = node.boundaryId ? groupAt.get(node.boundaryId) : undefined;
+        // A stub is smaller than the box the layout reserved; centre it on that box so the
+        // flows to and from it meet the same line a full node's would.
+        const slack = stub ? { x: 0, y: (NODE_HEIGHT - STUB_HEIGHT) / 2 } : { x: 0, y: 0 };
         return {
           id: node.id,
           type: "component",
           // A child is positioned relative to its group.
           position: parent
-            ? { x: node.position.x - parent.x, y: node.position.y - parent.y }
-            : node.position,
+            ? { x: node.position.x - parent.x, y: node.position.y - parent.y + slack.y }
+            : { x: node.position.x, y: node.position.y + slack.y },
+          selectable: !stub,
           ...(parent ? { parentNode: `boundary:${node.boundaryId}` } : {}),
           data: {
             node,
+            stub,
             on,
-            selected: selectedNodeId === node.id,
+            selected: !stub && selectedNodeId === node.id,
             dimmed: dimming && !on,
             includeUnverified,
           },
           // The custom node draws its own outline; the wrapper adds no box of its own.
-          style: { width: NODE_WIDTH, height: NODE_HEIGHT, background: "transparent", border: 0, padding: 0 },
+          style: {
+            width: stub ? STUB_WIDTH : NODE_WIDTH,
+            height: stub ? STUB_HEIGHT : NODE_HEIGHT,
+            background: "transparent",
+            border: 0,
+            padding: 0,
+          },
         };
       });
     return [...groups, ...components];
-  }, [layout.nodes, layout.groups, highlightedNodes, dimming, selectedNodeId, includeUnverified]);
+  }, [layout.nodes, layout.groups, highlightedNodes, dimming, selectedNodeId, includeUnverified, stubs]);
 
   const routes = useMemo(() => edgeRoutes(layout.edges), [layout.edges]);
   const xOf = useMemo(
@@ -307,7 +336,8 @@ export default function ArchitectureGraph({
         onEdgeMouseEnter={(_event, edge) => setHoveredEdgeId(edge.id)}
         onEdgeMouseLeave={() => setHoveredEdgeId(null)}
         onNodeClick={(_event, node) => {
-          if (node.type === "component") onSelectNode(node.id);
+          // A stub is only a marker for something outside this view: nothing to select.
+          if (node.type === "component" && !stubs.has(node.id)) onSelectNode(node.id);
         }}
         onPaneClick={() => onSelectNode(null)}
         fitView

@@ -280,8 +280,18 @@ export function threatTotals(
   return { total: node.threatCount + low, unverified: low };
 }
 
+/** A stub is smaller than a component: it only marks where a flow's far end is. */
+export const STUB_WIDTH = 168;
+export const STUB_HEIGHT = 52;
+
 export type ArchitectureNodeData = {
   node: GraphNode;
+  /**
+   * Drawn as a small greyed "outside this view" stub: the far end of a flow the current
+   * diagram view keeps while hiding the component itself (src/client/diagramViews.ts).
+   * No threat counts and no severity accent: it is not part of this view.
+   */
+  stub?: boolean;
   /** The unverified switch: count threats below 25% confidence too. */
   includeUnverified?: boolean;
   /** Highlighted by the current selection. */
@@ -294,7 +304,30 @@ export type ArchitectureNodeData = {
 /** Handles are needed for edges to attach; they are invisible and not connectable. */
 const HIDDEN_HANDLE = { opacity: 0, width: 6, height: 6, border: 0, pointerEvents: "none" } as const;
 
+/** The stub node: dashed and grey, named, and labelled as outside the view. */
+export function StubContent({ data }: { data: ArchitectureNodeData }) {
+  const { node, dimmed } = data;
+  return (
+    <div
+      data-testid="node-stub"
+      data-component-type={node.type}
+      aria-label={`${node.label}, outside this view`}
+      className="flex min-w-0 items-center gap-2 rounded-lg border border-dashed border-line-strong bg-surface-2 px-3 text-left"
+      style={{ width: STUB_WIDTH, height: STUB_HEIGHT, opacity: dimmed ? 0.3 : 0.75 }}
+    >
+      <TypeIcon shape={shapeOf(node.type)} size={16} className="shrink-0 text-subtle" />
+      <div className="min-w-0 flex-1">
+        <div title={node.label} className="truncate text-xs font-medium text-muted">
+          {node.label}
+        </div>
+        <div className="truncate text-[10px] italic text-subtle">outside this view</div>
+      </div>
+    </div>
+  );
+}
+
 export function NodeContent({ data }: { data: ArchitectureNodeData }) {
+  if (data.stub) return <StubContent data={data} />;
   const { node, on, selected, dimmed, includeUnverified = false } = data;
   const { total, unverified } = threatTotals(node, includeUnverified);
   const shape = shapeOf(node.type);

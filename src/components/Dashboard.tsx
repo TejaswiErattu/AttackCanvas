@@ -25,7 +25,7 @@ import { assignBoundaries } from "@/client/layoutGraph";
 import {
   DIAGRAM_VIEWS,
   DIAGRAM_VIEW_LABELS,
-  selectDiagramView,
+  viewGraph,
   type DiagramView,
 } from "@/client/diagramViews";
 import {
@@ -260,18 +260,14 @@ export default function Dashboard({
   const boundaries = useMemo(() => view.boundaries ?? [], [view.boundaries]);
   // The sub-view's nodes and edges. Hidden items are removed, not dimmed, so the diagram
   // lays itself out again for what is left.
-  const shown = useMemo(() => {
-    const selection = selectDiagramView(
-      { nodes, edges: view.edges ?? [], threats },
-      diagramView,
-    );
-    const nodeIds = new Set(selection.nodeIds);
-    const edgeIds = new Set(selection.edgeIds);
-    return {
-      nodes: nodes.filter((node) => nodeIds.has(node.id)),
-      edges: (view.edges ?? []).filter((edge) => edgeIds.has(edge.id)),
-    };
-  }, [nodes, view.edges, threats, diagramView]);
+  const shown = useMemo(
+    () => viewGraph({ nodes, edges: view.edges ?? [], threats }, diagramView),
+    [nodes, view.edges, threats, diagramView],
+  );
+  // The diagram draws the view's components and any stubs; the legend and the boundaries
+  // count only the components, so a stub never adds a type to the legend.
+  const graphNodes = useMemo(() => [...shown.nodes, ...shown.stubs], [shown.nodes, shown.stubs]);
+  const stubIds = useMemo(() => shown.stubs.map((node) => node.id), [shown.stubs]);
   const layoutNotes = useMemo(
     () => assignBoundaries(boundaries, shown.nodes).notes,
     [boundaries, shown.nodes],
@@ -365,7 +361,8 @@ export default function Dashboard({
           </div>
           <div className="mt-3">
             <ArchitectureGraph
-              nodes={shown.nodes}
+              nodes={graphNodes}
+              stubIds={stubIds}
               edges={shown.edges}
               emptyMessage={
                 diagramView === "overall"

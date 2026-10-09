@@ -8,7 +8,7 @@
  * as deterministic as the full diagram's.
  */
 
-import type { DashboardViewModel } from "@/shared/viewModel";
+import type { DashboardViewModel, GraphEdge, GraphNode } from "@/shared/viewModel";
 
 export const DIAGRAM_VIEWS = ["overall", "identity", "data_flows", "external"] as const;
 export type DiagramView = (typeof DIAGRAM_VIEWS)[number];
@@ -97,3 +97,51 @@ export function selectDiagramView(input: ViewInput, view: DiagramView): DiagramS
       };
   }
 }
+
+/**
+ * Ids of components that are an end of one of the selection's edges but are not in the
+ * selection's nodes: the far end of a flow the view keeps. They are drawn as small greyed
+ * "outside this view" stubs so the flow never starts or ends in empty space. Components the
+ * view model does not know are not stubs (an edge to one cannot be drawn at all). In the
+ * view model's node order. None of the four views produces one today, because each keeps
+ * only edges whose two ends it shows; this is what makes that a guarantee rather than a
+ * coincidence if a view ever keeps more.
+ */
+export function stubIdsFor(input: ViewInput, selection: DiagramSelection): string[] {
+  const shown = new Set(selection.nodeIds);
+  const known = new Set((input.nodes ?? []).map((node) => node.id));
+  const kept = new Set(selection.edgeIds);
+  const ends = new Set<string>();
+  for (const edge of input.edges ?? []) {
+    if (!kept.has(edge.id)) continue;
+    for (const id of [edge.source, edge.target]) if (known.has(id) && !shown.has(id)) ends.add(id);
+  }
+  return (input.nodes ?? []).filter((node) => ends.has(node.id)).map((node) => node.id);
+}
+
+/** What the diagram draws for one view. */
+export type ViewGraph = {
+  /** The view's own components: what the legend and the boundaries are built from. */
+  nodes: GraphNode[];
+  /** Components drawn only as the far end of a kept flow. Never counted in the legend. */
+  stubs: GraphNode[];
+  /** Every edge has both ends in `nodes` or `stubs`. */
+  edges: GraphEdge[];
+};
+
+/** The nodes, stubs and edges `view` shows, in the view model's order. */
+export function viewGraph(input: ViewInput, view: DiagramView): ViewGraph {
+  const selection = selectDiagramView(input, view);
+  const nodeIds = new Set(selection.nodeIds);
+  const stubIds = new Set(stubIdsFor(input, selection));
+  const edgeIds = new Set(selection.edgeIds);
+  const drawable = (id: string) => nodeIds.has(id) || stubIds.has(id);
+  return {
+    nodes: (input.nodes ?? []).filter((node) => nodeIds.has(node.id)),
+    stubs: (input.nodes ?? []).filter((node) => stubIds.has(node.id)),
+    edges: (input.edges ?? []).filter(
+      (edge) => edgeIds.has(edge.id) && drawable(edge.source) && drawable(edge.target),
+    ),
+  };
+}
+

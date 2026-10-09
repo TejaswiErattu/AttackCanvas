@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { selectDiagramView, type DiagramView } from "@/client/diagramViews";
+import { readFileSync } from "node:fs";
+import { toDashboardViewModel } from "@/client/adapter";
+import {
+  DIAGRAM_VIEWS,
+  selectDiagramView,
+  stubIdsFor,
+  viewGraph,
+  type DiagramView,
+} from "@/client/diagramViews";
+import { validateThreatModel } from "@/shared/schema";
 import type { DashboardViewModel, GraphEdge, GraphNode, ThreatCardData } from "@/shared/viewModel";
 
 const n = (id: string, type: GraphNode["type"]): GraphNode => ({
@@ -81,3 +90,75 @@ describe("selectDiagramView", () => {
     expect(selectDiagramView(view, "data_flows")).toEqual({ nodeIds: [], edgeIds: [] });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Edges never start or end in empty space
+// ---------------------------------------------------------------------------
+
+describe("every edge in every view has both endpoints drawn", () => {
+  const model = (file: string) => {
+    const validated = validateThreatModel(JSON.parse(readFileSync(file, "utf8")));
+    if (!validated.ok) throw new Error(`${file} no longer validates`);
+    return toDashboardViewModel(validated.data);
+  };
+  const inputs: [string, Pick<DashboardViewModel, "nodes" | "edges" | "threats">][] = [
+    ["the synthetic view", VIEW],
+    ["the demo fixture", model("fixtures/demo-analysis.json")],
+    ["the saved NodeGoat model", model("fixtures/replay/OWASP__NodeGoat.json")],
+  ];
+
+  it.each(inputs)("in %s", (_name, input) => {
+    for (const view of DIAGRAM_VIEWS) {
+      const graph = viewGraph(input, view);
+      const drawn = new Set([...graph.nodes, ...graph.stubs].map((node) => node.id));
+      for (const edge of graph.edges) {
+        expect(drawn.has(edge.source), `${view}: ${edge.id} source ${edge.source}`).toBe(true);
+        expect(drawn.has(edge.target), `${view}: ${edge.id} target ${edge.target}`).toBe(true);
+      }
+      // The same holds of the plain selection: no view keeps an edge it cannot draw,
+      // so today no view needs a stub at all.
+      const selection = selectDiagramView(input, view);
+      const shown = new Set(selection.nodeIds);
+      const byId = new Map((input.edges ?? []).map((edge) => [edge.id, edge]));
+      for (const id of selection.edgeIds) {
+        expect(shown.has(byId.get(id)!.source), `${view}: ${id}`).toBe(true);
+        expect(shown.has(byId.get(id)!.target), `${view}: ${id}`).toBe(true);
+      }
+      expect(graph.stubs, view).toEqual([]);
+      expect(graph.edges.map((edge) => edge.id), view).toEqual(selection.edgeIds);
+    }
+  });
+});
+
+describe("stubs for the far end of a kept flow", () => {
+  const input = { nodes: VIEW.nodes, edges: VIEW.edges, threats: [] };
+
+  it("names the endpoint a view keeps an edge to but does not show", () => {
+    const selection = { nodeIds: ["web", "api"], edgeIds: ["web-api", "api-db", "user-web"] };
+    expect(stubIdsFor(input, selection)).toEqual(["user", "db"]);
+  });
+
+  it("gives none when both ends of every kept edge are shown, or no edge is kept", () => {
+    expect(stubIdsFor(input, { nodeIds: ["web", "api"], edgeIds: ["web-api"] })).toEqual([]);
+    expect(stubIdsFor(input, { nodeIds: ["web"], edgeIds: [] })).toEqual([]);
+  });
+
+  it("does not make a stub of a component the view model does not have", () => {
+    const ghostly = { ...input, edges: [e("g", "ghost", "api")] };
+    expect(stubIdsFor(ghostly, { nodeIds: ["api"], edgeIds: ["g"] })).toEqual([]);
+  });
+
+  it("keeps the edge and draws its hidden end as a stub, in the view model's order", () => {
+    // A view that, unlike today's four, keeps an edge whose source it drops.
+    const keeps = (view: DiagramView) => (view === "overall" ? { nodeIds: ["web", "api"], edgeIds: ["user-web", "web-api"] } : null);
+    const selection = keeps("overall")!;
+    const stubs = stubIdsFor(input, selection);
+    const shown = new Set([...selection.nodeIds, ...stubs]);
+    expect(stubs).toEqual(["user"]);
+    for (const id of selection.edgeIds) {
+      const edge = input.edges.find((x) => x.id === id)!;
+      expect(shown.has(edge.source) && shown.has(edge.target)).toBe(true);
+    }
+  });
+});
+

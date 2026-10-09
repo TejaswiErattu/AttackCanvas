@@ -13,6 +13,9 @@ import {
   ICON_SIZE,
   ICON_SLOT,
   NodeContent,
+  STUB_HEIGHT,
+  STUB_WIDTH,
+  StubContent,
   accentFor,
   nodeTypeText,
   shapeOf,
@@ -154,3 +157,40 @@ describe("the icon slot", () => {
     expect(container.contains(label)).toBe(true);
   });
 });
+
+describe("a stub node", () => {
+  const stub = (type = "external_service") => ({
+    node: node(type, { label: "Stripe", threatCount: 5, lowConfidenceThreatCount: 2, maxSeverity: "critical" }),
+    stub: true,
+    on: false,
+    selected: false,
+    dimmed: false,
+  });
+
+  it("is small, dashed, named and labelled as outside the view", () => {
+    render(<StubContent data={stub()} />);
+    const box = screen.getByTestId("node-stub");
+    expect(box.style.width).toBe(`${STUB_WIDTH}px`);
+    expect(box.style.height).toBe(`${STUB_HEIGHT}px`);
+    expect(STUB_WIDTH).toBeLessThan(220);
+    expect(box.className).toContain("border-dashed");
+    expect(screen.getByText("Stripe")).toBeTruthy();
+    expect(screen.getByText("outside this view")).toBeTruthy();
+    expect(box.getAttribute("aria-label")).toBe("Stripe, outside this view");
+  });
+
+  it("shows no threat counts and no severity accent, whatever the node carries", () => {
+    const { container } = render(<StubContent data={stub()} />);
+    expect(screen.queryByText(/threat/)).toBeNull();
+    expect(screen.queryByText(/max/)).toBeNull();
+    expect(container.querySelector("[data-shape]")).toBeNull();
+    expect(container.querySelector("span.absolute")).toBeNull();
+  });
+
+  it("is what NodeContent draws when the data says stub", () => {
+    render(<NodeContent data={stub()} />);
+    expect(screen.getByTestId("node-stub")).toBeTruthy();
+    expect(screen.queryByTestId("node-threats")).toBeNull();
+  });
+});
+
