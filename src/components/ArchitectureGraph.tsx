@@ -16,12 +16,15 @@
  * component buttons Dashboard renders beside the map and from the filter bar.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ReactFlow, {
   Background,
+  ControlButton,
   Controls,
   MarkerType,
   MiniMap,
+  useReactFlow,
+  useStore,
   type Edge,
   type Node,
 } from "reactflow";
@@ -39,6 +42,7 @@ import {
   touchesNode,
 } from "@/client/graphEdges";
 import FlowEdge, { type FlowEdgeData } from "@/components/FlowEdge";
+import { useFullscreen, type FullscreenMode } from "@/client/useFullscreen";
 import ArchitectureNode, {
   BoundaryGroup,
   type ArchitectureNodeData,
@@ -79,6 +83,62 @@ type ArchitectureGraphProps = {
   includeUnverified?: boolean;
 };
 
+/** The fit the diagram gets on mount, reused after it changes size. */
+const FIT_VIEW_OPTIONS = { padding: 0.15, maxZoom: 1 } as const;
+
+/**
+ * The full-screen button, inside Controls so it sits with the zoom buttons. It also refits
+ * the diagram after entering and leaving full screen: React Flow keeps its zoom and pan
+ * when its container changes size, so without this the diagram would sit in one corner.
+ * The refit waits for the browser to finish resizing, which takes a few frames.
+ */
+function FullscreenButton({ mode, onToggle }: { mode: FullscreenMode; onToggle: () => void }) {
+  const { fitView } = useReactFlow();
+  // React Flow's own measure of its container: it changes once the browser has resized it.
+  const width = useStore((state) => state.width);
+  const height = useStore((state) => state.height);
+  const previous = useRef<FullscreenMode>(mode);
+  const pending = useRef(false);
+
+  // The mode changed: refit as soon as the new size is known, or after 400 ms if it never
+  // changes (the same size on both sides).
+  useEffect(() => {
+    if (previous.current === mode) return;
+    previous.current = mode;
+    pending.current = true;
+    const timer = setTimeout(() => {
+      if (!pending.current) return;
+      pending.current = false;
+      fitView(FIT_VIEW_OPTIONS);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [mode, fitView]);
+  useEffect(() => {
+    if (!pending.current) return;
+    // `pending` clears only when the refit runs, so a second size change that cancels this
+    // frame schedules another instead of losing the refit.
+    const frame = requestAnimationFrame(() => {
+      pending.current = false;
+      fitView(FIT_VIEW_OPTIONS);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [width, height, fitView]);
+
+  const full = mode !== "off";
+  const label = full ? "Exit full screen" : "Enter full screen";
+  return (
+    <ControlButton onClick={onToggle} title={label} aria-label={label} aria-pressed={full}>
+      <svg aria-hidden="true" viewBox="0 0 16 16" width={14} height={14} fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+        {full ? (
+          <path d="M6 1.5v3.5a1 1 0 0 1-1 1H1.5M10 1.5v3.5a1 1 0 0 0 1 1h3.5M6 14.5V11a1 1 0 0 0-1-1H1.5M10 14.5V11a1 1 0 0 1 1-1h3.5" />
+        ) : (
+          <path d="M1.5 5.5v-3a1 1 0 0 1 1-1h3M10.5 1.5h3a1 1 0 0 1 1 1v3M14.5 10.5v3a1 1 0 0 1-1 1h-3M5.5 14.5h-3a1 1 0 0 1-1-1v-3" />
+        )}
+      </svg>
+    </ControlButton>
+  );
+}
+
 /** Defined once, outside render: React Flow warns when nodeTypes or edgeTypes change identity. */
 const NODE_TYPES = { component: ArchitectureNode, boundary: BoundaryGroup };
 const EDGE_TYPES = { flow: FlowEdge };
@@ -110,6 +170,8 @@ export default function ArchitectureGraph({
     [highlightEdgeIds],
   );
   const dimming = highlightedNodes.size > 0 || highlightedEdges.size > 0;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const { mode: fullscreen, toggle: toggleFullscreen } = useFullscreen(containerRef);
   // The edge under the pointer: drawn thicker, labelled in full and brought to the front.
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
 
@@ -223,7 +285,14 @@ export default function ArchitectureGraph({
 
   return (
     <div
-      className="h-[380px] w-full overflow-hidden rounded-2xl border border-line bg-surface sm:h-[560px]"
+      ref={containerRef}
+      data-fullscreen={fullscreen}
+      // Native full screen sizes this element to the screen; the overlay does the same by hand.
+      className={
+        fullscreen === "off"
+          ? "h-[380px] w-full overflow-hidden rounded-2xl border border-line bg-surface sm:h-[560px]"
+          : `h-screen w-screen overflow-hidden bg-surface ${fullscreen === "overlay" ? "fixed inset-0 z-[100]" : ""}`
+      }
       aria-label="Architecture diagram"
       role="group"
     >
@@ -242,7 +311,7 @@ export default function ArchitectureGraph({
         }}
         onPaneClick={() => onSelectNode(null)}
         fitView
-        fitViewOptions={{ padding: 0.15, maxZoom: 1 }}
+        fitViewOptions={FIT_VIEW_OPTIONS}
         minZoom={0.2}
         // The wheel scrolls the page, not the diagram: the map sits mid-page, and hijacking
         // the wheel there traps people reading the results. Zoom with the controls or pinch.
@@ -254,7 +323,9 @@ export default function ArchitectureGraph({
         proOptions={{ hideAttribution: false }}
       >
         <Background color="var(--color-line-strong)" gap={18} size={1} />
-        <Controls showInteractive={false} />
+        <Controls showInteractive={false}>
+          <FullscreenButton mode={fullscreen} onToggle={toggleFullscreen} />
+        </Controls>
         <MiniMap
           pannable
           zoomable
