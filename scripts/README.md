@@ -77,9 +77,34 @@ ATTACKCANVAS_CHECKPOINT_DIR=.cache/checkpoints pnpm try scripts/try-pipeline.ts 
 ATTACKCANVAS_CHECKPOINT_DIR=.cache/checkpoints ATTACKCANVAS_MODEL_CACHE=1 pnpm try scripts/replay-stage.ts OWASP/NodeGoat --from scanners [--level 0-4]
 ```
 
-Only `--from scanners` is supported. Without the model cache, or after a prompt change,
+A run also saves an `architecture` checkpoint (the merged architecture the threat stage
+reads), which `scripts/eval/mini.ts` uses. Only `--from scanners` is supported by `replay-stage.ts`. Without the model cache, or after a prompt change,
 the replay makes paid architecture and threat calls; the cost lines say which calls
 came from the cache.
+
+**Mini benchmark** (`scripts/eval/mini.ts`). Re-runs the threat engine for a few answer-key
+items instead of the whole repository. From a saved result and its hand labels it finds the
+components whose threats recalled those items, takes the STRIDE batches that hold them from
+the saved architecture checkpoint, and runs only those: 2 to 5 of NodeGoat's 23 batches
+rather than all of them. It never makes the architecture call and never touches GitHub,
+Docker or Semgrep. With the model cache on, the first run pays for those batches only and
+every later run is free until the threat prompt changes.
+
+```
+ATTACKCANVAS_CHECKPOINT_DIR=.cache/checkpoints ATTACKCANVAS_MODEL_CACHE=1 \
+  pnpm try scripts/eval/mini.ts nodegoat-a3118b6 NG-NOSQL-WHERE,NG-SSJS-EVAL
+```
+
+`--dry-run` lists the batches and stops (free, no key needed). `--by-files` picks components
+from the answer key's source files, for a result whose labels belong to a different run than
+the checkpoint. It refuses to run without the model cache unless `--allow-uncached` is given.
+
+It prints recall over the chosen ids three ways: hand-labelled on the saved run, a **location
+proxy** on the saved run, and the same proxy on the new run. The proxy counts a threat that
+cites evidence inside the code the answer key points at; it is not hand-labelled recall, and
+the saved-run pair shows how far apart the two are. No model ever labels anything. The
+checkpoints must come from a run whose component ids match the result: write them by running
+with `ATTACKCANVAS_CHECKPOINT_DIR` set, label that run, then use its result name.
 
 ## Evaluation runner (`scripts/eval/`)
 
