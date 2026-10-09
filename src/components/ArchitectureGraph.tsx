@@ -16,7 +16,7 @@
  * component buttons Dashboard renders beside the map and from the filter bar.
  */
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import ReactFlow, {
   Background,
   Controls,
@@ -28,7 +28,17 @@ import ReactFlow, {
 import "reactflow/dist/style.css";
 import type { GraphEdge, GraphNode, TrustBoundaryView } from "@/shared/viewModel";
 import { layoutGraph, NODE_HEIGHT, NODE_WIDTH } from "@/client/layoutGraph";
-import { edgeColor, edgeMarker, edgeRoutes, handlesFor, reverseEdgeShape } from "@/client/graphEdges";
+import {
+  edgeColor,
+  edgeMarker,
+  edgeRoutes,
+  edgeStrokeWidth,
+  handlesFor,
+  labelVisible,
+  reverseEdgeShape,
+  touchesNode,
+} from "@/client/graphEdges";
+import FlowEdge, { type FlowEdgeData } from "@/components/FlowEdge";
 import ArchitectureNode, {
   BoundaryGroup,
   type ArchitectureNodeData,
@@ -69,8 +79,9 @@ type ArchitectureGraphProps = {
   includeUnverified?: boolean;
 };
 
-/** Defined once, outside render: React Flow warns when nodeTypes changes identity. */
+/** Defined once, outside render: React Flow warns when nodeTypes or edgeTypes change identity. */
 const NODE_TYPES = { component: ArchitectureNode, boundary: BoundaryGroup };
+const EDGE_TYPES = { flow: FlowEdge };
 
 export default function ArchitectureGraph({
   nodes,
@@ -99,6 +110,8 @@ export default function ArchitectureGraph({
     [highlightEdgeIds],
   );
   const dimming = highlightedNodes.size > 0 || highlightedEdges.size > 0;
+  // The edge under the pointer: drawn thicker, labelled in full and brought to the front.
+  const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
 
   const flowNodes = useMemo<Node<ArchitectureNodeData | BoundaryGroupData>[]>(() => {
     const groupAt = new Map(layout.groups.map((group) => [group.id, group.position]));
@@ -149,41 +162,55 @@ export default function ArchitectureGraph({
     () =>
       layout.edges.map((edge, index) => {
         const on = highlightedEdges.has(edge.id);
+        const hovered = hoveredEdgeId === edge.id;
+        // Labels are the clutter on a big diagram: past LABEL_EDGE_LIMIT flows only the
+        // ones the reader points at or selects keep theirs.
+        const labelled = labelVisible({
+          edgeCount: layout.edges.length,
+          on,
+          hovered,
+          touchesSelected: touchesNode(edge, selectedNodeId),
+        });
+        const route = reverseEdgeShape(routes[index]);
         return {
           id: edge.id,
           source: edge.source,
           target: edge.target,
           ...handlesFor(xOf.get(edge.source) ?? 0, xOf.get(edge.target) ?? 0),
+          type: "flow",
+          data: { reverse: routes[index].reverse, offset: route.pathOptions?.offset } satisfies FlowEdgeData,
           // Every flow points the way its data moves, dotted crossings included.
           markerEnd: { ...edgeMarker(edge, { on, dimming }), type: MarkerType.ArrowClosed },
-          ...reverseEdgeShape(routes[index]),
-          label: shortLabel(edge.label, on),
+          label: labelled ? shortLabel(edge.label, on || hovered) : undefined,
           animated: edge.crossesTrustBoundary,
+          zIndex: hovered ? 1000 : on ? 500 : 0,
           labelShowBg: true,
           labelStyle: {
-            fill: on ? "var(--color-fg)" : "var(--color-muted)",
+            fill: on || hovered ? "var(--color-fg)" : "var(--color-muted)",
             fontSize: 10,
-            fontWeight: on ? 600 : 500,
-            opacity: dimming && !on ? 0.35 : 1,
+            fontWeight: on || hovered ? 600 : 500,
+            opacity: dimming && !on && !hovered ? 0.6 : 1,
           },
+          // Opaque, so a label never lets the line behind it show through its text. Only
+          // the text fades when something else is highlighted.
           labelBgStyle: {
-            fill: on ? "var(--color-mint-deep)" : "var(--color-surface)",
-            stroke: "var(--color-line)",
+            fill: on || hovered ? "var(--color-mint-deep)" : "var(--color-surface)",
+            fillOpacity: 1,
+            stroke: "var(--color-line-strong)",
             strokeWidth: 1,
-            opacity: dimming && !on ? 0.35 : 1,
           },
-          labelBgPadding: [7, 4] as [number, number],
-          labelBgBorderRadius: 7,
+          labelBgPadding: [8, 5] as [number, number],
+          labelBgBorderRadius: 8,
           style: {
             // A trust-boundary crossing is drawn heavier because it is where most
             // threats live; the flag itself comes from the model, not from us.
-            strokeWidth: on ? 3 : edge.crossesTrustBoundary ? 2 : 1.5,
-            stroke: edgeColor(edge, on),
-            opacity: dimming && !on ? 0.25 : 1,
+            strokeWidth: edgeStrokeWidth(edge, { on, hovered }),
+            stroke: edgeColor(edge, on || hovered),
+            opacity: dimming && !on && !hovered ? 0.25 : 1,
           },
         } as Edge;
       }),
-    [layout.edges, routes, xOf, highlightedEdges, dimming],
+    [layout.edges, routes, xOf, highlightedEdges, dimming, hoveredEdgeId, selectedNodeId],
   );
 
   if (layout.nodes.length === 0) {
@@ -207,6 +234,9 @@ export default function ArchitectureGraph({
         nodes={flowNodes}
         edges={flowEdges}
         nodeTypes={NODE_TYPES}
+        edgeTypes={EDGE_TYPES}
+        onEdgeMouseEnter={(_event, edge) => setHoveredEdgeId(edge.id)}
+        onEdgeMouseLeave={() => setHoveredEdgeId(null)}
         onNodeClick={(_event, node) => {
           if (node.type === "component") onSelectNode(node.id);
         }}

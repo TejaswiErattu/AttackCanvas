@@ -82,3 +82,79 @@ export function handlesFor(sourceX: number, targetX: number): { sourceHandle: st
     ? { sourceHandle: HANDLES.outLeft, targetHandle: HANDLES.inRight }
     : { sourceHandle: HANDLES.out, targetHandle: HANDLES.in };
 }
+
+// ---------------------------------------------------------------------------
+// Labels and weight
+// ---------------------------------------------------------------------------
+
+/**
+ * Where a label sits along its edge, from the source: 0.35, not the midpoint. Two flows
+ * that share a node leave it on different paths, so their labels land on different
+ * points; at the midpoint of edges that fan out of one node they would stack.
+ */
+export const LABEL_FRACTION = 0.35;
+
+/** A diagram with more flows than this labels only the ones the reader points at. */
+export const LABEL_EDGE_LIMIT = 12;
+
+export type LabelContext = {
+  edgeCount: number;
+  /** The edge is highlighted by the selected threat. */
+  on: boolean;
+  hovered: boolean;
+  /** The edge touches the selected node. */
+  touchesSelected: boolean;
+};
+
+/**
+ * Whether an edge's label is drawn. Every label shows on a small diagram; on a larger one
+ * (more than LABEL_EDGE_LIMIT flows) only a hovered or highlighted edge, and an edge
+ * touching the selected node, keeps its label.
+ */
+export function labelVisible(ctx: LabelContext): boolean {
+  return ctx.edgeCount <= LABEL_EDGE_LIMIT || ctx.on || ctx.hovered || ctx.touchesSelected;
+}
+
+/** True when `edge` has `nodeId` at either end. */
+export function touchesNode(edge: Pick<GraphEdge, "source" | "target">, nodeId: string | null): boolean {
+  return nodeId !== null && (edge.source === nodeId || edge.target === nodeId);
+}
+
+/**
+ * The stroke width of a flow: a trust-boundary crossing is heavier than an internal flow
+ * and a highlighted one heavier still. The hovered edge is drawn thicker than any of those
+ * so the reader can tell which line the label they are reading belongs to.
+ */
+export function edgeStrokeWidth(
+  edge: Pick<GraphEdge, "crossesTrustBoundary">,
+  look: { on: boolean; hovered: boolean },
+): number {
+  const base = look.on ? 3 : edge.crossesTrustBoundary ? 2 : 1.5;
+  return look.hovered ? base + 2 : base;
+}
+
+/** The part of an SVG path this module reads, so tests need no DOM. */
+export type PathMeasure = {
+  getTotalLength(): number;
+  getPointAtLength(length: number): { x: number; y: number };
+};
+
+/**
+ * The point `fraction` of the way along a path, or `fallback` when the path cannot be
+ * measured (no element yet, or an environment without SVG geometry).
+ */
+export function pointAlong(
+  path: PathMeasure | null | undefined,
+  fraction: number,
+  fallback: { x: number; y: number },
+): { x: number; y: number } {
+  try {
+    if (!path || typeof path.getTotalLength !== "function") return fallback;
+    const length = path.getTotalLength();
+    if (!Number.isFinite(length) || length <= 0) return fallback;
+    const point = path.getPointAtLength(length * fraction);
+    return Number.isFinite(point.x) && Number.isFinite(point.y) ? { x: point.x, y: point.y } : fallback;
+  } catch {
+    return fallback;
+  }
+}
