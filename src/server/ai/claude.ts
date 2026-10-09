@@ -35,6 +35,12 @@ import {
   type TokenCounts,
   type UsageLedger,
 } from "@/server/ai/usage";
+import {
+  cacheKey,
+  fileModelCache,
+  modelCacheEnabled,
+  type ModelCache,
+} from "@/server/ai/modelCache";
 import { categorizeProviderError, type ProviderErrorCategory } from "@/server/ai/providerError";
 import { assertNoSecretsInPrompt, redact } from "@/server/security/redactor";
 import {
@@ -312,6 +318,11 @@ export type ClaudeDeps = {
   writeDebug: DebugWriter;
   /** Milliseconds, for timing an attempt. Injectable so tests control the pace. */
   now: () => number;
+  /**
+   * The local response cache, or undefined when it is off (the default; see
+   * src/server/ai/modelCache.ts for ATTACKCANVAS_MODEL_CACHE). Never set in production.
+   */
+  modelCache: ModelCache | undefined;
 };
 
 /** Sent when ANTHROPIC_WORKSPACE_ID is set. Organization-level keys need it. */
@@ -360,6 +371,12 @@ function resolveDeps(overrides?: Partial<ClaudeDeps>): ClaudeDeps {
       overrides?.isDevelopment ?? process.env.NODE_ENV === "development",
     writeDebug: overrides?.writeDebug ?? realDebugWriter,
     now: overrides?.now ?? Date.now,
+    modelCache:
+      overrides && "modelCache" in overrides
+        ? overrides.modelCache
+        : modelCacheEnabled()
+          ? fileModelCache()
+          : undefined,
   };
 }
 
@@ -460,6 +477,13 @@ export async function callStructured<T>(
   // as a secret assignment; its path is still checked on its own.
   assertNoSecretsInPrompt(user);
 
+  // The model cache (development only): a hit is a validated reply already paid for.
+  const cacheHash = deps.modelCache
+    ? cacheKey({ model, system, messages: [{ role: "user", content: user }], jsonSchema })
+    : undefined;
+  const hit = cacheHash ? cachedResult(deps, cacheHash, schema, stage, model, analysisId) : undefined;
+  if (hit) return hit;
+
   const controller = new AbortController();
   let timedOut = false;
   const onDeadline = (): void => {
@@ -528,6 +552,14 @@ export async function callStructured<T>(
 
       const parsed = parseAndValidate(schema, sent.text, sent.truncated);
       if (parsed.ok) {
+        if (cacheHash) {
+          deps.modelCache?.write(cacheHash, {
+            version: 1,
+            model,
+            value: parsed.value,
+            usage: attemptUsage,
+          });
+        }
         return {
           value: parsed.value,
           usage: sumAttempts(attemptUsage),
@@ -573,6 +605,30 @@ export async function callStructured<T>(
   } finally {
     cancelDeadline();
   }
+}
+
+/**
+ * A cache hit as a call result, or undefined for a miss. The saved value is validated
+ * again with the caller's schema, so a stale entry (the schema changed since) is a miss.
+ * The ledger gets one zero-token entry marked `cached`, so the run's cost reads $0.
+ */
+function cachedResult<T>(
+  deps: ClaudeDeps,
+  hash: string,
+  schema: z.ZodType<T>,
+  stage: AiStage,
+  model: ModelId,
+  analysisId: string,
+): CallStructuredResult<T> | undefined {
+  const entry = deps.modelCache?.read(hash);
+  if (!entry) return undefined;
+  const parsed = schema.safeParse(entry.value);
+  if (!parsed.success) return undefined;
+  const usage = deps.ledger.record(analysisId, {
+    ...finishUsage(stage, model, NO_TOKENS, 0, undefined, undefined, nextCallId(), 1),
+    cached: true,
+  });
+  return { value: parsed.data, usage, attemptUsage: [usage], attempts: 1 };
 }
 
 // ---------------------------------------------------------------------------

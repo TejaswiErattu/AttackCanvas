@@ -57,6 +57,8 @@ export type CallUsage = TokenCounts & {
   callId?: string;
   /** Which provider response of that call this is: 1, or 2 after a validation retry. */
   attempt?: number;
+  /** Served from the local model cache (src/server/ai/modelCache.ts): no request, no tokens. */
+  cached?: boolean;
 };
 
 /**
