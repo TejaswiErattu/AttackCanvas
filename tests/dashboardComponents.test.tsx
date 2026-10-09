@@ -67,6 +67,23 @@ function listedIds(): string[] {
     .map((article) => article.getAttribute("data-testid") ?? "");
 }
 
+describe("Replayed indicator", () => {
+  const counts = { evidence_backed: 7, assumption_dependent: 2 };
+
+  it("shows a Replayed pill only for a replayed result", () => {
+    render(<Dashboard view={demoView()} basisCounts={counts} replayed />);
+    expect(screen.getByText("Replayed")).toBeTruthy();
+  });
+
+  it("shows nothing on a normal result, with or without the prop", () => {
+    render(<Dashboard view={demoView()} basisCounts={counts} />);
+    expect(screen.queryByText("Replayed")).toBeNull();
+    cleanup();
+    render(<Dashboard view={demoView()} basisCounts={counts} replayed={false} />);
+    expect(screen.queryByText("Replayed")).toBeNull();
+  });
+});
+
 describe("Dashboard with the demo fixture", () => {
   it("lists every scored threat from the adapter, in its order, below-25% ones last", () => {
     const view = renderDemo();

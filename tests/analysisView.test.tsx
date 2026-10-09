@@ -28,8 +28,10 @@ vi.mock("@/client/useAnalysis", async (importOriginal) => ({
   useAnalysis: (id: string) => useAnalysis(id),
 }));
 vi.mock("@/components/Dashboard", () => ({
-  default: ({ view }: { view: DashboardViewModel }) => (
-    <div data-testid="dashboard">{view.repo.fullName}</div>
+  default: ({ view, replayed }: { view: DashboardViewModel; replayed?: boolean }) => (
+    <div data-testid="dashboard" data-replayed={String(replayed)}>
+      {view.repo.fullName}
+    </div>
   ),
 }));
 
@@ -63,6 +65,7 @@ function snapshot(stage: AnalysisStage, extra: Partial<AnalysisSnapshot> = {}): 
     view: null,
     basisCounts: null,
     hiddenSummary: null,
+    replayed: false,
     error: null,
     ...extra,
   };
@@ -200,5 +203,29 @@ describe("AnalysisView results", () => {
 
     expect(screen.getByTestId("dashboard").textContent).toBe("acme/acme-notes");
     expect(screen.getByRole("link", { name: "Analyze another repository" })).toBeTruthy();
+  });
+
+  it("passes replayed to the dashboard only when the snapshot says so", () => {
+    const view = { repo: { fullName: "OWASP/NodeGoat" } } as unknown as DashboardViewModel;
+    hook("complete", snapshot("complete", { view, replayed: true }));
+    render(<AnalysisView analysisId="job-1" />);
+    expect(screen.getByTestId("dashboard").getAttribute("data-replayed")).toBe("true");
+    cleanup();
+
+    hook("complete", snapshot("complete", { view }));
+    render(<AnalysisView analysisId="job-1" />);
+    expect(screen.getByTestId("dashboard").getAttribute("data-replayed")).toBe("false");
+  });
+
+  it("renders no dashboard, so no Replayed pill, for a failed job", () => {
+    hook(
+      "failed",
+      snapshot("failed", {
+        replayed: true,
+        error: { code: "TIMEOUT", title: "Too long", message: "Ran past its limit.", canRetry: false },
+      }),
+    );
+    render(<AnalysisView analysisId="job-1" />);
+    expect(screen.queryByTestId("dashboard")).toBeNull();
   });
 });

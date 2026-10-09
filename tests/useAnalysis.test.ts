@@ -40,6 +40,7 @@ function snapshot(
     view: null,
     basisCounts: null,
     hiddenSummary: null,
+    replayed: false,
     error: null,
     ...overrides,
   };
@@ -323,6 +324,13 @@ describe("readSnapshot", () => {
     // Passed through by reference: the client must not rebuild or re-score it.
     expect(result?.view).toEqual(view);
     expect(result?.basisCounts).toEqual({ evidence_backed: 2, assumption_dependent: 1 });
+  });
+
+  it("reads replayed only when it is exactly true", () => {
+    expect(readSnapshot({ stage: "complete", replayed: true })?.replayed).toBe(true);
+    expect(readSnapshot({ stage: "complete" })?.replayed).toBe(false);
+    expect(readSnapshot({ stage: "complete", replayed: "true" })?.replayed).toBe(false);
+    expect(readSnapshot({ stage: "complete", replayed: 1 })?.replayed).toBe(false);
   });
 
   it("rejects a response without a recognised stage", () => {

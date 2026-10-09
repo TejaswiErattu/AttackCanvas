@@ -63,6 +63,8 @@ export type AnalysisSnapshot = {
   view: DashboardViewModel | null;
   basisCounts: BasisCounts | null;
   hiddenSummary: HiddenSummary | null;
+  /** True only when the server says the result was replayed from a saved file (dev only). */
+  replayed: boolean;
   /** The analysis's own failure, present when stage is "failed". */
   error: AnalysisError | null;
 };
@@ -194,6 +196,7 @@ export function readSnapshot(json: unknown): AnalysisSnapshot | null {
     view: isRecord(json.threatModel) ? (json.threatModel as DashboardViewModel) : null,
     basisCounts: readBasisCounts(json.basisCounts),
     hiddenSummary: readHiddenSummary(json.hiddenSummary),
+    replayed: json.replayed === true,
     error: readApiError(json, 0),
   };
 }

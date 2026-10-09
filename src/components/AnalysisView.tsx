@@ -136,6 +136,7 @@ export default function AnalysisView({ analysisId }: AnalysisViewProps) {
           view={snapshot.view}
           basisCounts={snapshot.basisCounts}
           hiddenSummary={snapshot.hiddenSummary}
+          replayed={snapshot.replayed}
         />
         <div className="mt-12 flex justify-center">
           <StartOverLink>Analyze another repository</StartOverLink>

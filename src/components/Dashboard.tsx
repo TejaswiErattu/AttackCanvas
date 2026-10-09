@@ -78,6 +78,8 @@ type DashboardProps = {
   view: DashboardViewModel;
   basisCounts: BasisCounts | null;
   hiddenSummary?: HiddenSummary | null;
+  /** The result came from a saved file (replay mode), not a fresh analysis. */
+  replayed?: boolean;
 };
 
 /** Reading window.localStorage itself can throw when storage is blocked. */
@@ -95,7 +97,12 @@ function formatAnalyzedAt(value: string): string {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString().slice(0, 10);
 }
 
-export default function Dashboard({ view, basisCounts, hiddenSummary = null }: DashboardProps) {
+export default function Dashboard({
+  view,
+  basisCounts,
+  hiddenSummary = null,
+  replayed = false,
+}: DashboardProps) {
   const [filters, setFilters] = useState<ThreatFilters>({ ...EMPTY_FILTERS });
   const [selectedThreatId, setSelectedThreatId] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -256,7 +263,7 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
         <h1 className="mt-4 break-words font-display text-3xl font-semibold tracking-tight text-fg sm:text-4xl">
           {repo?.fullName ?? "Threat model"}
         </h1>
-        <p className="mt-2 flex flex-wrap gap-x-2 text-sm text-muted">
+        <p className="mt-2 flex flex-wrap items-center gap-x-2 text-sm text-muted">
           <span className="font-mono">{repo?.ref}</span>
           <span aria-hidden="true">&middot;</span>
           <span>{view.analysisLevelLabel} analysis</span>
@@ -266,6 +273,17 @@ export default function Dashboard({ view, basisCounts, hiddenSummary = null }: D
             <>
               <span aria-hidden="true">&middot;</span>
               <span>{formatAnalyzedAt(repo.analyzedAt)}</span>
+            </>
+          ) : null}
+          {replayed ? (
+            <>
+              <span aria-hidden="true">&middot;</span>
+              <span
+                title="Served from a saved result; nothing was fetched or analysed just now."
+                className="rounded-full border border-line-strong px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted"
+              >
+                Replayed
+              </span>
             </>
           ) : null}
         </p>
