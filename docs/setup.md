@@ -13,7 +13,42 @@ Copy `.env.example` to `.env.local` (gitignored) and fill in:
 | `ANTHROPIC_API_KEY` | `src/server/ai/claude.ts` | Never logged; `assertNoSecrets` runs on every outbound call. |
 | `GITHUB_PERSONAL_ACCESS_TOKEN` | `src/server/mcp/githubClient.ts` | **Fine-grained token, public read access only, no write scopes.** Read from the environment and handed to the MCP server's child process through its environment only -- never argv, never logged. |
 | `ATTACKCANVAS_MODEL_PROFILE` | `src/server/ai/models.ts` | `dev` or `demo`; picks which Claude model each stage calls. Unset or blank means `dev`; any other value throws on the first model call. Renamed with the project: the variable under the previous project prefix is no longer read, so a machine that still sets only the old name silently runs `dev`. Set this one on the demo machine. |
+| `ATTACKCANVAS_MAX_RUN_USD` | `src/server/ai/spendGuard.ts` | Optional. Most one analysis may spend, in USD (default 6). See "Working without paying" below. |
 | `ATTACKCANVAS_ALLOWED_OWNERS` | `src/server/http/ownerAllowlist.ts` | Optional. Comma-separated GitHub owners (`acme,widgets-inc`); a request for any other owner gets 403 `OWNER_NOT_ALLOWED`. Unset or blank means every owner is allowed. A set value with no valid owner refuses everyone. See "Responsible use" in `docs/security-design.md`. |
+
+## Working without paying
+
+Model calls are the only thing that costs money, and almost all of them happen in four
+places: the architecture call, the STRIDE batches, the questions call and, when you run one,
+an evaluation. These switches avoid paying for them again. All but the cap are development
+only and are ignored when `NODE_ENV=production`. Details are in `scripts/README.md` under the
+same heading; the cap is explained in `docs/cost.md`.
+
+| Variable | What it does | Where it lives |
+| --- | --- | --- |
+| `ATTACKCANVAS_REPLAY_DIR` | `POST /api/analyze` serves `<dir>/<owner>__<repo>.json` if it validates as a ThreatModel, with no GitHub or model call, and the dashboard shows a "Replayed" pill. `fixtures/replay` holds the NodeGoat one. | `src/server/analysis/replay.ts` |
+| `ATTACKCANVAS_MODEL_CACHE=1` | A repeated model call (same model, system text, messages and output schema) is served from `.cache/model/` at zero cost. A call that failed validation is never saved. A cache hit needs no API key. | `src/server/ai/modelCache.ts` |
+| `ATTACKCANVAS_CHECKPOINT_DIR` | A run saves its load, detect, scanners and architecture stages. Point it inside `.cache/`: the files hold raw repository content. Enables `replay-stage.ts` and `eval/mini.ts`. | `src/server/analysis/checkpoints.ts` |
+| `ATTACKCANVAS_MAX_RUN_USD` | **Not development only.** The most one analysis may spend, default 6. The next model call is refused and the job fails with `SPEND_CAP`. A guard against a surprise, not a way to avoid paying. | `src/server/ai/spendGuard.ts` |
+| `ATTACKCANVAS_MODEL_PROFILE=dev` | Cheaper models at every level (see `docs/cost.md`). Not free. | `src/server/ai/models.ts` |
+
+### Commands that never call a model
+
+| Command | What it does | Needs |
+| --- | --- | --- |
+| `pnpm typecheck`, `pnpm test`, `pnpm lint` | The checks. Tests use fake model clients. | nothing |
+| `pnpm bench` | Detector and Semgrep recall on the seeded repositories. | optional local `semgrep` |
+| `ATTACKCANVAS_REPLAY_DIR=fixtures/replay pnpm dev` | The whole app on a saved NodeGoat result. | nothing |
+| `pnpm try scripts/eval/label.ts`, `gapSheet.ts`, `sampleSecond.ts` | Build the hand-label sheets from a saved result. | nothing |
+| `pnpm try scripts/eval/score.ts`, `consistency.ts` | Score labels and compare saved runs. | nothing |
+| `pnpm try scripts/eval/mini.ts <name> <ids> --dry-run` | Show which STRIDE batches the mini benchmark would run. | saved checkpoints |
+| `pnpm try scripts/verify-threat-payloads.ts <owner>/<repo>` | Render the threat prompts and check for credentials. | GitHub token, Docker |
+| `pnpm try scripts/try-detect.ts`, `try-gaps.ts`, `try-semgrep.ts` | Run the detectors or Semgrep on a repository. | GitHub token, Docker, `semgrep` |
+| `pnpm try scripts/export-nodegoat-sample.ts` | Re-export the saved NodeGoat sample. | nothing |
+
+Commands that **can** pay: `try-pipeline.ts`, `try-architecture.ts`, `try-threats.ts`,
+`try-claude.ts`, `eval/run.ts`, `replay-stage.ts` and `eval/mini.ts` (without
+`--dry-run`). The last two cost nothing once their calls are in the model cache.
 
 ## GitHub MCP server
 
