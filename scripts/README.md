@@ -46,6 +46,41 @@ pnpm try scripts/try-pipeline.ts <owner>/<repo>
 pnpm try scripts/try-pipeline.ts <owner>/<repo> --timeout 600000   # override the 10-minute budget
 ```
 
+## Working without paying
+
+Three development-only switches, all ignored when `NODE_ENV=production`. Each one reads
+from or writes to local files; keep those under `.cache/`, which is gitignored.
+
+**Replay mode** (`ATTACKCANVAS_REPLAY_DIR`). `POST /api/analyze` looks for
+`<dir>/<owner>__<repo>.json` before touching GitHub or a model. A file that validates as a
+ThreatModel completes the job at once, marked `replayed: true`; anything else runs
+normally. Production ignores the variable and logs one warning.
+
+```
+ATTACKCANVAS_REPLAY_DIR=fixtures/replay pnpm dev   # then analyze https://github.com/OWASP/NodeGoat
+```
+
+**Model cache** (`ATTACKCANVAS_MODEL_CACHE=1`). `callStructured` hashes the model id,
+system text, messages and output schema and serves a repeat from
+`.cache/model/<hash>.json`, recording a zero-token ledger entry marked `cached`. A miss
+pays once and saves the validated response; a reply that failed validation is never saved.
+Delete `.cache/model/` to force fresh calls.
+
+**Stage checkpoints** (`ATTACKCANVAS_CHECKPOINT_DIR`). A run writes
+`<dir>/<owner>__<repo>/{load,detect,scanners}.json` after loading, detection and the
+scanners. These hold **raw repository content**, so point the variable inside `.cache/`.
+`replay-stage.ts` then re-runs only the architecture and threat stages from the scanners
+checkpoint, with no GitHub, Docker or Semgrep, and honours the model cache:
+
+```
+ATTACKCANVAS_CHECKPOINT_DIR=.cache/checkpoints pnpm try scripts/try-pipeline.ts OWASP/NodeGoat   # paid once, writes checkpoints
+ATTACKCANVAS_CHECKPOINT_DIR=.cache/checkpoints ATTACKCANVAS_MODEL_CACHE=1 pnpm try scripts/replay-stage.ts OWASP/NodeGoat --from scanners [--level 0-4]
+```
+
+Only `--from scanners` is supported. Without the model cache, or after a prompt change,
+the replay makes paid architecture and threat calls; the cost lines say which calls
+came from the cache.
+
 ## Evaluation runner (`scripts/eval/`)
 
 Measures the pipeline against hand labels. No model ever labels anything. Repos are listed

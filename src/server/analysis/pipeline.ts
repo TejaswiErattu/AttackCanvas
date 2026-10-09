@@ -112,6 +112,11 @@ import { usageLedger } from "@/server/ai/usage";
 import { activeProfile } from "@/server/ai/models";
 import { planFor } from "@/server/ai/levels";
 import { log } from "@/server/log";
+import {
+  checkpointDir,
+  writeCheckpoint,
+  type ScannersCheckpoint,
+} from "@/server/analysis/checkpoints";
 import { isHidden } from "@/server/scoring";
 
 // ---------------------------------------------------------------------------
@@ -802,6 +807,106 @@ export async function runAnalysis(
   );
 }
 
+export type ModelStagesInput = {
+  /** What the free stages produced: a live run's, or one read from a checkpoint. */
+  scanned: ScannersCheckpoint;
+  analysisLevel: AnalysisLevel;
+  analysisId: string;
+  deps: Pick<PipelineDeps, "inferArchitecture" | "generateThreats" | "ai">;
+  /** Called on entering mapping_architecture and generating_threats. */
+  onStage?: (stage: AnalysisStage) => void;
+  /** Called after each paid await; throws to stop the run. */
+  checkDeadline?: () => void;
+  /** Checked before every threat batch. Defaults to always continuing. */
+  shouldContinue?: () => boolean;
+};
+
+/**
+ * The architecture and threat stages (C and D) plus assembly, from the scanners' output.
+ * runSteps calls it for a live run; scripts/replay-stage.ts calls it on a saved
+ * scanners checkpoint (src/server/analysis/checkpoints.ts). Throws on an assembled model
+ * that fails validation.
+ */
+export async function architectureAndThreats(input: ModelStagesInput): Promise<{
+  architecture: ReturnType<typeof mergeArchitecture>;
+  engine: Awaited<ReturnType<typeof generateThreats>>;
+  model: ThreatModel;
+}> {
+  const { scanned, deps } = input;
+  const facts = buildRepoFacts({
+    summary: scanned.summary,
+    detector: scanned.detector,
+    semgrep: scanned.semgrep,
+    osv: scanned.osv,
+    files: scanned.files,
+  });
+
+  // C. mapping_architecture (PAID) ------------------------------------------
+  input.onStage?.("mapping_architecture");
+
+  // The level decides budgets, batching and questions; the profile may override models.
+  const plan = planFor(input.analysisLevel, activeProfile());
+  const context = buildContext(facts, plan.architecture.contextTokens);
+  const { draft } = await deps.inferArchitecture({
+    model: plan.models.architecture,
+    maxTokens: plan.architecture.maxTokens,
+    thinking: plan.architecture.thinking,
+    repo: { owner: scanned.owner, name: scanned.repo },
+    context,
+    analysisId: input.analysisId,
+    deps: deps.ai,
+  });
+  input.checkDeadline?.(); // don't start the paid generateThreats call below if already past
+  // mergeArchitecture lays out components internally (dagre) -- do not call
+  // layoutComponents again here.
+  const architecture = mergeArchitecture(draft, facts);
+
+  // D. generating_threats (PAID, fail-fast) ---------------------------------
+  input.onStage?.("generating_threats");
+
+  const engine = await deps.generateThreats({
+    architecture,
+    gaps: scanned.detector.gaps,
+    routePaths: scanned.detector.routes.map((route) => route.normalizedPath),
+    files: scanned.files,
+    sessionCookies: scanned.detector.sessionCookies,
+    model: plan.models.stride,
+    maxTokens: plan.stride.maxTokens,
+    thinking: plan.stride.thinking,
+    ...(plan.stride.maxBatches === null ? {} : { maxBatches: plan.stride.maxBatches }),
+    analysisId: input.analysisId,
+    deps: deps.ai,
+    shouldContinue: input.shouldContinue ?? (() => true),
+  });
+  input.checkDeadline?.(); // don't start the paid selectQuestions call if already past
+
+  const assembled = assembleThreatModel({
+    analysisLevel: input.analysisLevel,
+    repo: facts.summary,
+    components: architecture.components,
+    dataFlows: architecture.dataFlows,
+    trustBoundaries: architecture.trustBoundaries,
+    unknowns: architecture.unknowns,
+    evidence: architecture.evidence,
+    threats: engine.threats,
+    gaps: scanned.detector.gaps,
+    assumptions: [],
+    // Reader-facing: one plain sentence per kind of uncertainty. The merge's and the
+    // engine's own messages (component ids, batch numbers) go to diagnostics in runSteps.
+    limitations: userLimitations(
+      [...(architecture.notes ?? []), ...(engine.notes ?? [])],
+      scanned.osvLimitations,
+    ),
+    droppedStages: scanned.droppedStages,
+  });
+  if (!assembled.ok) {
+    throw new AiError("AI_FAILURE", "assembled threat model failed validation", {
+      issues: assembled.issues,
+    });
+  }
+  return { architecture, engine, model: assembled.model };
+}
+
 async function runSteps(state: AnalysisState, deps: PipelineDeps): Promise<AnalysisState> {
   // A. loading_repo -------------------------------------------------------
   setStage(state, "loading_repo");
@@ -812,6 +917,13 @@ async function runSteps(state: AnalysisState, deps: PipelineDeps): Promise<Analy
   }
   const loaded = await deps.loadRepository(parsed.owner, parsed.repo, parsed.ref);
   checkDeadline(state); // this await can span the deadline; don't redact/scan if it did
+  const checkpoints = checkpointDir();
+  const where = { owner: parsed.owner, repo: parsed.repo };
+  writeCheckpoint(checkpoints, "load", {
+    ...where,
+    ...(parsed.ref ? { ref: parsed.ref } : {}),
+    loaded,
+  });
   const loadedPaths = loaded.files.map((f) => f.path);
 
   // Redacted for Semgrep only: everything else on the model path (buildContextWithin,
@@ -833,6 +945,7 @@ async function runSteps(state: AnalysisState, deps: PipelineDeps): Promise<Analy
     ...base,
     evidence: [...base.evidence, ...injectionEvidence(loaded.files)],
   };
+  writeCheckpoint(checkpoints, "detect", { ...where, detector });
   const noGaps = base.gaps.length === 0;
 
   const [semgrepOutcome, osvResult] = await Promise.all([
@@ -860,79 +973,32 @@ async function runSteps(state: AnalysisState, deps: PipelineDeps): Promise<Analy
     state.droppedStages.push("semgrep");
   }
 
-  const facts = buildRepoFacts({
+  const scanned: ScannersCheckpoint = {
+    ...where,
     summary: { ...loaded.summary, frameworks: frameworkNames(base) },
     detector,
     semgrep: semgrepEvidence,
     osv: osvResult.evidence,
+    osvLimitations: osvResult.limitations,
     files: loaded.files,
-  });
+    droppedStages: [...state.droppedStages],
+  };
+  writeCheckpoint(checkpoints, "scanners", scanned);
 
-  // C. mapping_architecture (PAID) ------------------------------------------
-  setStage(state, "mapping_architecture");
-
-  // The level decides budgets, batching and questions; the profile may override models.
+  // C + D. mapping_architecture, generating_threats (PAID) --------------------
   const plan = planFor(state.analysisLevel, activeProfile());
-  const context = buildContext(facts, plan.architecture.contextTokens);
-  const { draft } = await deps.inferArchitecture({
-    model: plan.models.architecture,
-    maxTokens: plan.architecture.maxTokens,
-    thinking: plan.architecture.thinking,
-    repo: { owner: parsed.owner, name: parsed.repo },
-    context,
+  const assembled = await architectureAndThreats({
+    scanned,
+    analysisLevel: state.analysisLevel,
     analysisId: state.id,
-    deps: deps.ai,
-  });
-  checkDeadline(state); // don't start the paid generateThreats call below if already past
-  // mergeArchitecture lays out components internally (dagre) -- do not call
-  // layoutComponents again here.
-  const architecture = mergeArchitecture(draft, facts);
-
-  // D. generating_threats (PAID, fail-fast) ---------------------------------
-  setStage(state, "generating_threats");
-
-  const engine = await deps.generateThreats({
-    architecture,
-    gaps: detector.gaps,
-    routePaths: detector.routes.map((route) => route.normalizedPath),
-    files: loaded.files,
-    sessionCookies: detector.sessionCookies,
-    model: plan.models.stride,
-    maxTokens: plan.stride.maxTokens,
-    thinking: plan.stride.thinking,
-    ...(plan.stride.maxBatches === null ? {} : { maxBatches: plan.stride.maxBatches }),
-    analysisId: state.id,
-    deps: deps.ai,
+    deps,
+    onStage: (stage) => setStage(state, stage),
+    checkDeadline: () => checkDeadline(state),
     // Checked before every batch: no new provider request once the job is cancelled or
     // past its deadline, even though this stage's own promise has been orphaned.
     shouldContinue: () => !state.cancelled && Date.now() < state.deadlineAt,
   });
-  checkDeadline(state); // don't start the paid selectQuestions call below if already past
-
-  const assembled = assembleThreatModel({
-    analysisLevel: state.analysisLevel,
-    repo: facts.summary,
-    components: architecture.components,
-    dataFlows: architecture.dataFlows,
-    trustBoundaries: architecture.trustBoundaries,
-    unknowns: architecture.unknowns,
-    evidence: architecture.evidence,
-    threats: engine.threats,
-    gaps: detector.gaps,
-    assumptions: [],
-    // Reader-facing: one plain sentence per kind of uncertainty. The merge's and the
-    // engine's own messages (component ids, batch numbers) go to diagnostics below.
-    limitations: userLimitations(
-      [...(architecture.notes ?? []), ...(engine.notes ?? [])],
-      osvResult.limitations,
-    ),
-    droppedStages: state.droppedStages,
-  });
-  if (!assembled.ok) {
-    throw new AiError("AI_FAILURE", "assembled threat model failed validation", {
-      issues: assembled.issues,
-    });
-  }
+  const { architecture, engine } = assembled;
 
   const outputIssues = checkModelOutput({
     threats: assembled.model.threats,

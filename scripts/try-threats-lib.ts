@@ -57,7 +57,8 @@ export function formatUsageLines(usage: AnalysisUsage): string[] {
       `  ${who}: ${c.stage} ${c.responseModel ?? c.model} | stop ${stop} | ` +
       `requests ${c.requests} | in ${c.inputTokens} out ${c.outputTokens} ` +
       `(thinking ${c.thinkingTokens}) cache-read ${c.cacheReadTokens} ` +
-      `cache-write ${c.cacheWriteTokens} | ${formatUsd(c.costUsd)}`
+      `cache-write ${c.cacheWriteTokens} | ${formatUsd(c.costUsd)}` +
+      (c.cached ? " (model cache)" : "")
     );
   });
   const t = usage.totals;

@@ -46,6 +46,11 @@ import {
   type PipelineDeps,
 } from "@/server/analysis/pipeline";
 import { loadCanaryRepo } from "./canaryRepo";
+import { mkdtempSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { architectureAndThreats } from "@/server/analysis/pipeline";
+import { CHECKPOINT_DIR_ENV, readCheckpoint } from "@/server/analysis/checkpoints";
 import { TIMEOUT_MS as CALL_TIMEOUT_MS } from "@/server/ai/claude";
 import {
   THREATS_CONCURRENCY,
@@ -1401,5 +1406,48 @@ describe("runAnalysis follows the level plan", () => {
     const { arch, threats } = await runAt(2, "dev");
     expect(arch).toMatchObject({ model: "claude-sonnet-5" });
     expect(threats).toMatchObject({ model: "claude-sonnet-5" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stage checkpoints (src/server/analysis/checkpoints.ts)
+// ---------------------------------------------------------------------------
+
+describe("stage checkpoints", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("writes load, detect and scanners, and replaying scanners reproduces the threats", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "checkpoints-"));
+    vi.stubEnv(CHECKPOINT_DIR_ENV, dir);
+    const state = createAnalysis("https://github.com/acme/canary", 1);
+    const done = await runAnalysis(state.id, canaryDeps());
+    expect(done.stage).toBe("complete");
+    for (const stage of ["load", "detect", "scanners"]) {
+      expect(existsSync(join(dir, "acme__canary", `${stage}.json`))).toBe(true);
+    }
+
+    const loadRepository = vi.fn();
+    const scanned = readCheckpoint(dir, "acme", "canary", "scanners");
+    const deps = canaryDeps({ loadRepository });
+    const replayed = await architectureAndThreats({
+      scanned,
+      analysisLevel: 1,
+      analysisId: "replay-test",
+      deps: { inferArchitecture: deps.inferArchitecture!, generateThreats: deps.generateThreats! },
+    });
+    expect(loadRepository).not.toHaveBeenCalled();
+    expect(replayed.model.threats).toEqual(done.threatModel!.threats);
+    expect(replayed.model.components).toEqual(done.threatModel!.components);
+  });
+
+  it("writes nothing when the variable is unset or in production", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "checkpoints-"));
+    vi.stubEnv(CHECKPOINT_DIR_ENV, dir);
+    vi.stubEnv("NODE_ENV", "production");
+    const state = createAnalysis("https://github.com/acme/canary", 1);
+    await runAnalysis(state.id, canaryDeps());
+    expect(existsSync(join(dir, "acme__canary"))).toBe(false);
   });
 });
