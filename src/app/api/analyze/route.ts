@@ -34,6 +34,11 @@
  * src/server/analysis/demo.ts) -- isDemo is set explicitly at creation, not inferred
  * later from anything about how the job turns out, and a demo job never competes for
  * (or is throttled by) the concurrency cap, since it never calls a paid model.
+ *
+ * Replay mode (development only, src/server/analysis/replay.ts): when
+ * ATTACKCANVAS_REPLAY_DIR holds a valid saved ThreatModel for the repository, the job is
+ * created and completed at once from that file, before any GitHub or model work and
+ * without taking a concurrency slot or a rate-limit attempt. Production ignores it.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -48,6 +53,7 @@ import {
   runAnalysis,
 } from "@/server/analysis/pipeline";
 import { seedDemoAnalysis } from "@/server/analysis/demo";
+import { completeReplayed, loadReplay, replayDir } from "@/server/analysis/replay";
 import { checkOwner } from "@/server/http/ownerAllowlist";
 import {
   MAX_CONCURRENT_ANALYSES,
@@ -161,6 +167,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // it serves a canned result and reads nothing.
   if (!isDemo && !checkOwner(parsedUrl.owner)) {
     return errorResponse(403, "OWNER_NOT_ALLOWED");
+  }
+
+  // Replay mode: a saved result, no GitHub, no model, nothing spent (see the header).
+  const dir = isDemo ? undefined : replayDir();
+  const replay = dir ? loadReplay(dir, parsedUrl.owner, parsedUrl.repo) : undefined;
+  if (replay) {
+    const replayed = createAnalysis(repoUrl, analysisLevel);
+    completeReplayed(replayed, replay);
+    return NextResponse.json({ analysisId: replayed.id, status: replayed.stage }, { status: 202 });
   }
 
   // Coalesce a duplicate of an analysis that is still running (see the module header).

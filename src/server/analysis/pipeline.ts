@@ -211,6 +211,11 @@ export type AnalysisState = {
    */
   isDemo: boolean;
   /**
+   * True for a job served from ATTACKCANVAS_REPLAY_DIR (src/server/analysis/replay.ts):
+   * a saved result, no GitHub or model call. Set when the job completes, for a UI pill.
+   */
+  replayed: boolean;
+  /**
    * Internal: the deadline the running stages check. Set at creation; resumeWithAnswers
    * re-arms it to now + timeoutMs, so time spent at "awaiting_answers" never counts.
    */
@@ -276,6 +281,7 @@ export function createAnalysis(
     droppedStages: [],
     diagnostics: [],
     isDemo: options.isDemo ?? false,
+    replayed: false,
     deadlineAt: now + timeoutMs,
     timeoutMs,
     cancelled: false,

@@ -17,6 +17,9 @@
  * labels it accordingly ("Across all scored threats", src/components/SeveritySummary.tsx).
  * `hiddenSummary` is derived the same way, so the empty state can say how many threats
  * were scored and hidden, and why, instead of "no threats".
+ *
+ * `replayed: true` is sent only for a job served from ATTACKCANVAS_REPLAY_DIR (development
+ * only, src/server/analysis/replay.ts), so the dashboard can say the result is a saved one.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -47,6 +50,7 @@ export async function GET(
     threatModel: state.threatModel ? toDashboardViewModel(state.threatModel) : undefined,
     basisCounts: state.threatModel ? countByBasis(state.threatModel.threats) : undefined,
     hiddenSummary: state.threatModel ? summarizeHidden(state.threatModel.threats) : undefined,
+    ...(state.replayed ? { replayed: true } : {}),
     error: state.error ? toAnalysisError(state.error.code, state.error.message) : undefined,
   });
 }
