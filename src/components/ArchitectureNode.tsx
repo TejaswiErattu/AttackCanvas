@@ -85,6 +85,14 @@ export function shapeOf(type: string): ShapeKind {
   return SHAPES[type] ?? "neutral";
 }
 
+/**
+ * The type's label inside a node, where the cloud has less room than the legend does: an
+ * external service is "Service" there (its exposure badge already says it is external).
+ */
+export function nodeTypeText(type: string): string {
+  return type === "external_service" ? "Service" : typeText(type);
+}
+
 /** A display label for a type, falling back to the raw value for an unknown one. */
 export function typeText(type: string): string {
   return COMPONENT_TYPE_TEXT[type as ComponentType] ?? type.replace(/_/g, " ");
@@ -99,6 +107,31 @@ export function accentFor(severity: Severity | null): string {
 // ---------------------------------------------------------------------------
 // Outlines
 // ---------------------------------------------------------------------------
+
+/**
+ * A cloud for a node of width w and height h: a rounded body with a scalloped top. The
+ * scallops are shallow (about nine pixels) so the box inside them, where the icon slot, the
+ * type, the name and the counts sit, is as wide as the node and a text line never meets a
+ * lobe. Sized for the node's 92-pixel height; the sides and bottom follow h.
+ */
+function cloudPath(w: number, h: number): string {
+  const yb = h - 1.5;
+  const xr = w - 6;
+  return [
+    `M28,${yb}`,
+    `A22,22 0 0 1 6,${yb - 22}`,
+    `L6,46`,
+    `A20,20 0 0 1 26,26`,
+    `A22,22 0 0 1 62,22`,
+    `A26,26 0 0 1 104,16`,
+    `A24,24 0 0 1 146,16`,
+    `A24,24 0 0 1 ${xr - 30},24`,
+    `A28,28 0 0 1 ${xr},50`,
+    `L${xr},${yb - 22}`,
+    `A22,22 0 0 1 ${xr - 22},${yb}`,
+    "Z",
+  ].join(" ");
+}
 
 /** SVG path data for an outline of width w and height h, inset by the stroke. */
 function outlinePath(shape: ShapeKind, w: number, h: number): string {
@@ -123,7 +156,7 @@ function outlinePath(shape: ShapeKind, w: number, h: number): string {
       return `M${i},${i + ry} A${w / 2 - i},${ry} 0 0 1 ${w - i},${i + ry} L${w - i - taper},${h - i - 4} Q${w - i - taper},${h - i} ${w - i - taper - 4},${h - i} H${i + taper + 4} Q${i + taper},${h - i} ${i + taper},${h - i - 4} Z`;
     }
     case "cloud":
-      return `M${28},${h - i} C${6},${h - i} ${i},${h - 20} ${14},${h - 34} C${4},${20} ${26},${6} ${48},${16} C${62},${i} ${98},${i} ${112},${14} C${130},${i} ${168},${i} ${176},${18} C${204},${14} ${w - i},${34} ${w - 12},${50} C${w - i},${60} ${w - 14},${h - i} ${w - 34},${h - i} Z`;
+      return cloudPath(w, h);
     case "shield": {
       const c = 14;
       return `M${i + c},${i} H${w - i - c} L${w - i},${i + c} V${h - i - c} L${w - i - c},${h - i} H${i + c} L${i},${h - i - c} V${i + c} Z`;
@@ -194,14 +227,28 @@ const ICON_PATHS: Record<ShapeKind, string[]> = {
   neutral: ["M2.5 2.5h11v11h-11Z"],
 };
 
-export function TypeIcon({ shape, className = "" }: { shape: ShapeKind; className?: string }) {
+/** The icon slot in a node: every glyph is drawn in the same square, whatever the type. */
+export const ICON_SLOT = 30;
+/** The glyph itself inside the slot, leaving a margin so no stroke touches the slot's edge. */
+export const ICON_SIZE = 20;
+
+export function TypeIcon({
+  shape,
+  className = "",
+  size = 16,
+}: {
+  shape: ShapeKind;
+  className?: string;
+  /** Drawn size in pixels; the glyph's own 16-unit grid scales to it. */
+  size?: number;
+}) {
   return (
     <svg
       aria-hidden="true"
       data-icon={shape}
       viewBox="0 0 16 16"
-      width={16}
-      height={16}
+      width={size}
+      height={size}
       fill="none"
       stroke="currentColor"
       strokeWidth={1.4}
@@ -253,9 +300,11 @@ export function NodeContent({ data }: { data: ArchitectureNodeData }) {
   const shape = shapeOf(node.type);
   const severity = node.maxSeverity;
   const outlined = selected || on;
-  // The browser's title bar and the database/bucket rims take room at the top.
-  const topPad = shape === "browser" ? 18 : shape === "cylinder" || shape === "bucket" ? 14 : 8;
-  const sidePad = shape === "cloud" ? 30 : shape === "person" ? 24 : 16;
+  // The browser's title bar and the database/bucket rims take room at the top; the pill
+  // and the cloud curve in at the sides.
+  const topPad =
+    shape === "browser" ? 20 : shape === "cylinder" || shape === "bucket" ? 16 : shape === "person" ? 12 : shape === "cloud" ? 20 : 8;
+  const sidePad = shape === "cloud" ? 34 : shape === "person" ? 32 : 16;
 
   return (
     <div
@@ -277,36 +326,54 @@ export function NodeContent({ data }: { data: ArchitectureNodeData }) {
         style={{
           left: sidePad - 9,
           top: topPad + 4,
-          bottom: 10,
+          bottom: 12,
           width: 4,
           background: accentFor(severity),
         }}
       />
       <div
-        className="relative flex h-full items-start gap-2 text-left"
-        style={{ paddingTop: topPad, paddingLeft: sidePad, paddingRight: sidePad - 4 }}
+        className="relative flex h-full min-w-0 flex-col text-left"
+        style={{ paddingTop: topPad, paddingLeft: sidePad, paddingRight: sidePad - 4, paddingBottom: 8 }}
       >
-        <TypeIcon shape={shape} className="mt-0.5 shrink-0 text-muted" />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
-            <span className="min-w-0 truncate font-display text-sm font-semibold text-fg">{node.label}</span>
-            {node.exposure ? <ExposureBadge exposure={node.exposure} /> : null}
-          </div>
-          <div className="mt-0.5 truncate text-[10px] uppercase tracking-wider text-subtle">
-            {typeText(node.type)}
-          </div>
-          <div data-testid="node-threats" className="mt-0.5 truncate text-[11px] text-muted">
-            {total} threat{total === 1 ? "" : "s"}
-            {unverified > 0 ? (
-              <>
-                {" "}
-                <span data-testid="node-unverified" className="text-[10px] text-subtle">
-                  +{unverified} unverified
-                </span>
-              </>
-            ) : null}
-            {severity ? ` · ${SEVERITY_TEXT[severity] ?? severity} max` : ""}
-          </div>
+        {/* Top row: the icon in its own slot, the type beside it, the exposure badge at the end. */}
+        <div className="flex items-center gap-2">
+          <span
+            data-testid="node-icon-slot"
+            className="flex shrink-0 items-center justify-center rounded-lg border border-line bg-surface-2 text-muted"
+            style={{ width: ICON_SLOT, height: ICON_SLOT }}
+          >
+            <TypeIcon shape={shape} size={ICON_SIZE} />
+          </span>
+          <span
+            title={typeText(node.type)}
+            className="min-w-0 flex-1 truncate text-[10px] uppercase tracking-wider text-subtle"
+          >
+            {nodeTypeText(node.type)}
+          </span>
+          {node.exposure ? <ExposureBadge exposure={node.exposure} /> : null}
+        </div>
+        {/* The name gets the full width on a line of its own, clear of the icon and the outline. */}
+        <div
+          title={node.label}
+          className="mt-1 min-w-0 truncate font-display text-sm font-semibold leading-tight text-fg"
+        >
+          {node.label}
+        </div>
+        <div
+          data-testid="node-threats"
+          title={`${total} threat${total === 1 ? "" : "s"}${unverified > 0 ? `, ${unverified} unverified` : ""}${severity ? `, ${SEVERITY_TEXT[severity] ?? severity} max` : ""}`}
+          className="mt-0.5 truncate text-[11px] text-muted"
+        >
+          {total} threat{total === 1 ? "" : "s"}
+          {unverified > 0 ? (
+            <>
+              {" "}
+              <span data-testid="node-unverified" className="text-[10px] text-subtle">
+                +{unverified} unverified
+              </span>
+            </>
+          ) : null}
+          {severity ? ` · ${SEVERITY_TEXT[severity] ?? severity} max` : ""}
         </div>
       </div>
     </div>

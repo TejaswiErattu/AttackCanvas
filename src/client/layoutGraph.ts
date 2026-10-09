@@ -34,7 +34,7 @@ import type { GraphEdge, GraphNode, TrustBoundaryView } from "@/shared/viewModel
 
 /** Must match the rendered node box in ArchitectureGraph.tsx, or edges will not meet it. */
 export const NODE_WIDTH = 220;
-export const NODE_HEIGHT = 76;
+export const NODE_HEIGHT = 92;
 
 /** Room a boundary group leaves around its children, and above them for its label. */
 export const GROUP_PADDING = 20;

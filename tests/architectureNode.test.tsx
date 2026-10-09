@@ -9,7 +9,15 @@ import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { ComponentTypeSchema } from "@/shared/schema";
 import type { GraphNode } from "@/shared/viewModel";
-import { NodeContent, accentFor, shapeOf } from "@/components/ArchitectureNode";
+import {
+  ICON_SIZE,
+  ICON_SLOT,
+  NodeContent,
+  accentFor,
+  nodeTypeText,
+  shapeOf,
+} from "@/components/ArchitectureNode";
+import { NODE_HEIGHT } from "@/client/layoutGraph";
 import ArchitectureLegend, { legendTypes } from "@/components/ArchitectureLegend";
 
 afterEach(cleanup);
@@ -96,5 +104,53 @@ describe("exposure badge", () => {
       <NodeContent data={{ node: node("external_service", { exposure: "external" }), on: false, selected: false, dimmed: false }} />,
     );
     expect(container.querySelector('[data-exposure="external"]')?.textContent).toBe("External");
+  });
+});
+
+describe("the icon slot", () => {
+  it("is one size for every ComponentType, with the glyph the same size inside it", () => {
+    for (const type of ComponentTypeSchema.options) {
+      const { container, unmount } = render(
+        <NodeContent data={{ node: node(type), on: false, selected: false, dimmed: false }} />,
+      );
+      const slot = container.querySelector('[data-testid="node-icon-slot"]') as HTMLElement;
+      expect(slot.style.width, type).toBe(`${ICON_SLOT}px`);
+      expect(slot.style.height, type).toBe(`${ICON_SLOT}px`);
+      const glyph = slot.querySelector("svg[data-icon]")!;
+      expect(glyph.getAttribute("width"), type).toBe(String(ICON_SIZE));
+      expect(glyph.getAttribute("height"), type).toBe(String(ICON_SIZE));
+      expect(glyph.getAttribute("viewBox"), type).toBe("0 0 16 16");
+      expect(ICON_SIZE, type).toBeLessThan(ICON_SLOT);
+      unmount();
+    }
+  });
+
+  it("puts the icon in its own row, with the name on a line below it", () => {
+    render(<NodeContent data={{ node: node("external_service"), on: false, selected: false, dimmed: false }} />);
+    const slot = screen.getByTestId("node-icon-slot");
+    const name = screen.getByText("The external_service");
+    expect(slot.parentElement!.contains(name)).toBe(false);
+    expect(slot.parentElement!.nextElementSibling).toBe(name);
+  });
+
+  it("draws the cloud for the node's whole height and keeps the other shapes sized to it", () => {
+    const { container } = render(
+      <NodeContent data={{ node: node("external_service"), on: false, selected: false, dimmed: false }} />,
+    );
+    const svg = container.querySelector('[data-shape="cloud"]')!;
+    expect(svg.getAttribute("height")).toBe(String(NODE_HEIGHT));
+    // The cloud's bottom edge is the node's, not a fixed 76.
+    expect(svg.querySelector("path")!.getAttribute("d")).toContain(`${NODE_HEIGHT - 1.5}`);
+  });
+
+  it("labels an external service just \"Service\" inside a node, and titles the full type", () => {
+    expect(nodeTypeText("external_service")).toBe("Service");
+    expect(nodeTypeText("database")).toBe("Database");
+    const { container } = render(
+      <NodeContent data={{ node: node("external_service"), on: false, selected: false, dimmed: false }} />,
+    );
+    const label = screen.getByText("Service");
+    expect(label.getAttribute("title")).toBe("External service");
+    expect(container.contains(label)).toBe(true);
   });
 });
