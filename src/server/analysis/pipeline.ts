@@ -109,6 +109,7 @@ import { selectQuestions, type QuestionEffects } from "@/server/questions";
 import { applyAnswers, type DeveloperAnswer } from "@/server/analysis/answers";
 import { AiError, type CallFailure, type ClaudeDeps, type RequestDiagnostic } from "@/server/ai/claude";
 import { usageLedger } from "@/server/ai/usage";
+import { describeSpendCap } from "@/server/ai/spendGuard";
 import { activeProfile } from "@/server/ai/models";
 import { planFor } from "@/server/ai/levels";
 import { log } from "@/server/log";
@@ -621,6 +622,8 @@ export type FailureDiagnostic = {
   providerRequest?: RequestDiagnostic;
   /** The failed provider request: stage, attempt counts, status and error type. Codes only. */
   providerCall?: CallFailure;
+  /** Set on SPEND_CAP: what the run had spent and the cap it hit, in USD. */
+  spend?: { spentUsd: number; capUsd: number };
   /** The threat batch that failed, 1-based, and the batch count. */
   batch?: { number: number; of: number };
   /** The last recorded model response's stop reason ("max_tokens", "refusal", ...). */
@@ -688,6 +691,7 @@ export function failureDiagnostic(
     },
     ...(cause instanceof AiError && cause.request ? { providerRequest: cause.request } : {}),
     ...(cause instanceof AiError && cause.call ? { providerCall: cause.call } : {}),
+    ...(cause instanceof AiError && cause.spend ? { spend: cause.spend } : {}),
     ...(failedBatchOf(cause) ? { batch: failedBatchOf(cause) } : {}),
     ...(lastCall?.stopReason !== undefined ? { stopReason: lastCall.stopReason } : {}),
     ...(lastCall !== undefined ? { thinkingTokens: lastCall.thinkingTokens } : {}),
@@ -775,6 +779,13 @@ function fail(state: AnalysisState, cause: unknown): AnalysisState {
   if (state.stage !== "failed") {
     const code = toErrorCode(cause);
     logFailure(failureDiagnostic(state, code, cause));
+    // The spend cap's own record of how much the run had spent: amounts only.
+    if (cause instanceof AiError && cause.spend) {
+      state.diagnostics = dedupe([
+        ...state.diagnostics,
+        `Spend cap reached: ${describeSpendCap(cause.spend.spentUsd, cause.spend.capUsd)}.`,
+      ]);
+    }
     state.error = { code, message: safeMessage(code) };
     state.stage = "failed";
   }

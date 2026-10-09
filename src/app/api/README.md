@@ -52,6 +52,7 @@ with an HTTP status; a failed analysis comes back from `GET /api/analyze/[id]` a
 | `MODEL_OUTPUT_INVALID` | failed analysis | Claude's reply was cut off at `max_tokens`, over the size cap, or invalid after the correction retry | yes |
 | `OUTPUT_REJECTED` | failed analysis | The output checks rejected the result (`unknown_file`, `empty_while_exposed`) | no |
 | `SECRET_BLOCKED` | failed analysis | A credential survived redaction, so no model call was made (rule 3) | no |
+| `SPEND_CAP` | failed analysis | The run's estimated spend reached `ATTACKCANVAS_MAX_RUN_USD` (default 6), so no further model call was made | no |
 | `TIMEOUT` | failed analysis | The whole run, one model call, or one MCP call ran past its time limit | yes |
 | `AI_FAILURE` | failed analysis | Catch-all: a failure no code above describes (a rejected API request, an internal validation failure) | yes |
 | `NETWORK_ERROR` | browser only | The browser could not reach the server; never sent by a route | yes |

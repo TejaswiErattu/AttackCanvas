@@ -157,6 +157,11 @@ export const ERROR_COPY = {
     message:
       "A credential in the repository got past redaction, so AttackCanvas stopped before sending anything to the model.",
   },
+  SPEND_CAP: {
+    title: "Spending limit reached",
+    message:
+      "This analysis reached the spending limit set for a single run, so it stopped before making another model call. Try a lower analysis level, or ask whoever runs this deployment to raise the limit.",
+  },
   NETWORK_ERROR: {
     title: "Connection problem",
     message: "Your browser couldn't reach AttackCanvas. Check your connection and try again.",

@@ -41,6 +41,7 @@ import {
   modelCacheEnabled,
   type ModelCache,
 } from "@/server/ai/modelCache";
+import { describeSpendCap, maxRunUsd, spendCapReached } from "@/server/ai/spendGuard";
 import { categorizeProviderError, type ProviderErrorCategory } from "@/server/ai/providerError";
 import { assertNoSecretsInPrompt, redact } from "@/server/security/redactor";
 import {
@@ -250,6 +251,8 @@ export class AiError extends Error {
   readonly issues: readonly ValidationIssue[];
   readonly request?: RequestDiagnostic;
   readonly call?: CallFailure;
+  /** Set on SPEND_CAP: what the run had spent and the cap it hit, in USD. */
+  readonly spend?: { spentUsd: number; capUsd: number };
 
   constructor(
     readonly code: ErrorCode,
@@ -259,6 +262,7 @@ export class AiError extends Error {
       issues?: readonly ValidationIssue[];
       request?: RequestDiagnostic;
       call?: CallFailure;
+      spend?: { spentUsd: number; capUsd: number };
     },
   ) {
     super(message, options);
@@ -266,6 +270,7 @@ export class AiError extends Error {
     this.issues = options?.issues ?? [];
     if (options?.request) this.request = options.request;
     if (options?.call) this.call = options.call;
+    if (options?.spend) this.spend = options.spend;
   }
 }
 
@@ -323,6 +328,8 @@ export type ClaudeDeps = {
    * src/server/ai/modelCache.ts for ATTACKCANVAS_MODEL_CACHE). Never set in production.
    */
   modelCache: ModelCache | undefined;
+  /** Most one analysis may spend, USD (src/server/ai/spendGuard.ts). Defaults from the environment. */
+  maxRunUsd: number;
 };
 
 /** Sent when ANTHROPIC_WORKSPACE_ID is set. Organization-level keys need it. */
@@ -377,6 +384,7 @@ function resolveDeps(overrides?: Partial<ClaudeDeps>): ClaudeDeps {
         : modelCacheEnabled()
           ? fileModelCache()
           : undefined,
+    maxRunUsd: overrides?.maxRunUsd ?? maxRunUsd(),
   };
 }
 
@@ -529,6 +537,16 @@ export async function callStructured<T>(
     let budget = maxTokens;
     let deadlineMs = timeoutMs;
     for (let attempt = 1; attempt <= 2; attempt++) {
+      // Before every provider request, the validation retry included: a run that has
+      // reached its cap makes no further call (src/server/ai/spendGuard.ts).
+      const spentUsd = deps.ledger.forAnalysis(analysisId).totalUsd;
+      if (spendCapReached(spentUsd, deps.maxRunUsd)) {
+        throw new AiError(
+          "SPEND_CAP",
+          `${stage}: stopped before a model call, ${describeSpendCap(spentUsd, deps.maxRunUsd)}`,
+          { spend: { spentUsd, capUsd: deps.maxRunUsd } },
+        );
+      }
       const startedAt = deps.now();
       const sent = await send({
         deps,

@@ -24,6 +24,19 @@ OWASP NodeGoat at `c5cb68a`, demo profile, level 2. The source is the `cost` blo
 Range $2.84 to $4.07, mean $3.37. Calls vary with the number of STRIDE batches and with
 retries.
 
+## Per-run spend cap
+
+`ATTACKCANVAS_MAX_RUN_USD` (default 6, just above level 4's $5.90 estimate) is the most one
+analysis may spend, by the usage ledger's estimate. `callStructured` checks it before every
+model request, including a validation retry. Once the run's recorded cost has reached the
+cap the next call is refused and the job fails with `SPEND_CAP`; its diagnostics record
+"spent $X of the $Y per-run limit". Unset, blank or invalid values fall back to 6, never to
+"no cap".
+
+It is a stop before the next call, not a ceiling on the invoice: calls already in flight are
+still billed, and threat batches run three at a time, so a run can finish a few tenths of a
+dollar over. A model-cache hit costs nothing and is never refused.
+
 ## By level
 
 | Level | Models (demo) | What changes | Shown range | Measured | Estimated |

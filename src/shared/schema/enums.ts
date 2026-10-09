@@ -164,6 +164,8 @@ export const ErrorCodeSchema = z.enum([
   // Safety stops.
   "OUTPUT_REJECTED",
   "SECRET_BLOCKED",
+  // The run's estimated spend reached ATTACKCANVAS_MAX_RUN_USD, so no further model call was made.
+  "SPEND_CAP",
   // Client only: the browser could not reach the server.
   "NETWORK_ERROR",
 ]);
