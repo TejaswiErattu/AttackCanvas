@@ -8,7 +8,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { AiError, callStructured, type ClaudeDeps, type MessagesApi } from "@/server/ai/claude";
 import { fileModelCache } from "@/server/ai/modelCache";
@@ -19,7 +19,8 @@ import {
   maxRunUsd,
   spendCapReached,
 } from "@/server/ai/spendGuard";
-import { UsageLedger, type AnalysisUsage, type CallUsage } from "@/server/ai/usage";
+import { UsageLedger, usageLedger, type AnalysisUsage, type CallUsage } from "@/server/ai/usage";
+import { generateThreats } from "@/server/analysis/threats";
 import { ERROR_COPY } from "@/shared/labels";
 import { ErrorCodeSchema } from "@/shared/schema";
 import { createAnalysis, getAnalysis, runAnalysis, toErrorCode, resetStore } from "@/server/analysis/pipeline";
@@ -28,7 +29,7 @@ import { loadCanaryRepo } from "./canaryRepo";
 const Output = z.object({ summary: z.string() });
 const JSON_SCHEMA = z.toJSONSchema(Output) as Record<string, unknown>;
 
-function reply(text: string, outputTokens = 20): Anthropic.Message {
+function reply(text: string, outputTokens = 20, inputTokens = 100): Anthropic.Message {
   return {
     id: "msg_test",
     type: "message",
@@ -38,7 +39,7 @@ function reply(text: string, outputTokens = 20): Anthropic.Message {
     stop_reason: "end_turn",
     stop_sequence: null,
     stop_details: null,
-    usage: { input_tokens: 100, output_tokens: outputTokens, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+    usage: { input_tokens: inputTokens, output_tokens: outputTokens, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
   } as Anthropic.Message;
 }
 
@@ -210,5 +211,115 @@ describe("SPEND_CAP in the contract and the pipeline", () => {
     expect(done.diagnostics).toContain("Spend cap reached: spent $6.07 of the $6.00 per-run limit.");
     expect(done.threatModel).toBeUndefined();
     expect(getAnalysis(state.id)?.stage).toBe("failed");
+  });
+});
+
+describe("SPEND_CAP with calls in flight (real pipeline, pool and ledger; fake client)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const REPO = {
+    owner: "acme",
+    name: "canary",
+    ref: "main",
+    languages: ["JavaScript"],
+    frameworks: [],
+    fileCountAnalyzed: 0,
+    analyzedAt: new Date(0).toISOString(),
+  };
+  const ARCH = {
+    draft: {
+      components: [
+        {
+          id: "comp-app",
+          name: "App server",
+          type: "backend" as const,
+          description: "The Express app",
+          technologies: ["Express"],
+          files: ["src/app.js"],
+          assets: ["user data"],
+          evidenceRefs: ["ev-gap-1"],
+        },
+      ],
+      dataFlows: [],
+      trustBoundaries: [],
+      unknowns: [],
+    },
+    usage: {} as CallUsage,
+    attempts: 1,
+    promptId: "architecture.v1",
+  };
+
+  /**
+   * Six batches, three at a time, each response costing $0.30 on the dev model. Latencies are
+   * staggered so the order is fixed: call 1 returns first (ledger $0.30, under the $0.50 cap,
+   * so call 4 starts), call 2 returns next ($0.60, over the cap, so the worker that finished
+   * refuses its next batch with SPEND_CAP while calls 3 and 4 are still in flight); calls 3
+   * and 4 then settle and the ledger ends at 4 x $0.30 = $1.20.
+   */
+  function slowClient(sent: number[]): MessagesApi {
+    const delays = [5, 15, 40, 40];
+    return {
+      async create() {
+        const n = sent.length;
+        sent.push(n);
+        await new Promise((resolve) => setTimeout(resolve, delays[n] ?? 40));
+        return reply('{"threats":[]}', 10_000, 100_000);
+      },
+    };
+  }
+
+  async function run(generate: typeof generateThreats, sent: number[]) {
+    vi.stubEnv("ATTACKCANVAS_MODEL_PROFILE", "dev");
+    resetStore();
+    const state = createAnalysis("https://github.com/acme/canary", 1);
+    const done = await runAnalysis(state.id, {
+      loadRepository: async () => ({
+        summary: REPO,
+        files: loadCanaryRepo(),
+        skipped: { ignored: 0, overLimit: 0 },
+        truncated: false,
+      }),
+      scanFiles: async () => [],
+      scanDependencies: async () => ({ evidence: [], limitations: [] }),
+      inferArchitecture: async () => ARCH,
+      generateThreats: generate,
+      ai: { client: slowClient(sent), maxRunUsd: 0.5, modelCache: undefined },
+    });
+    return { state, done };
+  }
+
+  it("reports the final ledger total, not the amount noticed when the cap was hit", async () => {
+    const sent: number[] = [];
+    const sixBatches: typeof generateThreats = (input) =>
+      generateThreats({ ...input, batches: Array.from({ length: 6 }, () => ["comp-app"]) });
+    const { state, done } = await run(sixBatches, sent);
+
+    const ledger = usageLedger.forAnalysis(state.id);
+    expect(sent).toHaveLength(4); // 3 started together, 1 more after the first returned
+    expect(ledger.calls).toHaveLength(4);
+    expect(ledger.totalUsd).toBeCloseTo(1.2, 6);
+
+    expect(done.stage).toBe("failed");
+    expect(done.error?.code).toBe("SPEND_CAP");
+    // The cap was noticed at $0.60; the run ended at $1.20, and both places say $1.20.
+    expect(done.diagnostics).toContain("Spend cap reached: spent $1.20 of the $0.50 per-run limit.");
+    expect(done.diagnostics.join("\n")).not.toContain("$0.60");
+    expect(done.cost.totalUsd).toBeCloseTo(1.2, 6);
+    expect(done.cost.calls).toBe(4);
+    expect(done.threatModel).toBeUndefined();
+    usageLedger.clear(state.id);
+  });
+
+  it("adds no spend diagnostic for any other failure", async () => {
+    const refused: typeof generateThreats = async () => {
+      throw new AiError("MODEL_REFUSED", "model declined the request");
+    };
+    const { state, done } = await run(refused, []);
+    expect(done.stage).toBe("failed");
+    expect(done.error?.code).toBe("MODEL_REFUSED");
+    expect(done.diagnostics.some((line) => line.startsWith("Spend cap"))).toBe(false);
+    usageLedger.clear(state.id);
   });
 });

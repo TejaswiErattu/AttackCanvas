@@ -780,11 +780,15 @@ function fail(state: AnalysisState, cause: unknown): AnalysisState {
   if (state.stage !== "failed") {
     const code = toErrorCode(cause);
     logFailure(failureDiagnostic(state, code, cause));
-    // The spend cap's own record of how much the run had spent: amounts only.
+    // The spend cap's own record of how much the run spent: amounts only. The figure on
+    // the error is what the ledger held when the cap was noticed; calls already in flight
+    // were still billed, and the threat pool lets them settle before it rethrows, so the
+    // ledger's total now is the final one. It is never reported below the noticed amount.
     if (cause instanceof AiError && cause.spend) {
+      const spentUsd = Math.max(cause.spend.spentUsd, usageLedger.forAnalysis(state.id).totalUsd);
       state.diagnostics = dedupe([
         ...state.diagnostics,
-        `Spend cap reached: ${describeSpendCap(cause.spend.spentUsd, cause.spend.capUsd)}.`,
+        `Spend cap reached: ${describeSpendCap(spentUsd, cause.spend.capUsd)}.`,
       ]);
     }
     state.error = { code, message: safeMessage(code) };
