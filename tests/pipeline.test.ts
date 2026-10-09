@@ -50,7 +50,7 @@ import { mkdtempSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { architectureAndThreats } from "@/server/analysis/pipeline";
-import { CHECKPOINT_DIR_ENV, readCheckpoint } from "@/server/analysis/checkpoints";
+import { CHECKPOINT_DIR_ENV, deserializeArchitecture, readCheckpoint } from "@/server/analysis/checkpoints";
 import { TIMEOUT_MS as CALL_TIMEOUT_MS } from "@/server/ai/claude";
 import {
   THREATS_CONCURRENCY,
@@ -1424,7 +1424,7 @@ describe("stage checkpoints", () => {
     const state = createAnalysis("https://github.com/acme/canary", 1);
     const done = await runAnalysis(state.id, canaryDeps());
     expect(done.stage).toBe("complete");
-    for (const stage of ["load", "detect", "scanners"]) {
+    for (const stage of ["load", "detect", "scanners", "architecture"]) {
       expect(existsSync(join(dir, "acme__canary", `${stage}.json`))).toBe(true);
     }
 
@@ -1438,6 +1438,10 @@ describe("stage checkpoints", () => {
       deps: { inferArchitecture: deps.inferArchitecture!, generateThreats: deps.generateThreats! },
     });
     expect(loadRepository).not.toHaveBeenCalled();
+    // The architecture checkpoint is the merged architecture the threat stage read.
+    const saved = deserializeArchitecture(readCheckpoint(dir, "acme", "canary", "architecture").architecture);
+    expect(saved.components).toEqual(replayed.architecture.components);
+    expect(saved.componentEvidence).toEqual(replayed.architecture.componentEvidence);
     expect(replayed.model.threats).toEqual(done.threatModel!.threats);
     expect(replayed.model.components).toEqual(done.threatModel!.components);
   });

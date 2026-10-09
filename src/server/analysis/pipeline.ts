@@ -115,6 +115,7 @@ import { planFor } from "@/server/ai/levels";
 import { log } from "@/server/log";
 import {
   checkpointDir,
+  serializeArchitecture,
   writeCheckpoint,
   type ScannersCheckpoint,
 } from "@/server/analysis/checkpoints";
@@ -871,6 +872,11 @@ export async function architectureAndThreats(input: ModelStagesInput): Promise<{
   // mergeArchitecture lays out components internally (dagre) -- do not call
   // layoutComponents again here.
   const architecture = mergeArchitecture(draft, facts);
+  writeCheckpoint(checkpointDir(), "architecture", {
+    owner: scanned.owner,
+    repo: scanned.repo,
+    architecture: serializeArchitecture(architecture),
+  });
 
   // D. generating_threats (PAID, fail-fast) ---------------------------------
   input.onStage?.("generating_threats");

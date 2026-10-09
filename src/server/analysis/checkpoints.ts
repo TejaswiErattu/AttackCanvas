@@ -3,9 +3,11 @@
  * re-run from them (scripts/replay-stage.ts).
  *
  * When ATTACKCANVAS_CHECKPOINT_DIR is set and NODE_ENV is not "production", runAnalysis
- * writes <dir>/<owner>__<repo>/<stage>.json after load, after detect and after the
- * scanners. The scanners checkpoint holds everything the architecture and threat stages
- * read, so they can be replayed without GitHub, Docker or Semgrep.
+ * writes <dir>/<owner>__<repo>/<stage>.json after load, after detect, after the scanners
+ * and after the architecture merge. The scanners checkpoint holds everything the
+ * architecture and threat stages read, so they can be replayed without GitHub, Docker or
+ * Semgrep; the architecture checkpoint holds what the threat stage alone reads, so
+ * scripts/eval/mini.ts can re-render STRIDE batches without the architecture call.
  *
  * These files hold RAW repository content (the detectors need it unredacted), so keep the
  * directory local and gitignored (.cache/ is). Nothing read back from one skips the
@@ -18,10 +20,11 @@ import { join } from "node:path";
 import type { Evidence, RepoSummary } from "@/shared/schema";
 import type { LoadedFile, LoadedRepo } from "@/server/ingest/loader";
 import type { DetectorResult } from "@/server/detect/types";
+import type { MergedArchitecture } from "@/server/analysis/architecture";
 
 export const CHECKPOINT_DIR_ENV = "ATTACKCANVAS_CHECKPOINT_DIR";
 
-export const CHECKPOINT_STAGES = ["load", "detect", "scanners"] as const;
+export const CHECKPOINT_STAGES = ["load", "detect", "scanners", "architecture"] as const;
 export type CheckpointStage = (typeof CHECKPOINT_STAGES)[number];
 
 export type LoadCheckpoint = { owner: string; repo: string; ref?: string; loaded: LoadedRepo };
@@ -43,10 +46,46 @@ export type ScannersCheckpoint = {
   droppedStages: string[];
 };
 
+/** MergedArchitecture with its Maps as entry lists, so it survives JSON. */
+export type SerializedArchitecture = Omit<
+  MergedArchitecture,
+  "gapBindings" | "componentEvidence" | "flowEvidence"
+> & {
+  gapBindings: [string, string[]][];
+  componentEvidence: [string, string[]][];
+  flowEvidence: [string, string[]][];
+};
+
+/** What the threat stage reads from the architecture stage (scripts/eval/mini.ts replays it). */
+export type ArchitectureCheckpoint = {
+  owner: string;
+  repo: string;
+  architecture: SerializedArchitecture;
+};
+
+export function serializeArchitecture(architecture: MergedArchitecture): SerializedArchitecture {
+  return {
+    ...architecture,
+    gapBindings: [...architecture.gapBindings],
+    componentEvidence: [...architecture.componentEvidence],
+    flowEvidence: [...architecture.flowEvidence],
+  };
+}
+
+export function deserializeArchitecture(saved: SerializedArchitecture): MergedArchitecture {
+  return {
+    ...saved,
+    gapBindings: new Map(saved.gapBindings),
+    componentEvidence: new Map(saved.componentEvidence),
+    flowEvidence: new Map(saved.flowEvidence),
+  };
+}
+
 type Payload = {
   load: LoadCheckpoint;
   detect: DetectCheckpoint;
   scanners: ScannersCheckpoint;
+  architecture: ArchitectureCheckpoint;
 };
 
 /** The checkpoint directory, or undefined when checkpoints are off (unset or production). */

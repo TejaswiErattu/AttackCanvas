@@ -368,9 +368,17 @@ function defaultClient(): MessagesApi {
   return lazyClient.messages;
 }
 
+/**
+ * The real client, built on the first request. Resolving deps must not need an API key: a
+ * run served entirely from the model cache (src/server/ai/modelCache.ts) never sends one.
+ */
+const lazyMessages: MessagesApi = {
+  create: (body, options) => defaultClient().create(body, options),
+};
+
 function resolveDeps(overrides?: Partial<ClaudeDeps>): ClaudeDeps {
   return {
-    client: overrides?.client ?? defaultClient(),
+    client: overrides?.client ?? lazyMessages,
     sleep: overrides?.sleep ?? realSleep,
     schedule: overrides?.schedule ?? realSchedule,
     ledger: overrides?.ledger ?? usageLedger,

@@ -90,6 +90,25 @@ describe("model cache", () => {
     expect(calls[1].cached).toBe(true);
   });
 
+  it("serves a hit with no API key and no injected client", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "");
+    const t = setup([JSON.stringify({ summary: "saved" })]);
+    await t.call();
+    // Same cache, but deps now resolve their own client: it must not be built for a hit.
+    const again = await callStructured({
+      stage: "architecture",
+      analysisId: "cache-test-2",
+      system: "You are a security reviewer.",
+      user: '<repo_file path="a.js">\nx\n</repo_file>',
+      schema: Output,
+      jsonSchema: JSON_SCHEMA,
+      deps: { ledger: new UsageLedger(), modelCache: fileModelCache(t.dir), isDevelopment: false },
+    });
+    expect(again.value).toEqual({ summary: "saved" });
+    expect(again.usage.cached).toBe(true);
+    expect(t.requests()).toBe(1);
+  });
+
   it("misses when the prompt changes", async () => {
     const t = setup([JSON.stringify({ summary: "a" }), JSON.stringify({ summary: "b" })]);
     await t.call();
