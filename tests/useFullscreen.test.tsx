@@ -248,3 +248,104 @@ describe("useFullscreen when the browser never answers", () => {
   });
 });
 
+describe("useFullscreen repeated clicks and stale answers", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  /** An element whose request settles only when the test says so. */
+  function slowElement() {
+    const el = document.createElement("div");
+    const calls: { grant: () => void; refuse: () => void }[] = [];
+    el.requestFullscreen = () =>
+      new Promise<void>((resolve, reject) => {
+        calls.push({
+          grant: () => {
+            current = el;
+            resolve();
+          },
+          refuse: () => reject(new TypeError("denied")),
+        });
+      });
+    return { el, calls };
+  }
+  const wait = (ms: number) =>
+    act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+
+  it("a second click in the same tick undoes the first instead of entering again", async () => {
+    // No API: the first click's fallback is the overlay, the second must leave it.
+    const { result } = hookFor(document.createElement("div"));
+    await act(async () => {
+      result.current.toggle();
+      result.current.toggle();
+    });
+    await wait(10);
+    expect(result.current.mode).toBe("off");
+  });
+
+  it("a click while the browser has not answered cancels the attempt", async () => {
+    install();
+    const { el, calls } = slowElement();
+    const { result } = hookFor(el);
+    act(() => result.current.toggle());
+    await wait(400);
+    act(() => result.current.toggle());
+    await wait(NATIVE_REQUEST_TIMEOUT_MS + 100);
+    expect(result.current.mode).toBe("off");
+    expect(calls).toHaveLength(1); // no second request was made
+  });
+
+  it("undoes a native grant that arrives for a cancelled attempt", async () => {
+    install();
+    const { el, calls } = slowElement();
+    const { result } = hookFor(el);
+    act(() => result.current.toggle());
+    act(() => result.current.toggle());
+    await act(async () => {
+      calls[0].grant();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(doc.exitFullscreen).toHaveBeenCalledTimes(1);
+    expect(result.current.mode).toBe("off");
+  });
+
+  it("does not let an old attempt's late grant undo a newer attempt's full screen", async () => {
+    install();
+    const { el, calls } = slowElement();
+    const { result } = hookFor(el);
+    act(() => result.current.toggle()); // attempt 1
+    await wait(NATIVE_REQUEST_TIMEOUT_MS + 10);
+    expect(result.current.mode).toBe("overlay");
+    act(() => result.current.toggle()); // leave the overlay
+    act(() => result.current.toggle()); // attempt 2
+    expect(calls).toHaveLength(2);
+    await act(async () => {
+      calls[0].grant(); // attempt 1 answers late
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(doc.exitFullscreen).not.toHaveBeenCalled();
+  });
+
+  it("only exits full screen on unmount when this diagram is the one in full screen", async () => {
+    install();
+    const el = document.createElement("div");
+    el.requestFullscreen = vi.fn(async () => {
+      current = el;
+    });
+    const { result, unmount } = hookFor(el);
+    await act(async () => result.current.toggle());
+    expect(result.current.mode).toBe("native");
+    unmount();
+    expect(doc.exitFullscreen).toHaveBeenCalledTimes(1);
+
+    cleanup();
+    install();
+    const other = document.createElement("video");
+    current = other; // something else is in full screen
+    const second = hookFor(document.createElement("div"));
+    second.unmount();
+    expect(doc.exitFullscreen).not.toHaveBeenCalled();
+  });
+});
+

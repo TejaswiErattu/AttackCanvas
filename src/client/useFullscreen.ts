@@ -14,7 +14,7 @@
  * against plain objects.
  */
 
-import { useCallback, useEffect, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 
 export type FullscreenMode = "off" | "native" | "overlay";
 
@@ -83,38 +83,79 @@ export async function exitNativeFullscreen(doc: FullscreenDocument): Promise<voi
   }
 }
 
+/** One request for native full screen, from the click to the browser's answer (or its absence). */
+type Attempt = { cancelled: boolean };
+
 export function useFullscreen(ref: RefObject<HTMLElement | null>): {
   mode: FullscreenMode;
   toggle: () => void;
 } {
-  const [mode, setMode] = useState<FullscreenMode>("off");
+  const [mode, setModeState] = useState<FullscreenMode>("off");
+  // The mode as of right now. State only catches up on the next render, so two clicks in
+  // one tick would both read the old value; every change goes through setMode to keep this
+  // in step.
+  const modeRef = useRef<FullscreenMode>("off");
+  // The request still waiting for the browser, if any: a click while one waits cancels it.
+  const inFlight = useRef<Attempt | null>(null);
+  // The newest request ever made. An older request that is answered late must not undo
+  // the full screen a newer one is responsible for.
+  const newest = useRef<Attempt | null>(null);
+  // The element we asked the browser to put in full screen.
+  const requested = useRef<Element | null>(null);
+
+  const setMode = useCallback((next: FullscreenMode) => {
+    modeRef.current = next;
+    setModeState(next);
+  }, []);
 
   const toggle = useCallback(() => {
-    if (mode === "overlay") {
+    if (inFlight.current) {
+      // The browser has not answered the last click yet: this click withdraws it.
+      inFlight.current.cancelled = true;
+      inFlight.current = null;
+      return;
+    }
+    if (modeRef.current === "overlay") {
       setMode("off");
       return;
     }
-    if (mode === "native") {
+    if (modeRef.current === "native") {
       setMode("off");
       void exitNativeFullscreen(document as FullscreenDocument);
       return;
     }
+
+    const attempt: Attempt = { cancelled: false };
+    inFlight.current = attempt;
+    newest.current = attempt;
+    requested.current = ref.current;
     const request = enterNativeFullscreen(ref.current as FullscreenElement | null);
-    void Promise.race([
-      request,
-      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), NATIVE_REQUEST_TIMEOUT_MS)),
-    ]).then((settled) => {
+    // A request that is answered after we gave up on it: if the browser grants it, undo
+    // that, unless a newer request has since taken over.
+    const undoIfLate = () =>
+      void request.then((ok) => {
+        if (ok && newest.current === attempt) void exitNativeFullscreen(document as FullscreenDocument);
+      });
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), NATIVE_REQUEST_TIMEOUT_MS);
+    });
+    void Promise.race([request, timeout]).then((settled) => {
+      clearTimeout(timer);
+      if (inFlight.current === attempt) inFlight.current = null;
+      if (attempt.cancelled) {
+        undoIfLate();
+        return;
+      }
       if (settled === "timeout") {
         setMode("overlay");
-        // If the browser grants it after all, undo that: the overlay is already showing.
-        void request.then((ok) => {
-          if (ok) void exitNativeFullscreen(document as FullscreenDocument);
-        });
+        undoIfLate();
         return;
       }
       setMode(settled ? "native" : "overlay");
     });
-  }, [mode, ref]);
+  }, [ref, setMode]);
 
   // The browser can leave native full screen without us (Escape, a gesture, another tab).
   useEffect(() => {
@@ -126,7 +167,7 @@ export function useFullscreen(ref: RefObject<HTMLElement | null>): {
     return () => {
       for (const name of FULLSCREEN_CHANGE_EVENTS) document.removeEventListener(name, onChange);
     };
-  }, [mode, ref]);
+  }, [mode, ref, setMode]);
 
   // The overlay has no browser Escape of its own, and must not let the page scroll behind it.
   useEffect(() => {
@@ -142,16 +183,20 @@ export function useFullscreen(ref: RefObject<HTMLElement | null>): {
       document.removeEventListener("keydown", onKey);
       root.style.overflow = previous;
     };
-  }, [mode]);
+  }, [mode, setMode]);
 
-  // Leaving the page (or the diagram unmounting) must not leave the browser in full screen.
-  useEffect(
-    () => () => {
+  // Leaving the page (or the diagram unmounting) must not leave this diagram in full screen,
+  // and must not touch some other element that is. A request still waiting is withdrawn, so
+  // a late grant is undone.
+  useEffect(() => {
+    const waiting = inFlight;
+    const asked = requested;
+    return () => {
+      if (waiting.current) waiting.current.cancelled = true;
       const doc = document as FullscreenDocument;
-      if (activeFullscreenElement(doc)) void exitNativeFullscreen(doc);
-    },
-    [],
-  );
+      if (asked.current && activeFullscreenElement(doc) === asked.current) void exitNativeFullscreen(doc);
+    };
+  }, []);
 
   return { mode, toggle };
 }
