@@ -58,7 +58,7 @@ import { carryForward } from "@/client/carryForward";
 import type { BasisCounts, HiddenSummary } from "@/client/useAnalysis";
 import ArchitectureGraph from "@/components/ArchitectureGraph";
 import ArchitectureLegend from "@/components/ArchitectureLegend";
-import { ExposureBadge, typeText } from "@/components/ArchitectureNode";
+import { ExposureBadge, threatTotals, typeText } from "@/components/ArchitectureNode";
 import type { Exposure } from "@/shared/viewModel";
 
 /** What each exposure means, for the node detail panel. */
@@ -72,7 +72,7 @@ import FilterBar from "@/components/FilterBar";
 import SeveritySummary from "@/components/SeveritySummary";
 import SinceLastRun from "@/components/SinceLastRun";
 import ThreatCard from "@/components/ThreatCard";
-import ThreatList from "@/components/ThreatList";
+import ThreatList, { SHOW_HIDDEN_ID, showHiddenLabel } from "@/components/ThreatList";
 
 type DashboardProps = {
   view: DashboardViewModel;
@@ -90,6 +90,9 @@ function safeLocalStorage(): Storage | null {
     return null;
   }
 }
+
+/** Where the unverified switch is remembered, per browser. "1" or "0"; anything else is ignored. */
+export const SHOW_HIDDEN_STORAGE_KEY = "attackcanvas:showHidden";
 
 /** Date only, and never locale-dependent, so the markup is stable between renders. */
 function formatAnalyzedAt(value: string): string {
@@ -112,8 +115,29 @@ export default function Dashboard({
   const threats = useMemo(() => view.threats ?? [], [view.threats]);
   // Below-25% threats: listed after the others, greyed and marked unverified (display only).
   const hiddenThreats = useMemo(() => view.hiddenThreats ?? [], [view.hiddenThreats]);
-  // On by default: every scored threat is listed, the ones below 25% greyed after the rest.
+  // The unverified switch. One setting drives the threat list, the severity tiles, the
+  // diagram's node counts and the filter options. On by default: every scored threat is
+  // counted and listed, the ones below 25% greyed after the rest. The remembered choice is
+  // read after mount, so the first render matches the server's.
   const [showHidden, setShowHidden] = useState(true);
+  useEffect(() => {
+    try {
+      const saved = safeLocalStorage()?.getItem(SHOW_HIDDEN_STORAGE_KEY);
+      // Deliberate: localStorage exists only on the client.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (saved === "0" || saved === "1") setShowHidden(saved === "1");
+    } catch {
+      // Storage blocked or unreadable: keep the default.
+    }
+  }, []);
+  const handleShowHiddenChange = (next: boolean) => {
+    setShowHidden(next);
+    try {
+      safeLocalStorage()?.setItem(SHOW_HIDDEN_STORAGE_KEY, next ? "1" : "0");
+    } catch {
+      // Not remembered; the switch still works for this visit.
+    }
+  };
 
   // Triage statuses live in this browser only, keyed by threatKey so a status follows the
   // same threat from run to run. Read after mount so the first render matches the server's.
@@ -162,8 +186,8 @@ export default function Dashboard({
     setStatusesByKey((current) => setStatus(safeLocalStorage(), statusKey, current, key, status));
   };
   const statusCounts = useMemo(
-    () => summarise([...threats, ...hiddenThreats].map((t) => t.id), statuses),
-    [threats, hiddenThreats, statuses],
+    () => summarise((showHidden ? [...threats, ...hiddenThreats] : threats).map((t) => t.id), statuses),
+    [threats, hiddenThreats, showHidden, statuses],
   );
 
   const drift = useMemo(() => (prevRun ? diffThreatModels(prevRun, view) : null), [prevRun, view]);
@@ -302,28 +326,42 @@ export default function Dashboard({
             Select a component to see the threats that involve it, or select a threat to
             highlight what it touches.
           </p>
-          <div
-            role="radiogroup"
-            aria-label="Diagram view"
-            className="mt-3 inline-flex flex-wrap gap-1 rounded-full border border-line bg-surface-2 p-1"
-          >
-            {DIAGRAM_VIEWS.map((name) => {
-              const active = diagramView === name;
-              return (
-                <button
-                  key={name}
-                  type="button"
-                  role="radio"
-                  aria-checked={active}
-                  onClick={() => setDiagramView(name)}
-                  className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-                    active ? "bg-mint text-white shadow-sm" : "text-muted hover:text-fg"
-                  }`}
-                >
-                  {DIAGRAM_VIEW_LABELS[name]}
-                </button>
-              );
-            })}
+          <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
+            <div
+              role="radiogroup"
+              aria-label="Diagram view"
+              className="inline-flex flex-wrap gap-1 rounded-full border border-line bg-surface-2 p-1"
+            >
+              {DIAGRAM_VIEWS.map((name) => {
+                const active = diagramView === name;
+                return (
+                  <button
+                    key={name}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => setDiagramView(name)}
+                    className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                      active ? "bg-mint text-white shadow-sm" : "text-muted hover:text-fg"
+                    }`}
+                  >
+                    {DIAGRAM_VIEW_LABELS[name]}
+                  </button>
+                );
+              })}
+            </div>
+            {hiddenThreats.length > 0 ? (
+              <label className="flex items-center gap-2 text-sm text-muted">
+                <input
+                  id={SHOW_HIDDEN_ID}
+                  type="checkbox"
+                  checked={showHidden}
+                  onChange={(event) => handleShowHiddenChange(event.target.checked)}
+                  className="h-4 w-4 accent-mint"
+                />
+                {showHiddenLabel(hiddenThreats.length)}
+              </label>
+            ) : null}
           </div>
           <div className="mt-3">
             <ArchitectureGraph
@@ -339,6 +377,7 @@ export default function Dashboard({
               highlightEdgeIds={highlight.edgeIds}
               selectedNodeId={selectedNodeId}
               onSelectNode={handleSelectNode}
+              includeUnverified={showHidden}
             />
             <ArchitectureLegend nodes={shown.nodes} notes={layoutNotes} />
           </div>
@@ -351,6 +390,7 @@ export default function Dashboard({
               <ul aria-labelledby="component-picker-label" className="mt-2 flex flex-wrap gap-1.5">
                 {nodes.map((node) => {
                   const pressed = selectedNodeId === node.id;
+                  const { total, unverified } = threatTotals(node, showHidden);
                   return (
                     <li key={node.id}>
                       <button
@@ -365,10 +405,12 @@ export default function Dashboard({
                       >
                         {node.label}
                         <span aria-hidden="true" className="ml-1.5 font-mono text-muted">
-                          {node.threatCount}
+                          {total}
+                          {unverified > 0 ? ` +${unverified}` : ""}
                         </span>
                         <span className="sr-only">
-                          , {node.threatCount} threat{node.threatCount === 1 ? "" : "s"}
+                          , {total} threat{total === 1 ? "" : "s"}
+                          {unverified > 0 ? `, ${unverified} unverified` : ""}
                         </span>
                       </button>
                     </li>
@@ -420,7 +462,9 @@ export default function Dashboard({
             // The server's total, not the length of the (capped) list below.
             fixNowCount={fixNowTotal}
             statusCounts={statusCounts}
-            hiddenCounts={view.hiddenCounts ?? null}
+            // The same switch as the list and the diagram: off, the tiles count visible threats only.
+            hiddenCounts={showHidden ? (view.hiddenCounts ?? null) : null}
+            omittedUnverified={showHidden ? 0 : hiddenThreats.length}
           />
 
           <section
@@ -526,7 +570,9 @@ export default function Dashboard({
         <div className="mt-4 grid gap-6 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
           <div className="min-w-0 lg:sticky lg:top-24 lg:self-start">
             <FilterBar
-              options={view.filterOptions}
+              options={
+                showHidden ? view.filterOptions : (view.visibleFilterOptions ?? view.filterOptions)
+              }
               filters={filters}
               onChange={handleFiltersChange}
             />
@@ -545,7 +591,7 @@ export default function Dashboard({
               hiddenThreats={visibleHidden}
               hiddenTotal={hiddenThreats.length}
               showHidden={showHidden}
-              onShowHiddenChange={setShowHidden}
+              onShowHiddenChange={handleShowHiddenChange}
             />
           </div>
         </div>

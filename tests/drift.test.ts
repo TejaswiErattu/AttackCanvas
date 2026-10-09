@@ -19,7 +19,7 @@ import { deepFreeze } from "./helpers";
 
 function node(id: string, label: string, type: GraphNode["type"] = "backend"): GraphNode {
   return {
-    id, type, label, position: { x: 0, y: 0 }, threatCount: 0, maxSeverity: null,
+    id, type, label, position: { x: 0, y: 0 }, threatCount: 0, lowConfidenceThreatCount: 0, maxSeverity: null,
     technologies: [], assets: [], exposure: "internal",
   };
 }

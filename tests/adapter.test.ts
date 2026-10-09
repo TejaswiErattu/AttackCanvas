@@ -754,7 +754,15 @@ describe("hiding low-confidence threats (CLAUDE.md rule 2)", () => {
       const { hiddenThreats, hiddenCounts, ...rest } = withHidden;
       const { hiddenThreats: none, hiddenCounts: zero, ...restWithout } = withoutHidden;
       // Filter options also cover it (the list shows it); see "adds filter options for it".
-      expect({ ...rest, filterOptions: null }).toEqual({ ...restWithout, filterOptions: null });
+      // Nodes differ only in their lowConfidenceThreatCount; see the node tests below.
+      const noLow = (nodes: typeof rest.nodes) => nodes.map((n) => ({ ...n, lowConfidenceThreatCount: 0 }));
+      expect({ ...rest, nodes: noLow(rest.nodes), filterOptions: null }).toEqual({
+        ...restWithout,
+        nodes: noLow(restWithout.nodes),
+        filterOptions: null,
+      });
+      // What the filters offer with the unverified switch off is exactly the no-hidden view.
+      expect(rest.visibleFilterOptions).toEqual(restWithout.filterOptions);
       expect(hiddenThreats.map((t) => t.id)).toEqual(["hidden-one"]);
       expect(hiddenCounts).toEqual({ critical: 0, high: 0, medium: 0, low: 1 });
       expect(none).toEqual([]);
@@ -787,6 +795,23 @@ describe("hiding low-confidence threats (CLAUDE.md rule 2)", () => {
       expect(email).toMatchObject({ threatCount: 0, maxSeverity: null });
     });
 
+    it("counts it on its component apart from threatCount, and never on another", () => {
+      const byId = Object.fromEntries(withHidden.nodes.map((n) => [n.id, n]));
+      expect(byId["email-service"]).toMatchObject({ threatCount: 0, lowConfidenceThreatCount: 1 });
+      expect(byId["api-server"]).toMatchObject({ threatCount: 1, lowConfidenceThreatCount: 0 });
+      expect(withoutHidden.nodes.every((n) => n.lowConfidenceThreatCount === 0)).toBe(true);
+    });
+
+    it("never sets a node's severity from an unverified Critical", () => {
+      const critical = makeThreat({ ...hiddenThreat(0.1), severity: "critical" });
+      const view = toDashboardViewModel(modelWith(critical));
+      expect(view.nodes.find((n) => n.id === "email-service")).toMatchObject({
+        threatCount: 0,
+        lowConfidenceThreatCount: 1,
+        maxSeverity: null,
+      });
+    });
+
     it("adds filter options for it, since the list shows it", () => {
       expect(withHidden.filterOptions).toEqual({
         severities: ["high", "low"],
@@ -816,6 +841,7 @@ describe("hiding low-confidence threats (CLAUDE.md rule 2)", () => {
     expect(view.fixNowTotal).toBe(2);
     expect(view.nodes.find((n) => n.id === "email-service")).toMatchObject({
       threatCount: 1,
+      lowConfidenceThreatCount: 0,
       maxSeverity: "low",
     });
     expect(view.filterOptions.severities).toEqual(["high", "low"]);

@@ -9,9 +9,10 @@
  * (The dashboard alone moves handled findings after open ones within a priority band; see
  * orderByStatus in src/client/findingStatus.ts.)
  *
- * Every scored threat is listed. Threats below 25% confidence come after the others,
- * greyed and badged as unverified; the "Show N low-confidence threats" toggle (on by
- * default) can take them out of the list. They never enter Fix now.
+ * Threats below 25% confidence come after the others, greyed and badged as unverified,
+ * when `showHidden` is on. The switch that sets it lives in Dashboard, beside the diagram
+ * views, because it also drives the diagram's counts and the severity tiles; this list only
+ * obeys it (and offers a way to turn it on from an empty list). They never enter Fix now.
  */
 
 import type { ThreatCardData } from "@/shared/viewModel";
@@ -36,16 +37,18 @@ type ThreatListProps = {
   newKeys?: ReadonlySet<string>;
   /** Filtered below-25% threats (the view model's hiddenThreats), shown after the list when `showHidden` is on. */
   hiddenThreats?: readonly ThreatCardData[];
-  /** All below-25% threats before filtering, for the toggle's "Show N" label. */
+  /** All below-25% threats before filtering, for the empty list's "Include N" button. */
   hiddenTotal?: number;
   showHidden?: boolean;
   onShowHiddenChange?: (show: boolean) => void;
 };
 
-export const SHOW_HIDDEN_ID = "show-low-confidence";
+/** The id of Dashboard's unverified switch, which the empty list's button points at. */
+export const SHOW_HIDDEN_ID = "include-unverified";
 
+/** The switch's label, shared by Dashboard's checkbox and the empty list's button. */
 export function showHiddenLabel(n: number): string {
-  return `Show ${n} low-confidence threat${n === 1 ? "" : "s"}`;
+  return `Include ${n} unverified threat${n === 1 ? "" : "s"} (below 25% confidence)`;
 }
 
 const REASON_TEXT: Record<HiddenReason, string> = {
@@ -111,26 +114,12 @@ export default function ThreatList({
     </li>
   );
 
-  const toggle = canToggle ? (
-    <label className="mb-3 flex items-center gap-2 text-sm text-muted">
-      <input
-        id={SHOW_HIDDEN_ID}
-        type="checkbox"
-        checked={showHidden}
-        onChange={(event) => onShowHiddenChange?.(event.target.checked)}
-        className="h-4 w-4 accent-mint"
-      />
-      {showHiddenLabel(hiddenTotal)}
-    </label>
-  ) : null;
-
   const shown = items.length + lowItems.length;
   const total = totalCount + (showHidden ? hiddenTotal : 0);
 
   if (shown === 0) {
     return (
       <div>
-        {toggle}
         <p className="rounded-2xl border border-dashed border-line-strong p-8 text-center text-sm text-muted">
           {emptyMessage(total, hiddenSummary)}
           {canToggle && !showHidden ? (
@@ -153,7 +142,6 @@ export default function ThreatList({
 
   return (
     <div>
-      {toggle}
       <p className="mb-3 text-sm text-muted" aria-live="polite">
         Showing {shown} of {total} threat{total === 1 ? "" : "s"}
         {lowItems.length ? `, ${lowItems.length} below 25% confidence` : ""}

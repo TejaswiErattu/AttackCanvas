@@ -151,6 +151,7 @@ const VIEW: DashboardViewModel = {
       label: "Notes API",
       position: { x: 0, y: 0 },
       threatCount: 9,
+      lowConfidenceThreatCount: 0,
       maxSeverity: "critical",
       technologies: ["next"],
       assets: [],
@@ -162,6 +163,7 @@ const VIEW: DashboardViewModel = {
       label: "Postgres",
       position: { x: 0, y: 0 },
       threatCount: 1,
+      lowConfidenceThreatCount: 0,
       maxSeverity: "low",
       technologies: ["postgres"],
       assets: [],
@@ -175,6 +177,16 @@ const VIEW: DashboardViewModel = {
   assumptions: ["Sessions are cookie-based."],
   limitations: ["Only the default branch was analyzed."],
   filterOptions: {
+    severities: ["critical", "medium", "low"],
+    stride: [{ code: "S", label: "Spoofing" }],
+    owasp: [{ code: "A01:2025", label: "Broken Access Control" }],
+    components: [
+      { id: "api", name: "Notes API" },
+      { id: "db", name: "Postgres" },
+    ],
+    confidenceLabels: ["high", "medium", "low"],
+  },
+  visibleFilterOptions: {
     severities: ["critical", "medium", "low"],
     stride: [{ code: "S", label: "Spoofing" }],
     owasp: [{ code: "A01:2025", label: "Broken Access Control" }],

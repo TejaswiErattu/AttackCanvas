@@ -30,7 +30,11 @@ export type GraphNode = {
   label: string;
   /** {0,0} until the dashboard lays the graph out. */
   position: { x: number; y: number };
+  /** Threats at 25% confidence or above that involve this component. */
   threatCount: number;
+  /** Threats below 25% confidence that involve it: shown only when the unverified switch is on. */
+  lowConfidenceThreatCount: number;
+  /** From the visible threats alone, so an unverified Critical never colours a node. */
   maxSeverity: Severity | null;
   technologies: string[];
   /** What is worth protecting here, from the model. */
@@ -179,6 +183,8 @@ export type DashboardViewModel = {
   hiddenThreats: HiddenThreatCardData[];
   /** Severity counts over `hiddenThreats` alone, for the "Including low-confidence" line. */
   hiddenCounts: SeverityCounts;
+  /** Filter options over the visible threats alone: what the filters offer with the unverified switch off. */
+  visibleFilterOptions: FilterOptions;
   assumptions: string[];
   limitations: string[];
   filterOptions: FilterOptions;

@@ -21,6 +21,7 @@ function node(id: string, overrides: Partial<GraphNode> = {}): GraphNode {
     label: id,
     position: { x: 0, y: 0 },
     threatCount: 0,
+    lowConfidenceThreatCount: 0,
     maxSeverity: null,
     technologies: [],
     assets: [],

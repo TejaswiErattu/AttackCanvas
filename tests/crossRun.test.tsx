@@ -62,11 +62,14 @@ function goneThreat(id: string, title: string): ThreatCardData {
   return { ...base, id, title, severity: "critical", confidence: 72 };
 }
 
+const UNVERIFIED_3 = "Include 3 unverified threats (below 25% confidence)";
+const UNVERIFIED_41 = "Include 41 unverified threats (below 25% confidence)";
+
 describe("low-confidence threats in the list", () => {
   it("lists every scored threat by default, below-25% ones last, greyed and badged", () => {
     const view = demoView();
     render(<Dashboard view={view} basisCounts={null} />);
-    const toggle = screen.getByRole("checkbox", { name: "Show 3 low-confidence threats" });
+    const toggle = screen.getByRole("checkbox", { name: UNVERIFIED_3 });
     expect((toggle as HTMLInputElement).checked).toBe(true);
     expect(cardIds()).toEqual([
       ...view.threats.map((t) => `threat-card-${t.id}`),
@@ -85,7 +88,7 @@ describe("low-confidence threats in the list", () => {
   it("takes them out of the list when the toggle is turned off", () => {
     const view = demoView();
     render(<Dashboard view={view} basisCounts={null} />);
-    fireEvent.click(screen.getByRole("checkbox", { name: "Show 3 low-confidence threats" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: UNVERIFIED_3 }));
     expect(cardIds()).toEqual(view.threats.map((t) => `threat-card-${t.id}`));
     expect(screen.queryByText(BELOW_CUTOFF_TEXT)).toBeNull();
   });
@@ -124,7 +127,7 @@ describe("low-confidence threats in the list", () => {
       />,
     );
     expect(screen.getByText(/41 threats were scored; all fell below 25% confidence/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Show 41 low-confidence threats" }));
+    fireEvent.click(screen.getByRole("button", { name: UNVERIFIED_41 }));
     expect(onChange).toHaveBeenCalledWith(true);
   });
 

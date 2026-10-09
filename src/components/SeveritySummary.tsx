@@ -71,8 +71,10 @@ type SeveritySummaryProps = {
   fixNowCount: number;
   /** The reader's own triage counts over the listed threats; omitted when not tracked. */
   statusCounts?: StatusCounts;
-  /** Counts of threats below 25% confidence, added to the tiles. */
+  /** Counts of threats below 25% confidence, added to the tiles. Null with the unverified switch off. */
   hiddenCounts?: SeverityCounts | null;
+  /** How many below-25% threats the switch is leaving out of the tiles (0 when none or included). */
+  omittedUnverified?: number;
 };
 
 function readCount(counts: SeverityCounts | undefined, severity: Severity): number {
@@ -86,6 +88,7 @@ export default function SeveritySummary({
   fixNowCount,
   statusCounts,
   hiddenCounts = null,
+  omittedUnverified = 0,
 }: SeveritySummaryProps) {
   const low = (severity: Severity) => readCount(hiddenCounts ?? undefined, severity);
   const all = (severity: Severity) => readCount(counts, severity) + low(severity);
@@ -138,10 +141,14 @@ export default function SeveritySummary({
       ) : null}
 
       <p data-testid="scored-line" className="mt-4 text-sm text-muted">
-        {total} threat{total === 1 ? "" : "s"} scored
-        {lowTotal > 0
-          ? `, ${lowTotal} of them below 25% confidence: unverified, greyed in the list and never in Fix now.`
-          : "."}
+        {omittedUnverified > 0
+          ? `${total} threat${total === 1 ? "" : "s"} shown; ${omittedUnverified} more below 25% confidence ${omittedUnverified === 1 ? "is" : "are"} switched off.`
+          : `${total} threat${total === 1 ? "" : "s"} scored`}
+        {omittedUnverified > 0
+          ? ""
+          : lowTotal > 0
+            ? `, ${lowTotal} of them below 25% confidence: unverified, greyed in the list and never in Fix now.`
+            : "."}
       </p>
 
       {statusCounts ? (

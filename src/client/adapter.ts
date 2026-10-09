@@ -256,6 +256,7 @@ function toThreatCard(threat: Threat, lookups: Lookups): ThreatCardData {
 function toGraphNode(
   component: Component,
   threats: readonly Threat[],
+  hidden: readonly Threat[],
   exposure: ReadonlyMap<string, Exposure>,
 ): GraphNode {
   const affecting = threats.filter((t) => t.componentIds.includes(component.id));
@@ -265,6 +266,8 @@ function toGraphNode(
     label: component.name,
     position: component.position ? { ...component.position } : { x: 0, y: 0 },
     threatCount: affecting.length,
+    lowConfidenceThreatCount: hidden.filter((t) => t.componentIds.includes(component.id)).length,
+    // Visible threats only: an unverified threat never sets a node's accent.
     maxSeverity: maxSeverityOf(affecting),
     technologies: [...component.technologies],
     assets: [...component.assets],
@@ -358,7 +361,7 @@ export function toDashboardViewModel(model: ThreatModel): DashboardViewModel {
     counts: countBySeverity(visible),
     fixNow: fixNowCards.slice(0, FIX_NOW_LIMIT),
     fixNowTotal: fixNowCards.length,
-    nodes: model.components.map((component) => toGraphNode(component, visible, exposure)),
+    nodes: model.components.map((component) => toGraphNode(component, visible, hidden, exposure)),
     edges: model.dataFlows.map(toGraphEdge),
     boundaries: model.trustBoundaries.map((boundary) => ({
       id: boundary.id,
@@ -373,6 +376,7 @@ export function toDashboardViewModel(model: ThreatModel): DashboardViewModel {
     // Over every scored threat: the list shows the ones below 25% too, so the filters must
     // reach them.
     filterOptions: buildFilterOptions(model, [...visible, ...hidden]),
+    visibleFilterOptions: buildFilterOptions(model, visible),
   };
 }
 

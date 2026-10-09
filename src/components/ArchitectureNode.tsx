@@ -220,8 +220,23 @@ export function TypeIcon({ shape, className = "" }: { shape: ShapeKind; classNam
 // The node
 // ---------------------------------------------------------------------------
 
+/**
+ * What a node says about its threats. Off, only the visible ones; on, visible plus those
+ * below 25% confidence as one number, with the unverified part named beside it. Display only:
+ * both counts come from the view model, and the accent never reads the unverified ones.
+ */
+export function threatTotals(
+  node: Pick<GraphNode, "threatCount" | "lowConfidenceThreatCount">,
+  includeUnverified: boolean,
+): { total: number; unverified: number } {
+  const low = includeUnverified ? (node.lowConfidenceThreatCount ?? 0) : 0;
+  return { total: node.threatCount + low, unverified: low };
+}
+
 export type ArchitectureNodeData = {
   node: GraphNode;
+  /** The unverified switch: count threats below 25% confidence too. */
+  includeUnverified?: boolean;
   /** Highlighted by the current selection. */
   on: boolean;
   selected: boolean;
@@ -233,7 +248,8 @@ export type ArchitectureNodeData = {
 const HIDDEN_HANDLE = { opacity: 0, width: 6, height: 6, border: 0, pointerEvents: "none" } as const;
 
 export function NodeContent({ data }: { data: ArchitectureNodeData }) {
-  const { node, on, selected, dimmed } = data;
+  const { node, on, selected, dimmed, includeUnverified = false } = data;
+  const { total, unverified } = threatTotals(node, includeUnverified);
   const shape = shapeOf(node.type);
   const severity = node.maxSeverity;
   const outlined = selected || on;
@@ -279,8 +295,16 @@ export function NodeContent({ data }: { data: ArchitectureNodeData }) {
           <div className="mt-0.5 truncate text-[10px] uppercase tracking-wider text-subtle">
             {typeText(node.type)}
           </div>
-          <div className="mt-0.5 truncate text-[11px] text-muted">
-            {node.threatCount} threat{node.threatCount === 1 ? "" : "s"}
+          <div data-testid="node-threats" className="mt-0.5 truncate text-[11px] text-muted">
+            {total} threat{total === 1 ? "" : "s"}
+            {unverified > 0 ? (
+              <>
+                {" "}
+                <span data-testid="node-unverified" className="text-[10px] text-subtle">
+                  +{unverified} unverified
+                </span>
+              </>
+            ) : null}
             {severity ? ` · ${SEVERITY_TEXT[severity] ?? severity} max` : ""}
           </div>
         </div>

@@ -65,6 +65,8 @@ type ArchitectureGraphProps = {
   highlightEdgeIds: readonly string[];
   selectedNodeId: string | null;
   onSelectNode: (id: string | null) => void;
+  /** The unverified switch: nodes also count threats below 25% confidence. Display only. */
+  includeUnverified?: boolean;
 };
 
 /** Defined once, outside render: React Flow warns when nodeTypes changes identity. */
@@ -79,6 +81,7 @@ export default function ArchitectureGraph({
   highlightEdgeIds,
   selectedNodeId,
   onSelectNode,
+  includeUnverified = false,
 }: ArchitectureGraphProps) {
   // Layout depends only on the graph itself, so it is not recomputed when the selection
   // changes — which also keeps node positions stable while a user clicks around.
@@ -122,13 +125,19 @@ export default function ArchitectureGraph({
             ? { x: node.position.x - parent.x, y: node.position.y - parent.y }
             : node.position,
           ...(parent ? { parentNode: `boundary:${node.boundaryId}` } : {}),
-          data: { node, on, selected: selectedNodeId === node.id, dimmed: dimming && !on },
+          data: {
+            node,
+            on,
+            selected: selectedNodeId === node.id,
+            dimmed: dimming && !on,
+            includeUnverified,
+          },
           // The custom node draws its own outline; the wrapper adds no box of its own.
           style: { width: NODE_WIDTH, height: NODE_HEIGHT, background: "transparent", border: 0, padding: 0 },
         };
       });
     return [...groups, ...components];
-  }, [layout.nodes, layout.groups, highlightedNodes, dimming, selectedNodeId]);
+  }, [layout.nodes, layout.groups, highlightedNodes, dimming, selectedNodeId, includeUnverified]);
 
   const routes = useMemo(() => edgeRoutes(layout.edges), [layout.edges]);
   const xOf = useMemo(
