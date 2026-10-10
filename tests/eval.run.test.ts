@@ -256,6 +256,52 @@ describe("analyseRepo", () => {
   });
 });
 
+describe("analyseRepo: a failure within one poll of a stage change", () => {
+  /**
+   * The juice-shop-l1-r1 case: the architecture stage is polled, the job enters
+   * generating_threats, and the first threat batch is refused before the next poll.
+   */
+  function failsRightAfter(entered: AnalysisStage, recordsFailedStage: boolean): PipelineApi {
+    return {
+      createAnalysis: (url, level, o) => createAnalysis(url, level, o),
+      getAnalysis,
+      runAnalysis: async (id) => {
+        const s = getAnalysis(id)!;
+        for (const stage of ["loading_repo", "scanning", "mapping_architecture"] as const) {
+          s.stage = stage;
+          await new Promise((r) => setTimeout(r, 150)); // longer than STAGE_POLL_MS
+        }
+        s.stage = entered; // no await: the poll never sees it
+        if (recordsFailedStage) s.failedStage = s.stage; // as pipeline.ts fail() does
+        s.stage = "failed";
+        s.error = { code: "SECRET_BLOCKED", message: "safe message" };
+        s.cost = { calls: 1, totalUsd: 0.28 };
+        return s;
+      },
+      resumeWithAnswers: async () => {
+        throw new Error("not reached");
+      },
+    };
+  }
+
+  it("reports the stage the pipeline recorded, not the last one polled", async () => {
+    const out = await analyseRepo(failsRightAfter("generating_threats", true), repo, { timeoutMs: 600_000, profile: "dev" });
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.failure.failedDuring).toBe("generating_threats");
+    expect(formatRunFailure(out.failure).join("\n")).toContain(
+      "failed during: generating_threats (last completed: mapping_architecture; phase: analysis)",
+    );
+  });
+
+  it("falls back to the last polled stage when the state carries none", async () => {
+    const out = await analyseRepo(failsRightAfter("generating_threats", false), repo, { timeoutMs: 600_000, profile: "dev" });
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.failure.failedDuring).toBe("mapping_architecture");
+  });
+});
+
 describe("existingResultPaths (overwrite guard)", () => {
   const root = "/repo";
   const repos = [

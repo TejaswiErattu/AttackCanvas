@@ -200,6 +200,12 @@ export type AnalysisState = {
   updatedAt: number;
   /** Set only when stage === "failed". Already safe to show a user. Cleared on any success. */
   error?: { code: ErrorCode; message: string };
+  /**
+   * The stage the job was in when it failed, kept because fail() replaces `stage` with
+   * "failed". Server-side only, like `diagnostics`; the eval runner reports it, since a
+   * job can fail within one poll of entering a stage. Set only when stage === "failed".
+   */
+  failedStage?: AnalysisStage;
   questions?: DeveloperQuestion[];
   /** Set iff questions is set: the resume sidecar. Real jobs only -- see `isDemo`. */
   pending?: PendingAnswerState;
@@ -803,6 +809,7 @@ function fail(state: AnalysisState, cause: unknown): AnalysisState {
       ]);
     }
     state.error = { code, message: safeMessage(code) };
+    state.failedStage = state.stage;
     state.stage = "failed";
   }
   state.threatModel = undefined;

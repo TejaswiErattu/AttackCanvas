@@ -63,7 +63,9 @@ export async function analyseRepo(
       ok: false,
       failure: {
         repo: repo.name,
-        failedDuring: tracker.lastSeen,
+        // The pipeline's own record wins: a job can fail within one poll of entering a
+        // stage (a threat batch refused before sending), which the tracker never sees.
+        failedDuring: state.failedStage ?? tracker.lastSeen,
         phase,
         // Already a safe, user-facing message (pipeline.ts safeMessage).
         ...(state.error ? { error: state.error } : {}),

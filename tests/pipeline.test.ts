@@ -672,6 +672,29 @@ describe("runAnalysis", () => {
     expect(result.threatModel).toBeUndefined();
   });
 
+  it("records the stage a run failed in, since stage itself becomes \"failed\"", async () => {
+    const state = createAnalysis("acme/canary");
+    const result = await runAnalysis(
+      state.id,
+      canaryDeps({
+        generateThreats: async () => {
+          throw new SecretLeakError([{ type: "openai_key", line: 122 }]);
+        },
+      }),
+    );
+
+    expect(result.stage).toBe("failed");
+    expect(result.error?.code).toBe("SECRET_BLOCKED");
+    expect(result.failedStage).toBe("generating_threats");
+  });
+
+  it("leaves failedStage unset on a run that completes", async () => {
+    const state = createAnalysis("acme/canary");
+    const result = await runAnalysis(state.id, canaryDeps());
+    expect(result.stage).not.toBe("failed");
+    expect(result.failedStage).toBeUndefined();
+  });
+
   it("FAILS the whole run when scanDependencies breaks its never-throws contract (unexpected)", async () => {
     const state = createAnalysis("acme/canary");
     const result = await runAnalysis(

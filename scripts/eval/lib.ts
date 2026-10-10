@@ -669,7 +669,7 @@ export function stageBefore(stage: AnalysisStage): AnalysisStage | null {
 
 export type RunFailure = {
   repo: string;
-  /** Last non-terminal stage observed before the job became "failed". */
+  /** The stage the pipeline recorded at failure (state.failedStage), else the last one polled. */
   failedDuring: AnalysisStage;
   /** Which timed phase it failed in: runAnalysis, or resumeWithAnswers (fresh deadline). */
   phase: "analysis" | "resume";
