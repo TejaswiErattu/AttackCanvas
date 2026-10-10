@@ -53,7 +53,7 @@ const FIX_NOW_LIMIT = 5;
  * CLAUDE.md rule 2: threats below this confidence are hidden by default. Display-layer
  * only: they are kept apart in `hiddenThreats` so the list can show them on request.
  */
-const HIDE_BELOW_CONFIDENCE = 0.25;
+export const HIDE_BELOW_CONFIDENCE = 0.25;
 
 const SEVERITY_ORDER: readonly Severity[] = ["critical", "high", "medium", "low"];
 const CONFIDENCE_ORDER: readonly ConfidenceLabel[] = ["high", "medium", "low"];

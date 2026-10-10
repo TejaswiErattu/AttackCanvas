@@ -134,6 +134,7 @@ export default function AnalysisView({ analysisId }: AnalysisViewProps) {
         {banner}
         <Dashboard
           view={snapshot.view}
+          rawModel={snapshot.rawModel}
           basisCounts={snapshot.basisCounts}
           hiddenSummary={snapshot.hiddenSummary}
           replayed={snapshot.replayed}

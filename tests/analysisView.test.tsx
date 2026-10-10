@@ -63,6 +63,7 @@ function snapshot(stage: AnalysisStage, extra: Partial<AnalysisSnapshot> = {}): 
     stageCount: 8,
     questions: [],
     view: null,
+    rawModel: null,
     basisCounts: null,
     hiddenSummary: null,
     replayed: false,

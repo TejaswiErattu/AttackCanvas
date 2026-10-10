@@ -2,7 +2,8 @@
  * GET /api/analyze/[id] -- polls one analysis.
  *
  * Response: { stage, stageLabel, stageIndex, stageCount, questions?, threatModel?,
- * basisCounts?, hiddenSummary?, error? } or a 404 when the id is unknown or has expired.
+ * rawThreatModel?, basisCounts?, hiddenSummary?, error? } or a 404 when the id is unknown
+ * or has expired.
  *
  * `threatModel` is the adapted DashboardViewModel (src/client/adapter.ts), not the raw
  * schema ThreatModel: the raw model's internal evidence graph and un-laid-out ids are not
@@ -10,6 +11,12 @@
  * It is included whenever the state carries a threatModel, which is true from
  * "awaiting_answers" onward, not only at "complete" -- a client can show partial results
  * while questions are pending.
+ *
+ * `rawThreatModel` is the validated schema ThreatModel itself, untouched, sent only once the
+ * analysis is "complete" and only so the dashboard's "Download JSON" can save the whole
+ * result. The dashboard never renders from it, and it is not the view model: it carries no
+ * display fields, statuses or layout. Its content is already in `threatModel` in another
+ * shape (evidence, hidden threats, ids), so nothing new leaves the server.
  *
  * `basisCounts` (Prompt V Part 1: a derived count, never a new schema field) is sent under
  * the same condition but is NOT counted over that view: it tallies ALL scored threats in
@@ -53,6 +60,7 @@ export async function GET(
           ...(state.limitationDetails ? { limitationDetails: state.limitationDetails } : {}),
         }
       : undefined,
+    rawThreatModel: state.stage === "complete" ? state.threatModel : undefined,
     basisCounts: state.threatModel ? countByBasis(state.threatModel.threats) : undefined,
     hiddenSummary: state.threatModel ? summarizeHidden(state.threatModel.threats) : undefined,
     ...(state.replayed ? { replayed: true } : {}),

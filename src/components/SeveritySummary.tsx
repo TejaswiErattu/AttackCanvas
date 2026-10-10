@@ -18,6 +18,7 @@ import { BASIS_LABELS } from "@/shared/labels";
 import type { Severity } from "@/shared/schema";
 import type { SeverityCounts } from "@/shared/viewModel";
 import type { BasisCounts } from "@/client/useAnalysis";
+import { glossaryEntries } from "@/client/glossary";
 import {
   FINDING_STATUSES,
   FINDING_STATUS_LABELS,
@@ -150,6 +151,26 @@ export default function SeveritySummary({
             ? `, ${lowTotal} of them below 25% confidence: unverified, greyed in the list and never in Fix now.`
             : "."}
       </p>
+
+      <details data-testid="glossary" className="group mt-4 text-sm text-muted">
+        <summary className="inline-flex cursor-pointer list-none items-center gap-2 text-mint underline underline-offset-2 marker:hidden [&::-webkit-details-marker]:hidden">
+          <span
+            aria-hidden="true"
+            className="inline-block text-xs no-underline transition-transform group-open:rotate-90"
+          >
+            &#9656;
+          </span>
+          How to read these numbers
+        </summary>
+        <div className="mt-3 space-y-2">
+          {glossaryEntries().map((entry) => (
+            <div key={entry.id}>
+              <p className="text-xs font-medium text-fg">{entry.term}</p>
+              <p>{entry.text}</p>
+            </div>
+          ))}
+        </div>
+      </details>
 
       {statusCounts ? (
         <p data-testid="status-counts" className="mt-1 text-sm text-muted">

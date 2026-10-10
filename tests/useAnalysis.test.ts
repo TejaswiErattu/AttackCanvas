@@ -38,6 +38,7 @@ function snapshot(
     stageCount: 8,
     questions: [],
     view: null,
+    rawModel: null,
     basisCounts: null,
     hiddenSummary: null,
     replayed: false,
@@ -302,6 +303,22 @@ describe("analysisReducer: request errors", () => {
 
     expect(retried.error).toBeNull();
     expect(shouldPoll(retried)).toBe(true);
+  });
+});
+
+describe("readSnapshot: the raw model", () => {
+  it("passes the server's ThreatModel through untouched and apart from the view", () => {
+    const raw = { schemaVersion: "1.0", threats: [{ id: "t1" }], limitations: [] };
+    const view = { threats: [] };
+    const snapshot = readSnapshot({ stage: "complete", threatModel: view, rawThreatModel: raw });
+    expect(snapshot?.rawModel).toBe(raw);
+    expect(snapshot?.view).toBe(view);
+  });
+
+  it("is null when it was not sent or is not an object", () => {
+    expect(readSnapshot({ stage: "complete", threatModel: {} })?.rawModel).toBeNull();
+    expect(readSnapshot({ stage: "complete", rawThreatModel: "x" })?.rawModel).toBeNull();
+    expect(readSnapshot({ stage: "complete", rawThreatModel: [1] })?.rawModel).toBeNull();
   });
 });
 

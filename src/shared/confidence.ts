@@ -34,6 +34,26 @@ const SECOND_SOURCE = 100;
 const INFERENCE_ONLY = 200;
 const ASSUMPTION = -150;
 
+/**
+ * The points above, in thousandths, for anything that has to describe them (the dashboard's
+ * "How to read these numbers"). Read-only views of the constants confidenceOf uses, so the
+ * explanation cannot drift from the arithmetic.
+ */
+export const CONFIDENCE_POINTS = {
+  code: CODE,
+  /** Multiplied by the control gap's certainty. */
+  controlGap: GAP_WEIGHT,
+  semgrep: SEMGREP,
+  osv: OSV,
+  developer: DEVELOPER,
+  secondSource: SECOND_SOURCE,
+  inferenceOnly: INFERENCE_ONLY,
+  /** Per unconfirmed assumption; negative. */
+  assumption: ASSUMPTION,
+  /** Combined gap certainty that lets a gap-only threat reach GAP_FLOOR. */
+  gapFloorCertainty: GAP_FLOOR_CERTAINTY,
+} as const;
+
 type Category = "code" | "gap" | "semgrep" | "osv" | "developer" | "inference";
 
 export function isGapEvidence(e: Evidence): boolean {

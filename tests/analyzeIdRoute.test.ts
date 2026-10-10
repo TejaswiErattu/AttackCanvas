@@ -36,6 +36,42 @@ beforeEach(() => {
   vi.mocked(getAnalysis).mockReset();
 });
 
+describe("GET /api/analyze/[id]: the raw ThreatModel", () => {
+  it("sends the ThreatModel itself, unchanged and apart from the view, once complete", async () => {
+    const model = { ...EMPTY_MODEL, limitations: ["A limitation."] };
+    vi.mocked(getAnalysis).mockReturnValue({
+      id: "job-4",
+      stage: "complete",
+      cost: { calls: 0, totalUsd: 0 },
+      threatModel: model,
+    } as never);
+    const json = await (await get("job-4")).json();
+    expect(json.rawThreatModel).toEqual(JSON.parse(JSON.stringify(model)));
+    expect(validateThreatModel(json.rawThreatModel).ok).toBe(true);
+    // Separate from the dashboard's own shape, which is still sent as before.
+    expect(json.rawThreatModel).not.toHaveProperty("counts");
+    expect(json.threatModel).toHaveProperty("counts");
+    expect(json.threatModel).not.toHaveProperty("schemaVersion");
+  });
+
+  it("does not send it before the analysis is complete, though the view is already there", async () => {
+    vi.mocked(getAnalysis).mockReturnValue({
+      id: "job-5",
+      stage: "awaiting_answers",
+      cost: { calls: 0, totalUsd: 0 },
+      threatModel: EMPTY_MODEL,
+    } as never);
+    const json = await (await get("job-5")).json();
+    expect(json.threatModel).toBeDefined();
+    expect(json).not.toHaveProperty("rawThreatModel");
+  });
+
+  it("sends none for a job with no model", async () => {
+    vi.mocked(getAnalysis).mockReturnValue({ id: "j", stage: "scanning", cost: { calls: 0, totalUsd: 0 } } as never);
+    expect(await (await get("j")).json()).not.toHaveProperty("rawThreatModel");
+  });
+});
+
 describe("GET /api/analyze/[id]: limitation detail", () => {
   const entry = { code: "threat_discarded", sentence: "1 candidate threat was discarded.", subjects: [] };
 

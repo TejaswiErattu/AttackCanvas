@@ -32,7 +32,7 @@
 
 import { useCallback, useEffect, useReducer } from "react";
 import { STAGE_LABELS } from "@/shared/labels";
-import type { AnalysisStage, Basis } from "@/shared/schema";
+import type { AnalysisStage, Basis, ThreatModel } from "@/shared/schema";
 import type {
   AnalysisError,
   DashboardViewModel,
@@ -61,6 +61,11 @@ export type AnalysisSnapshot = {
   questions: QuestionData[];
   /** Present from "awaiting_answers" onward, so partial results can be shown early. */
   view: DashboardViewModel | null;
+  /**
+   * The server's ThreatModel exactly as sent, once complete, kept only so it can be
+   * downloaded. Never rendered from, and never re-derived on the client.
+   */
+  rawModel: ThreatModel | null;
   basisCounts: BasisCounts | null;
   hiddenSummary: HiddenSummary | null;
   /** True only when the server says the result was replayed from a saved file (dev only). */
@@ -194,6 +199,10 @@ export function readSnapshot(json: unknown): AnalysisSnapshot | null {
     stageCount: readNumber(json.stageCount, 0),
     questions: Array.isArray(json.questions) ? (json.questions as QuestionData[]) : [],
     view: isRecord(json.threatModel) ? (json.threatModel as DashboardViewModel) : null,
+    rawModel:
+      isRecord(json.rawThreatModel) && !Array.isArray(json.rawThreatModel)
+        ? (json.rawThreatModel as ThreatModel)
+        : null,
     basisCounts: readBasisCounts(json.basisCounts),
     hiddenSummary: readHiddenSummary(json.hiddenSummary),
     replayed: json.replayed === true,

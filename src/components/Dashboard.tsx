@@ -21,6 +21,7 @@
 import ComingSoon from "@/components/ComingSoon";
 import Limitations from "@/components/Limitations";
 import { useEffect, useMemo, useState } from "react";
+import type { ThreatModel } from "@/shared/schema";
 import type { DashboardViewModel } from "@/shared/viewModel";
 import { assignBoundaries } from "@/client/layoutGraph";
 import {
@@ -71,6 +72,7 @@ const EXPOSURE_DESCRIPTIONS: Record<Exposure, string> = {
   internal: "Internal: reachable only through other components.",
 };
 import SectionLabel from "@/components/SectionLabel";
+import ExportButtons from "@/components/ExportButtons";
 import FilterBar from "@/components/FilterBar";
 import SeveritySummary from "@/components/SeveritySummary";
 import SinceLastRun from "@/components/SinceLastRun";
@@ -79,6 +81,8 @@ import ThreatList, { SHOW_HIDDEN_ID, showHiddenLabel } from "@/components/Threat
 
 type DashboardProps = {
   view: DashboardViewModel;
+  /** The server's ThreatModel as sent, for "Download JSON" only; null when not sent. */
+  rawModel?: ThreatModel | null;
   basisCounts: BasisCounts | null;
   hiddenSummary?: HiddenSummary | null;
   /** The result came from a saved file (replay mode), not a fresh analysis. */
@@ -105,6 +109,7 @@ function formatAnalyzedAt(value: string): string {
 
 export default function Dashboard({
   view,
+  rawModel = null,
   basisCounts,
   hiddenSummary = null,
   replayed = false,
@@ -615,6 +620,12 @@ export default function Dashboard({
             />
           </div>
           <div className="min-w-0">
+            <ExportButtons
+              repoName={view.repo?.fullName}
+              model={rawModel}
+              listed={showHidden ? [...visible, ...visibleHidden] : visible}
+              statuses={statuses}
+            />
             <ThreatList
               threats={visible}
               selectedId={selectedThreatId}
