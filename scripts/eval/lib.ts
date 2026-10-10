@@ -24,7 +24,17 @@ const REPO_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
 export const ReposFileSchema = z
   .object({
     repos: z
-      .array(z.object({ name: z.string().regex(REPO_NAME), url: z.string() }))
+      .array(
+        z.object({
+          name: z.string().regex(REPO_NAME),
+          url: z.string(),
+          /**
+           * The answer key's name when several runs share one (eval/expected/<expected>.yaml);
+           * defaults to the run's own name, as for the NodeGoat runs.
+           */
+          expected: z.string().regex(REPO_NAME).optional(),
+        }),
+      )
       .min(1),
   })
   .superRefine((file, ctx) => {
@@ -99,11 +109,17 @@ export function revisionMismatch(expected: ExpectedFile, scannedRef: string): st
   return `result was scanned at "${scannedRef}" but the answer key is for "${expected.revision}"; pin the url in eval/repos.yaml to /tree/${expected.revision}`;
 }
 
-export function evalPaths(root: string, name: string) {
+/** The answer key a run is scored against: its repos.yaml `expected`, else its own name. */
+export function expectedKeyName(repos: readonly { name: string; expected?: string }[], name: string): string {
+  return repos.find((repo) => repo.name === name)?.expected ?? name;
+}
+
+/** Paths for run `name`; `expected` names the answer key when it is shared (expectedKeyName). */
+export function evalPaths(root: string, name: string, expected: string = name) {
   return {
     result: join(root, "eval", "results", `${name}.json`),
     labels: join(root, "eval", "labels", `${name}.csv`),
-    expected: join(root, "eval", "expected", `${name}.yaml`),
+    expected: join(root, "eval", "expected", `${expected}.yaml`),
     /** Hand labels for the threats that cite only control gaps (gapSheet.ts). */
     gaps: join(root, "eval", "labels", `${name}.gaps.csv`),
     /** A second person's labels for a sample of the primary sheet (sampleSecond.ts). */

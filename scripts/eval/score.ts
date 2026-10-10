@@ -7,7 +7,7 @@
  *   pnpm try scripts/eval/score.ts nodegoat-a3118b6 --second   # also score the second labeler
  *
  * Reads, per repo: eval/results/<repo>.json (cost), eval/labels/<repo>.csv (your labels)
- * and eval/expected/<repo>.yaml ({ expectedThreats: [{ id, description }] }). Computes
+ * and eval/expected/<repo>.yaml (or the shared key a repos.yaml entry names in `expected`) ({ expectedThreats: [{ id, description }] }). Computes
  * recall, unsupported rate, evidence accuracy and cost, and found/missed per class from the
  * answer key's owasp2013 notes. Recall counts an expected item only when a row labelled
  * supported = y matches it (recalledIds in lib.ts); the per-class table uses the same set. Refuses to score a sheet that is not fully labeled or that
@@ -71,7 +71,7 @@ function main(): void {
   const failures: string[] = [];
 
   for (const repo of repos) {
-    const paths = evalPaths(ROOT, repo.name);
+    const paths = evalPaths(ROOT, repo.name, repo.expected);
     const missing = [paths.result, paths.labels, paths.expected].filter((p) => !existsSync(p));
     if (missing.length > 0) {
       failures.push(`${repo.name}: missing ${missing.map((p) => p.replace(`${ROOT}/`, "")).join(", ")}`);
@@ -79,7 +79,7 @@ function main(): void {
     }
     try {
       const result = EvalResultSchema.parse(JSON.parse(readFileSync(paths.result, "utf8")));
-      const expected = parseYamlWith(readFileSync(paths.expected, "utf8"), ExpectedFileSchema, `eval/expected/${repo.name}.yaml`);
+      const expected = parseYamlWith(readFileSync(paths.expected, "utf8"), ExpectedFileSchema, `eval/expected/${repo.expected ?? repo.name}.yaml`);
       const mismatch = revisionMismatch(expected, result.threatModel.repo.ref);
       if (mismatch) throw new Error(mismatch);
       const labels = parseLabels(readFileSync(paths.labels, "utf8"), new Set(expected.expectedThreats.map((t) => t.id)));

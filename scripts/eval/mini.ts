@@ -41,6 +41,8 @@ import {
   EvalResultSchema,
   ExpectedFileSchema,
   evalPaths,
+  expectedKeyName,
+  ReposFileSchema,
   parseLabels,
   parseYamlWith,
   revisionMismatch,
@@ -57,18 +59,20 @@ const ROOT = process.cwd();
 
 async function main(): Promise<number> {
   const args = parseMiniArgs(process.argv.slice(2));
-  const paths = evalPaths(ROOT, args.name);
+  const repos = parseYamlWith(readFileSync(`${ROOT}/eval/repos.yaml`, "utf8"), ReposFileSchema, "eval/repos.yaml").repos;
+  const key = expectedKeyName(repos, args.name);
+  const paths = evalPaths(ROOT, args.name, key);
   const need = [paths.result, paths.expected, ...(args.byFiles ? [] : [paths.labels])];
   const missing = need.filter((p) => !existsSync(p));
   if (missing.length > 0) throw new Error(`missing ${missing.map((p) => p.replace(`${ROOT}/`, "")).join(", ")}`);
 
   const result = EvalResultSchema.parse(JSON.parse(readFileSync(paths.result, "utf8")));
   const expectedText = readFileSync(paths.expected, "utf8");
-  const expected = parseYamlWith(expectedText, ExpectedFileSchema, `eval/expected/${args.name}.yaml`);
+  const expected = parseYamlWith(expectedText, ExpectedFileSchema, `eval/expected/${key}.yaml`);
   const mismatch = revisionMismatch(expected, result.threatModel.repo.ref);
   if (mismatch) throw new Error(mismatch);
   const unknown = args.ids.filter((id) => !expected.expectedThreats.some((t) => t.id === id));
-  if (unknown.length > 0) throw new Error(`not in eval/expected/${args.name}.yaml: ${unknown.join(", ")}`);
+  if (unknown.length > 0) throw new Error(`not in eval/expected/${key}.yaml: ${unknown.join(", ")}`);
   const sources = expectedSources(parseYaml(expectedText));
   const labels = existsSync(paths.labels)
     ? parseLabels(readFileSync(paths.labels, "utf8"), new Set(expected.expectedThreats.map((t) => t.id)))

@@ -24,6 +24,8 @@ import {
   SECOND_SAMPLE_SIZE,
   blankSecondSheet,
   evalPaths,
+  expectedKeyName,
+  ReposFileSchema,
   parseLabels,
   parseYamlWith,
   stratifiedSample,
@@ -41,7 +43,9 @@ function main(): number {
     console.error("usage: sampleSecond.ts [run] [--force]");
     return 1;
   }
-  const paths = evalPaths(ROOT, run);
+  const repos = parseYamlWith(readFileSync(`${ROOT}/eval/repos.yaml`, "utf8"), ReposFileSchema, "eval/repos.yaml").repos;
+  const key = expectedKeyName(repos, run);
+  const paths = evalPaths(ROOT, run, key);
   for (const path of [paths.labels, paths.expected]) {
     if (!existsSync(path)) {
       console.error(`${run}: missing ${path.replace(`${ROOT}/`, "")}`);
@@ -52,7 +56,7 @@ function main(): number {
     console.error(`${run}: eval/labels/${run}.second-blank.csv already exists; not overwriting (--force to replace)`);
     return 1;
   }
-  const expected = parseYamlWith(readFileSync(paths.expected, "utf8"), ExpectedFileSchema, `eval/expected/${run}.yaml`);
+  const expected = parseYamlWith(readFileSync(paths.expected, "utf8"), ExpectedFileSchema, `eval/expected/${key}.yaml`);
   const primaryCsv = readFileSync(paths.labels, "utf8");
   const labels = parseLabels(primaryCsv, new Set(expected.expectedThreats.map((t) => t.id)));
   const ids = stratifiedSample(labels, SECOND_SAMPLE_SIZE, SECOND_SAMPLE_SEED);

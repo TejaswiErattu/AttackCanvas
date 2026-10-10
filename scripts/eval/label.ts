@@ -31,7 +31,7 @@ function main(): void {
   const repos = selectRepos(config.repos, args.filter((a) => !a.startsWith("--")));
 
   for (const repo of repos) {
-    const paths = evalPaths(ROOT, repo.name);
+    const paths = evalPaths(ROOT, repo.name, repo.expected);
     if (!existsSync(paths.result)) {
       console.error(`${repo.name}: no result at eval/results/${repo.name}.json (run scripts/eval/run.ts first)`);
       process.exitCode = 1;
