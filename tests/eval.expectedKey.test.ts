@@ -1,9 +1,12 @@
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  ExpectedFileSchema,
   ReposFileSchema,
   evalPaths,
   expectedKeyName,
+  parseYamlWith,
 } from "../scripts/eval/lib";
 
 describe("answer-key resolution", () => {
@@ -24,5 +27,14 @@ describe("answer-key resolution", () => {
   it("rejects an `expected` that is not a safe file name", () => {
     const bad = ReposFileSchema.safeParse({ repos: [{ name: "a", url: "", expected: "../secrets" }] });
     expect(bad.success).toBe(false);
+  });
+
+  it("resolves both Juice Shop runs in eval/repos.yaml to one key that parses", () => {
+    const repos = parseYamlWith(readFileSync("eval/repos.yaml", "utf8"), ReposFileSchema, "eval/repos.yaml").repos;
+    const keys = ["juice-shop-l1-r1", "juice-shop-l1-r2"].map((name) => expectedKeyName(repos, name));
+    expect(keys).toEqual(["juice-shop", "juice-shop"]);
+    const key = parseYamlWith(readFileSync(evalPaths(".", "juice-shop-l1-r1", keys[0]).expected, "utf8"), ExpectedFileSchema, "juice-shop.yaml");
+    expect(key.mode).toBe("guided");
+    expect(key.revision).toBe("0e6d909b7466e76bc8deabf2fdb62bc5c849961f");
   });
 });

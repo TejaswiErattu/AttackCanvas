@@ -1,0 +1,208 @@
+# DRAFT: pending human review. NOT human-verified.
+#
+# Drafted by Claude (the same model family that AttackCanvas uses) on 2026-10-09 from
+# Juice Shop's own challenge catalogue (data/static/challenges.yml) and the server code
+# it points to. AttackCanvas findings were not consulted: no Juice Shop result existed
+# when this was written.
+#
+# Pinned to juice-shop/juice-shop@0e6d909b7466e76bc8deabf2fdb62bc5c849961f
+# (master on 2026-10-09; commit dated 2026-10-08).
+#
+# Inclusion rule: a challenge is kept only when its vulnerability is visible in server
+# code (server.ts, routes/, lib/, models/) or package.json. Client-only and UI-trick
+# challenges (DOM XSS, score board, easter eggs, privacy policy, chatbot, web3, OSINT and
+# password guessing, hidden images) are left out. Each item cites file:line in `at` and
+# the same locations as permalinks in `source`. `precondition` says when the code path is
+# live: six items rest on code Juice Shop switches off when it detects Docker or Heroku,
+# so a threat model of the source should find them but a scan of the container would not.
+#
+# Verification (2026-10-09, against the pinned source): every `at` line was read, the
+# preconditions were traced through utils.isChallengeEnabled and challenges.yml
+# disabledEnv, and the dependency advisories were checked against OSV. No item is marked
+# uncertain; none was removed.
+#
+# score.ts reads only `id`, `description` and `owasp2013` (the per-class table);
+# `at`, `source`, `challenge` and `review` are notes for the reviewer.
+#
+# Shared by juice-shop-l1-r1 and juice-shop-l1-r2: their eval/repos.yaml entries name it
+# with `expected: juice-shop`, so there is one key and no per-run copies.
+status: draft
+# Guided evaluation, and contaminated: treat recall here as detection with hints, not
+# blind discovery.
+#  - Inline annotations: the vulnerable server lines carry
+#    "vuln-code-snippet vuln-line <challengeKey>" comments (e.g. routes/login.ts:34,
+#    routes/search.ts:23, lib/insecurity.ts:136), and they reach the model with the code.
+#    A finding that only restates an annotation is still counted.
+#  - Advisory file: .well-known/csaf/2017/juice-shop-sa-20200513-express-jwt.json states
+#    that the shop is vulnerable to null-algorithm JWT attacks, and the loader selects it,
+#    which hints JS-JWT-UNSIGNED directly.
+#  - AGENTS.md is selected and says the infrastructure/ files are intentionally insecure
+#    (no item in this key rests on them).
+#  - Not selected by the loader (checked with a loader-only dry run at the pinned commit):
+#    data/static/challenges.yml, SOLUTIONS.md and threat-model.json, which document the
+#    vulnerabilities outright.
+mode: guided
+# score.ts refuses a result whose threatModel.repo.ref differs from this.
+revision: 0e6d909b7466e76bc8deabf2fdb62bc5c849961f
+expectedThreats:
+  - id: JS-SQLI-LOGIN
+    description: 'SQL injection in login. The email field is interpolated into a raw sequelize.query SELECT on Users, so "'' OR 1=1--" logs in as the first user (the administrator) without a password.'
+    owasp2013: A1
+    challenge: loginAdminChallenge, loginBenderChallenge, loginJimChallenge
+    at: routes/login.ts:34
+    source: https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/routes/login.ts#L34
+
+  - id: JS-SQLI-SEARCH
+    description: 'SQL injection in product search. The q parameter is interpolated into a raw LIKE query on Products, allowing UNION-based extraction of user credentials and the database schema.'
+    owasp2013: A1
+    challenge: unionSqlInjectionChallenge, dbSchemaChallenge
+    at: routes/search.ts:23
+    source: https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/routes/search.ts#L23
+
+  - id: JS-NOSQL-REVIEWS-UPDATE
+    description: 'NoSQL injection in review update. PATCH /rest/products/reviews passes req.body.id straight into the MarsDB update selector with multi:true, so an operator object such as {"$ne": -1} rewrites every review.'
+    owasp2013: A1
+    challenge: noSqlReviewsChallenge
+    at: routes/updateProductReviews.ts:18-20
+    source: https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/routes/updateProductReviews.ts#L18-L20
+    precondition: 'a logged-in user (PATCH /rest/products/reviews requires isAuthorized, server.ts:653)'
+
+  - id: JS-FORGED-REVIEW
+    description: 'Broken access control on reviews. The review update never checks that the logged-in user is the review''s author, so any user can edit anyone''s review.'
+    owasp2013: A4/A7
+    challenge: forgedReviewChallenge
+    at: routes/updateProductReviews.ts:16-18
+    source: https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/routes/updateProductReviews.ts#L16-L18
+
+  - id: JS-NOSQL-WHERE-REVIEWS
+    description: 'NoSQL (JavaScript) injection. Product reviews are fetched with a $where expression built by concatenating the URL id (''this.product == '' + id), so a request can run JavaScript in the query, e.g. sleep() to stall the server.'
+    owasp2013: A1
+    challenge: noSqlCommandChallenge
+    at: routes/showProductReviews.ts:31-36
+    source: https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/routes/showProductReviews.ts#L31-L36
+    precondition: 'enabled outside Docker and Heroku: Juice Shop switches this code path off when it detects a container (disabledEnv in data/static/challenges.yml)'
+
+  - id: JS-NOSQL-WHERE-ORDERS
+    description: 'NoSQL (JavaScript) injection in order tracking. The order id from the URL is interpolated into a $where expression, so a crafted id returns every order.'
+    owasp2013: A1
+    challenge: noSqlOrdersChallenge
+    at: routes/trackOrder.ts:15-18
+    source: https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/routes/trackOrder.ts#L15-L18
+    precondition: 'enabled outside Docker and Heroku: Juice Shop switches this code path off when it detects a container (disabledEnv in data/static/challenges.yml)'
+
+  - id: JS-BASKET-IDOR
+    description: 'Insecure direct object reference on baskets. GET /rest/basket/:id loads the basket by the URL id and never compares it with the logged-in user''s basket id, so any user can view another user''s basket.'
+    owasp2013: A4
+    challenge: basketAccessChallenge
+    at: routes/basket.ts:18-19
+    source: https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/routes/basket.ts#L18-L19
+
+  - id: JS-BASKET-ITEM-MANIPULATION
+    description: 'Broken access control when adding basket items. The ownership check compares only the first BasketId in the body while the item is created with the last one, so a duplicated BasketId parameter adds products to another user''s basket.'
+    owasp2013: A4
+    challenge: basketManipulateChallenge
+    at: routes/basketItems.ts:37-42
+    source: https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/routes/basketItems.ts#L37-L42
+
+  - id: JS-ADMIN-DATA-AUTHZ
+    description: 'Missing function-level access control behind the admin section. The administration page is guarded only in the Angular client; the endpoint it loads its user table from, /rest/user/authentication-details, requires any valid login (server.ts:417) and returns every user record (email, role, last login IP; password and TOTP secret masked). lib/insecurity.ts has no admin-role check at all.'
+    owasp2013: A7
+    challenge: adminSectionChallenge
+    at: server.ts:417, routes/authenticatedUsers.ts:10-30
+    source: https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/server.ts#L417 ; https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/routes/authenticatedUsers.ts#L10-L30
+
+  - id: JS-ROLE-MASS-ASSIGNMENT
+    description: 'Mass assignment at registration. POST /api/Users is the finale-rest create endpoint for the User model, which accepts role from the request body, and the role setter allows "admin", so anyone can register as an administrator. The pre-handlers on POST /api/Users only trim the email and password.'
+    owasp2013: A4/A7
+    challenge: registerAdminChallenge
+    at: server.ts:503, server.ts:520-526, models/user.ts:76-95
+    source: https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/server.ts#L503 ; https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/server.ts#L520-L526 ; https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/models/user.ts#L76-L95
+
+  - id: JS-MD5-PASSWORDS
+    description: 'Weak password hashing. Passwords are stored as unsalted MD5 (security.hash), so leaked hashes are cracked trivially.'
+    owasp2013: A6
+    challenge: weakPasswordChallenge, passwordHashLeakChallenge
+    at: lib/insecurity.ts:41, models/user.ts:73
+    source: https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/lib/insecurity.ts#L41 ; https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/models/user.ts#L73
+
+  - id: JS-HARDCODED-JWT-KEY
+    description: 'Hard-coded secrets. The RSA private key that signs every JWT is a string literal in lib/insecurity.ts, and the HMAC key beside it is hard-coded too, so anyone with the source can mint valid tokens.'
+    owasp2013: A2/A6
+    challenge: jwtForgedChallenge
+    at: lib/insecurity.ts:21, lib/insecurity.ts:42
+    source: https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/lib/insecurity.ts#L21 ; https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/lib/insecurity.ts#L42
+
+  - id: JS-JWT-UNSIGNED
+    description: 'JWT verification accepts tokens with alg "none". routes/verify.ts verifies tokens with jsonwebtoken 0.4.0 and no algorithms allow-list, and isAuthorized uses express-jwt 0.1.3 (which bundles jsonwebtoken ~0.1.0) without pinning an algorithm either; both jsonwebtoken versions predate the fix for CVE-2015-9235 (GHSA-c7hr-j4mj-j2w6), so an unsigned token naming any user is accepted.'
+    owasp2013: A2/A9
+    challenge: jwtUnsignedChallenge
+    at: routes/verify.ts:125, lib/insecurity.ts:52, package.json:112, package.json:129
+    source: https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/routes/verify.ts#L125 ; https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/lib/insecurity.ts#L52 ; https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/package.json#L112 ; https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/package.json#L129
+
+  - id: JS-FTP-DIRECTORY-LISTING
+    description: 'Directory listing of /ftp. serve-index exposes the ftp directory, which holds confidential documents (acquisitions.md) and backups.'
+    owasp2013: A5/A6
+    challenge: directoryListingChallenge
+    at: server.ts:288-289
+    source: https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/server.ts#L288-L289
+
+  - id: JS-FTP-NULL-BYTE
+    description: 'File-type allow-list bypass on /ftp. The .md/.pdf suffix check runs on the name before cutOffPoisonNullByte strips everything from a literal "%00", so a request for "coupons_2013.md.bak%2500.md" (Express decodes %25 to %) serves a forbidden backup file.'
+    owasp2013: A4/A5
+    challenge: forgottenBackupChallenge, forgottenDevBackupChallenge, nullByteChallenge
+    at: routes/fileServer.ts:26-27
+    source: https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/routes/fileServer.ts#L26-L27
+
+  - id: JS-XXE-UPLOAD
+    description: 'XML external entity injection. XML uploads to /file-upload are parsed by libxml2 with XML_PARSE_NOENT and XML_PARSE_DTDLOAD, so external entities read local files such as /etc/passwd.'
+    owasp2013: XXE (OWASP 2017 A4)
+    challenge: xxeFileDisclosureChallenge, xxeDosChallenge
+    at: lib/xml.ts:35, routes/fileUpload.ts:76
+    source: https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/lib/xml.ts#L35 ; https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/routes/fileUpload.ts#L76
+    precondition: 'enabled outside Docker and Heroku: Juice Shop switches this code path off when it detects a container (disabledEnv in data/static/challenges.yml)'
+
+  - id: JS-ZIP-SLIP
+    description: 'Path traversal (zip slip) in uploads. Zip entries are written to path.resolve(''uploads/complaints/'' + entry.path); the only check is that the result stays inside the application directory, so "../../ftp/legal.md" overwrites served files.'
+    owasp2013: A4
+    challenge: fileWriteChallenge
+    at: routes/fileUpload.ts:28-33, routes/fileUpload.ts:44
+    source: https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/routes/fileUpload.ts#L28-L33 ; https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/routes/fileUpload.ts#L44
+    precondition: 'enabled outside Docker and Heroku: Juice Shop switches this code path off when it detects a container (disabledEnv in data/static/challenges.yml)'
+
+  - id: JS-SSRF-PROFILE-IMAGE
+    description: 'Server-side request forgery. POST /profile/image/url fetches req.body.imageUrl server-side with no host or scheme restriction.'
+    owasp2013: SSRF
+    challenge: ssrfChallenge
+    at: routes/profileImageUrlUpload.ts:19-24
+    source: https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/routes/profileImageUrlUpload.ts#L19-L24
+    precondition: 'a logged-in user (the token cookie must belong to an authenticated user)'
+
+  - id: JS-SSTI-EVAL
+    description: 'Server-side code injection. The user profile page evaluates a #{...} expression from the username with eval(), so a crafted username runs arbitrary code on the server.'
+    owasp2013: A1
+    challenge: sstiChallenge
+    at: routes/userProfile.ts:57-65
+    source: https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/routes/userProfile.ts#L57-L65
+    precondition: 'enabled outside Docker and Heroku: Juice Shop switches this code path off when it detects a container (disabledEnv in data/static/challenges.yml)'
+
+  - id: JS-B2B-RCE
+    description: 'Remote code execution / DoS in the B2B order API. orderLinesData from the request is evaluated with notevil inside vm.runInContext; the sandbox can be escaped or kept busy with an infinite loop.'
+    owasp2013: A1
+    challenge: rceChallenge, rceOccupyChallenge
+    at: routes/b2bOrder.ts:18-23
+    source: https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/routes/b2bOrder.ts#L18-L23
+    precondition: 'enabled outside Docker and Heroku: Juice Shop switches this code path off when it detects a container (disabledEnv in data/static/challenges.yml)'
+
+  - id: JS-OPEN-REDIRECT
+    description: 'Unvalidated redirect. isRedirectAllowed accepts any URL that merely contains an allow-listed URL as a substring (url.includes), so "https://evil.example/?https://github.com/juice-shop/juice-shop" passes.'
+    owasp2013: A10
+    challenge: redirectChallenge
+    at: lib/insecurity.ts:136
+    source: https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/lib/insecurity.ts#L136
+
+  - id: JS-VULNERABLE-DEPS
+    description: 'Known-vulnerable direct dependencies pinned in package.json. A finding matches only if it names at least one of: express-jwt 0.1.3 (GHSA-6g6m-m6h5-w9gf, CVE-2020-15084, authorization bypass when algorithms are not specified); sanitize-html 1.4.2 (GHSA-3j7m-hmh3-9jmp, CVE-2016-1000237, XSS; used server-side by lib/insecurity.ts:58 for feedback comments); jsonwebtoken 0.4.0 (GHSA-c7hr-j4mj-j2w6, CVE-2015-9235, verification bypass). Juice Shop''s own challenge accepts sanitize-html 1.4.2 or express-jwt 0.1.3. A generic "outdated dependencies" finding does not match.'
+    owasp2013: A9
+    challenge: knownVulnerableComponentChallenge
+    at: package.json:112, package.json:129, package.json:145, lib/insecurity.ts:58
+    source: https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/package.json#L112 ; https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/package.json#L129 ; https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/package.json#L145 ; https://github.com/juice-shop/juice-shop/blob/0e6d909b7466e76bc8deabf2fdb62bc5c849961f/lib/insecurity.ts#L58 ; https://osv.dev/vulnerability/GHSA-6g6m-m6h5-w9gf ; https://osv.dev/vulnerability/GHSA-3j7m-hmh3-9jmp ; https://osv.dev/vulnerability/GHSA-c7hr-j4mj-j2w6

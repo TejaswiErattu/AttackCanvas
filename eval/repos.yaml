@@ -49,3 +49,13 @@ repos:
     url: "https://github.com/OWASP/NodeGoat/tree/c5cb68a7084e4ae7dcc60e6a98768720a81841e8"
   - name: nodegoat-final-l1 # OWASP/NodeGoat, level 1, AttackCanvas 535a19d
     url: "https://github.com/OWASP/NodeGoat/tree/c5cb68a7084e4ae7dcc60e6a98768720a81841e8"
+  # Juice Shop repeated-run pair. Both pinned to juice-shop/juice-shop@0e6d909b7466e76bc8deabf2fdb62bc5c849961f,
+  # master on 2026-10-09 (commit dated 2026-10-08). Run at level 1; r1 and r2 differ only by
+  # the run, for the repeated-run Jaccard. Both are scored against the one shared key
+  # eval/expected/juice-shop.yaml, named by `expected` (no per-run copies).
+  - name: juice-shop-l1-r1 # juice-shop/juice-shop, level 1, run 1
+    url: "https://github.com/juice-shop/juice-shop/tree/0e6d909b7466e76bc8deabf2fdb62bc5c849961f"
+    expected: juice-shop
+  - name: juice-shop-l1-r2 # juice-shop/juice-shop, level 1, run 2
+    url: "https://github.com/juice-shop/juice-shop/tree/0e6d909b7466e76bc8deabf2fdb62bc5c849961f"
+    expected: juice-shop
