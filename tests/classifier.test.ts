@@ -290,6 +290,46 @@ describe("classifyPath: low", () => {
   });
 });
 
+describe("classifyPath: browser-app source", () => {
+  it.each([
+    "frontend/src/app/basket/basket.component.ts",
+    "frontend/src/app/Services/product.service.ts",
+    "client/src/components/Header.tsx",
+    "apps/frontend/src/pages/home.vue",
+    "packages/client/src/store.ts",
+  ])("ranks unremarkable client source %s low", (path) => {
+    expect(classifyPath(path)).toEqual({ tier: "low", reason: "client application source" });
+  });
+
+  it("keeps client code whose path names authentication or administration high", () => {
+    expect(tierOf("frontend/src/app/login/login.component.ts")).toBe("high");
+    expect(tierOf("frontend/src/app/administration/administration.component.ts")).toBe("high");
+    expect(tierOf("client/src/session.ts")).toBe("high");
+  });
+
+  it.each([
+    "frontend/src/app/app.guard.ts",
+    "frontend/src/app/Services/request.interceptor.ts",
+    "client/src/csrf.ts",
+    "frontend/src/app/token-sale/token-sale.component.ts",
+    "client/src/lib/crypto.ts",
+    "frontend/src/app/password-strength/password-strength.component.ts",
+  ])("keeps security-relevant client source %s medium", (path) => {
+    expect(tierOf(path)).toBe("medium");
+  });
+
+  it("does not treat a server's own client/ or frontend/ subdirectory as a browser app", () => {
+    expect(tierOf("src/client/http.ts")).toBe("medium");
+    expect(tierOf("server/frontend/render.ts")).toBe("medium");
+    expect(tierOf("lib/insecurity.ts")).toBe("medium");
+  });
+
+  it("leaves non-source client files to the existing rules", () => {
+    expect(classifyPath("frontend/package.json")).toEqual({ tier: "high", reason: "package manifest" });
+    expect(tierOf("frontend/src/app/app.component.html")).toBe("low");
+  });
+});
+
 describe("classifyPath: input handling", () => {
   it("is case-insensitive and tolerates a leading ./", () => {
     expect(tierOf("./SRC/Routes/Users.TS")).toBe("high");

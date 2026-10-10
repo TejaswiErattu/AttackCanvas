@@ -160,6 +160,18 @@ const HIGH_DIRS = new Set([
 ]);
 const MEDIUM_DIRS = new Set(["src", "lib", "server", "api", "config"]);
 
+/**
+ * Directory names that hold a browser application, recognised only as the repository's
+ * top-level directory or a workspace package (apps/<name>, packages/<name>), so a server's
+ * own src/client/ is never mistaken for one.
+ */
+const CLIENT_ROOTS = new Set(["frontend", "client"]);
+const WORKSPACE_DIRS = new Set(["apps", "packages"]);
+
+/** Names that mark client code as security-relevant: guards, tokens, crypto, sanitising. */
+const CLIENT_SECURITY_NAME =
+  /guard|intercept|permission|polic|acl|rbac|csrf|xsrf|token|crypt|secur|saniti[sz]|passw|jwt|oauth|oidc|role|captcha|2fa|totp|mfa/;
+
 type Parts = { lower: string; dirs: string[]; base: string; ext: string };
 
 /** The largest size a file may have and still be loaded. */
@@ -285,6 +297,25 @@ function highReason(parts: Parts): string | undefined {
   return undefined;
 }
 
+function isClientRoot(parts: Parts): boolean {
+  const [first, second] = parts.dirs;
+  return (
+    (first !== undefined && CLIENT_ROOTS.has(first)) ||
+    (first !== undefined && WORKSPACE_DIRS.has(first) && second !== undefined && CLIENT_ROOTS.has(second))
+  );
+}
+
+/**
+ * Browser-app source with nothing security-relevant in its path. It would otherwise be
+ * medium (frontend/src/** matches src/) and, sorting before lib/ and server/, fill a
+ * capped selection ahead of the server code that enforces security. Checked after high,
+ * so client auth, login, session, admin and models files keep their place.
+ */
+function clientSourceReason(parts: Parts): string | undefined {
+  if (!isClientRoot(parts) || !SOURCE_EXTENSIONS.has(parts.ext)) return undefined;
+  return CLIENT_SECURITY_NAME.test(parts.lower) ? undefined : "client application source";
+}
+
 function mediumReason(parts: Parts): string | undefined {
   if (parts.dirs.includes("config")) return "config/";
   const dir = inDirs(parts, MEDIUM_DIRS);
@@ -306,8 +337,11 @@ function mediumReason(parts: Parts): string | undefined {
  *   3. low: tests, docs, examples, scripts, so `auth.test.ts` and `docs/admin.md` are
  *      not promoted by their names;
  *   4. high: sensitive application paths;
- *   5. medium: other source files in src, lib, server, api, and config/**;
- *   6. anything else is low ("other"): first-party, just unremarkable.
+ *   5. low: browser-app source under frontend/ or client/ (top level, or apps/ or
+ *      packages/<name>) whose path names nothing security-relevant, so a large client
+ *      cannot crowd server code out of a capped selection;
+ *   6. medium: other source files in src, lib, server, api, and config/**;
+ *   7. anything else is low ("other"): first-party, just unremarkable.
  */
 export function classifyPath(path: string, size?: number): Classification {
   const parts = split(path);
@@ -322,6 +356,9 @@ export function classifyPath(path: string, size?: number): Classification {
 
   const high = highReason(parts);
   if (high) return { tier: "high", reason: high };
+
+  const client = clientSourceReason(parts);
+  if (client) return { tier: "low", reason: client };
 
   const medium = mediumReason(parts);
   if (medium) return { tier: "medium", reason: medium };

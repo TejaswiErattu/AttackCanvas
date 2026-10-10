@@ -9,6 +9,7 @@ import {
   loadRepositoryWith,
   mapWithConcurrency,
   modelBoundFiles,
+  selectCandidates,
   type LoaderDeps,
 } from "@/server/ingest/loader";
 import { MAX_FILE_BYTES } from "@/server/ingest/classifier";
@@ -748,5 +749,29 @@ describe("sensitive nested directories", () => {
       "src/auth/helpers.ts",
     ]);
     expect(files.slice(0, 2).every((f) => f.tier === "high")).toBe(true);
+  });
+});
+
+describe("selectCandidates: a large browser app cannot crowd out server code", () => {
+  it("keeps every lib/ and routes/ file when client source alone would fill the cap", () => {
+    const client = Array.from({ length: MAX_FILES }, (_, i) => ({
+      path: `frontend/src/app/widget-${String(i).padStart(3, "0")}/widget.component.ts`,
+      type: "file" as const,
+      size: 100,
+    }));
+    const server = ["lib/insecurity.ts", "lib/xml.ts", "routes/login.ts", "server.ts"].map((path) => ({
+      path,
+      type: "file" as const,
+      size: 100,
+    }));
+    const guard = { path: "frontend/src/app/app.guard.ts", type: "file" as const, size: 100 };
+
+    const { candidates, overLimit } = selectCandidates([...client, guard, ...server]);
+    const picked = new Set(candidates.map((c) => c.path));
+
+    expect(candidates).toHaveLength(MAX_FILES);
+    for (const s of server) expect(picked.has(s.path), s.path).toBe(true);
+    expect(picked.has(guard.path)).toBe(true);
+    expect(overLimit).toBe(server.length + 1);
   });
 });
