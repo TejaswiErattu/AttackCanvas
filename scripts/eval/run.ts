@@ -32,6 +32,12 @@
  * Sonnet on every stage under either profile (src/server/ai/levels.ts); the profile only
  * changes models at levels 2-4.
  *
+ * Set ATTACKCANVAS_CHECKPOINT_DIR=.cache/checkpoints to keep the load, detect, scanners and
+ * architecture checkpoints (src/server/analysis/checkpoints.ts; raw repository content,
+ * gitignored). The architecture checkpoint is written before the threat stage starts, so
+ * after a failure there the merged components, flows and their ids can be read from
+ * <dir>/<owner>__<repo>/architecture.json without paying for anything again.
+ *
  * Every developer question is answered "skipped", so a result depends only on
  * the repository. Needs ANTHROPIC_API_KEY, GITHUB_PERSONAL_ACCESS_TOKEN and Docker, plus
  * the semgrep CLI (see scripts/try-pipeline.ts). A failed job also logs one metadata-only

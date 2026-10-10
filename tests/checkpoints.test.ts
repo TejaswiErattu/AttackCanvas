@@ -24,6 +24,8 @@ describe("checkpoints", () => {
     expect(checkpointDir({ NODE_ENV: "development" })).toBeUndefined();
     expect(checkpointDir({ NODE_ENV: "production", [CHECKPOINT_DIR_ENV]: "d" })).toBeUndefined();
     expect(checkpointDir({ NODE_ENV: "development", [CHECKPOINT_DIR_ENV]: "d" })).toBe("d");
+    // scripts/eval/run.ts and pnpm try leave NODE_ENV unset: checkpoints stay on.
+    expect(checkpointDir({ [CHECKPOINT_DIR_ENV]: ".cache/checkpoints" })).toBe(".cache/checkpoints");
   });
 
   it("round-trips a checkpoint under <owner>__<repo>/<stage>.json", () => {

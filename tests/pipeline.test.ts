@@ -1469,6 +1469,27 @@ describe("stage checkpoints", () => {
     expect(replayed.model.components).toEqual(done.threatModel!.components);
   });
 
+  it("keeps the architecture checkpoint when the threat stage then fails, for offline diagnosis", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "checkpoints-"));
+    vi.stubEnv(CHECKPOINT_DIR_ENV, dir);
+    const state = createAnalysis("https://github.com/acme/canary", 1);
+    const failed = await runAnalysis(
+      state.id,
+      canaryDeps({
+        generateThreats: async () => {
+          throw new SecretLeakError([{ type: "openai_key", line: 122 }]);
+        },
+      }),
+    );
+    expect(failed.stage).toBe("failed");
+    expect(failed.failedStage).toBe("generating_threats");
+    const saved = deserializeArchitecture(readCheckpoint(dir, "acme", "canary", "architecture").architecture);
+    expect(saved.components.length).toBeGreaterThan(0);
+    for (const stage of ["load", "detect", "scanners"]) {
+      expect(existsSync(join(dir, "acme__canary", `${stage}.json`))).toBe(true);
+    }
+  });
+
   it("writes nothing when the variable is unset or in production", async () => {
     const dir = mkdtempSync(join(tmpdir(), "checkpoints-"));
     vi.stubEnv(CHECKPOINT_DIR_ENV, dir);
