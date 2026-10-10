@@ -439,7 +439,8 @@ Three commits:
    that a title containing "<script>" is URL-encoded and never rendered
    as HTML.
 
-3. Drift. On completion, store the ThreatModel under
+3. Drift. (Superseded: the two keys below became a ring of the last five runs under
+   attackcanvas:runs:<owner>/<repo>, src/client/runHistory.ts.) On completion, store the ThreatModel under
    attackcanvas:last:<owner>/<repo> and move the old one to
    attackcanvas:prev:<owner>/<repo>. Pure diffThreatModels(prev, next)
    in src/client/drift.ts: components added and removed (match by name

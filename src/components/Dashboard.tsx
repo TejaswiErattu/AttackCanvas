@@ -42,19 +42,21 @@ import {
   setStatus,
   splitFullName,
   statusesById,
+  statusOf,
   statusStorageKey,
   summarise,
   type FindingStatus,
   type StatusMap,
 } from "@/client/findingStatus";
+import { allThreatRefs, diffThreatRefs, newKeysFrom, threatKey } from "@/client/drift";
 import {
-  diffThreatModels,
-  newThreatKeys,
-  readLastRun,
+  readHistory,
+  readLegacyLastRun,
   recordRun,
-  threatKey,
-  type DriftModel,
-} from "@/client/drift";
+  recordStatusChange,
+  refsOf,
+  type RecordedRun,
+} from "@/client/runHistory";
 import { carryForward } from "@/client/carryForward";
 import type { BasisCounts, HiddenSummary } from "@/client/useAnalysis";
 import ArchitectureGraph from "@/components/ArchitectureGraph";
@@ -150,19 +152,29 @@ export default function Dashboard({
   }, [repoFullName, repoRef]);
   const [statusesByKey, setStatusesByKey] = useState<StatusMap>({});
 
-  // The run before this one, read once this run is recorded. undefined until then, so the
-  // first render (which must match the server's) shows nothing; null means no earlier run.
-  const [prevRun, setPrevRun] = useState<DriftModel | null | undefined>(undefined);
+  // The stored runs with this one recorded, and the run before it. undefined until then, so
+  // the first render (which must match the server's) shows nothing; null means storage is
+  // not usable for this repository.
+  const [history, setHistory] = useState<RecordedRun | null | undefined>(undefined);
   useEffect(() => {
     const storage = safeLocalStorage();
     const name = splitFullName(view.repo?.fullName ?? "");
-    // The run shown when statuses were last saved: the stored "last" run, read before this
-    // one replaces it. An id-keyed map from before statuses were keyed by threatKey is
-    // migrated against it once (or against this run, when that one was of another ref).
-    const savedOn = name ? readLastRun(storage, name.owner, name.repo) : null;
+    // The run shown when statuses were last saved: the old single "last" snapshot, read
+    // before recording moves it into the run ring. An id-keyed map from before statuses
+    // were keyed by threatKey is migrated against it once (or against this run, when that
+    // one was of another ref).
+    const savedOn = name ? readLegacyLastRun(storage, name.owner, name.repo) : null;
+    // A replayed result is a saved copy, not a new analysis: it is shown against the stored
+    // runs and never added to them.
     // Deliberate: recording the run and reading statuses need localStorage, so the client.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setPrevRun(name ? recordRun(storage, name.owner, name.repo, view) : null);
+    setHistory(
+      name
+        ? replayed
+          ? readHistory(storage, name.owner, name.repo, view)
+          : recordRun(storage, name.owner, name.repo, view)
+        : null,
+    );
     if (!statusKey) {
       setStatusesByKey({});
       return;
@@ -173,7 +185,7 @@ export default function Dashboard({
     );
     if (migrated.changed) saveStatuses(storage, statusKey, migrated.statuses);
     setStatusesByKey(migrated.statuses);
-  }, [view, statusKey]);
+  }, [view, statusKey, replayed]);
 
   // This run's ids mapped to their stored status, which is what cards, filters and counts use.
   const statuses = useMemo(
@@ -184,21 +196,41 @@ export default function Dashboard({
     const threat = [...threats, ...hiddenThreats].find((t) => t.id === id);
     if (!statusKey || !threat) return;
     const key = threatKey(threat);
-    setStatusesByKey((current) => setStatus(safeLocalStorage(), statusKey, current, key, status));
+    const storage = safeLocalStorage();
+    const name = splitFullName(repoFullName);
+    // The status is saved either way; a replay is not a stored run, so nothing is logged on one.
+    if (name && !replayed && history && statusOf(statusesByKey, key) !== status) {
+      const runs = recordStatusChange(
+        storage,
+        name.owner,
+        name.repo,
+        history.runs,
+        view.repo?.analyzedAt ?? "",
+        { key, status, at: new Date().toISOString() },
+      );
+      setHistory({ ...history, runs });
+    }
+    setStatusesByKey((current) => setStatus(storage, statusKey, current, key, status));
   };
   const statusCounts = useMemo(
     () => summarise((showHidden ? [...threats, ...hiddenThreats] : threats).map((t) => t.id), statuses),
     [threats, hiddenThreats, showHidden, statuses],
   );
 
-  const drift = useMemo(() => (prevRun ? diffThreatModels(prevRun, view) : null), [prevRun, view]);
+  const previous = history?.previous ?? null;
+  const thisRefs = useMemo(() => allThreatRefs(view), [view]);
+  const previousRefs = useMemo(() => (previous ? refsOf(previous) : null), [previous]);
+  const drift = useMemo(
+    () => (previousRefs ? { threats: diffThreatRefs(previousRefs, thisRefs) } : null),
+    [previousRefs, thisRefs],
+  );
   const newKeys = useMemo(
-    () => (prevRun ? newThreatKeys(prevRun, view) : new Set<string>()),
-    [prevRun, view],
+    () => (previousRefs ? newKeysFrom(previousRefs, thisRefs) : new Set<string>()),
+    [previousRefs, thisRefs],
   );
   // Last run's threats not re-found and not closed; the drift panel reports how many.
   const carried = useMemo(() => carryForward(drift, statusesByKey), [drift, statusesByKey]);
-  const lastRunDate = prevRun?.repo?.analyzedAt ? formatAnalyzedAt(prevRun.repo.analyzedAt) : null;
+  const lastRunDate = previous?.at ? formatAnalyzedAt(previous.at) : null;
 
   const issueRepo = view.repo?.fullName && view.repo.ref
     ? { fullName: view.repo.fullName, ref: view.repo.ref }
@@ -517,8 +549,14 @@ export default function Dashboard({
         </div>
       </div>
 
-      {prevRun !== undefined ? (
-        <SinceLastRun drift={drift} notClosedCount={carried.length} lastRunDate={lastRunDate} />
+      {history !== undefined ? (
+        <SinceLastRun
+          drift={drift}
+          notClosedCount={carried.length}
+          lastRunDate={lastRunDate}
+          runs={history?.runs ?? []}
+          selectedKey={selectedThreat ? threatKey(selectedThreat) : null}
+        />
       ) : null}
 
       <section aria-labelledby="fix-now-heading">

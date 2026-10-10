@@ -1,19 +1,15 @@
 /**
- * drift: "Since last run" diff and run storage, over hand-built models. Plain Node.
+ * drift: the "Since last run" diff over hand-built models. Plain Node. Run storage is in
+ * tests/runHistory.test.ts.
  */
 
 import { describe, expect, it } from "vitest";
 import {
   diffThreatModels,
-  lastRunKey,
   newThreatKeys,
-  prevRunKey,
-  readLastRun,
-  recordRun,
   threatKey,
   type DriftModel,
 } from "@/client/drift";
-import type { StatusStorage } from "@/client/findingStatus";
 import type { GraphEdge, GraphNode, ThreatCardData } from "@/shared/viewModel";
 import { deepFreeze } from "./helpers";
 
@@ -239,83 +235,5 @@ describe("newThreatKeys", () => {
       { nodes: [], edges: [], threats: [threat("v", "Quiet", ["API"], A, 50)] },
     );
     expect(keys.size).toBe(0);
-  });
-});
-
-function memoryStorage(): StatusStorage & { data: Record<string, string> } {
-  const data: Record<string, string> = {};
-  return {
-    data,
-    getItem: (k) => (k in data ? data[k] : null),
-    setItem: (k, v) => {
-      data[k] = v;
-    },
-  };
-}
-
-describe("recordRun", () => {
-  it("has no previous run the first time", () => {
-    const storage = memoryStorage();
-    expect(recordRun(storage, "acme", "shop", prev)).toBeNull();
-    expect(JSON.parse(storage.data[lastRunKey("acme", "shop")]).threats).toHaveLength(2);
-    expect(storage.data[prevRunKey("acme", "shop")]).toBeUndefined();
-  });
-
-  it("moves the old run to prev and returns it", () => {
-    const storage = memoryStorage();
-    recordRun(storage, "acme", "shop", prev);
-    const before = recordRun(storage, "acme", "shop", next);
-    expect(before?.threats).toHaveLength(2);
-    expect(JSON.parse(storage.data[prevRunKey("acme", "shop")]).nodes[0].id).toBe("c1");
-    expect(JSON.parse(storage.data[lastRunKey("acme", "shop")]).nodes[0].id).toBe("x1");
-  });
-
-  it("does not rotate when the same run is recorded again (a reload)", () => {
-    const storage = memoryStorage();
-    recordRun(storage, "acme", "shop", prev);
-    recordRun(storage, "acme", "shop", next);
-    const again = recordRun(storage, "acme", "shop", next);
-    expect(again?.nodes[0].id).toBe("c1");
-    expect(JSON.parse(storage.data[prevRunKey("acme", "shop")]).nodes[0].id).toBe("c1");
-  });
-
-  it("stores hidden threats in the snapshot and returns them with it", () => {
-    const storage = memoryStorage();
-    const withHidden = { ...prev, hiddenThreats: [threat("h", "Quiet", ["API"], A, 10)] };
-    recordRun(storage, "acme", "shop", withHidden);
-    expect(JSON.parse(storage.data[lastRunKey("acme", "shop")]).hiddenThreats).toHaveLength(1);
-    expect(recordRun(storage, "acme", "shop", next)?.hiddenThreats).toHaveLength(1);
-  });
-
-  it("loads an old snapshot without hiddenThreats, and drops one whose hiddenThreats is junk", () => {
-    const storage = memoryStorage();
-    storage.data[lastRunKey("acme", "shop")] = JSON.stringify({ nodes: [], edges: [], threats: [] });
-    expect(readLastRun(storage, "acme", "shop")).toEqual({ nodes: [], edges: [], threats: [] });
-    storage.data[lastRunKey("acme", "shop")] = JSON.stringify({
-      nodes: [], edges: [], threats: [], hiddenThreats: "nope",
-    });
-    expect(readLastRun(storage, "acme", "shop")).toBeNull();
-  });
-
-  it("keeps repositories apart", () => {
-    const storage = memoryStorage();
-    recordRun(storage, "acme", "shop", prev);
-    expect(recordRun(storage, "acme", "other", next)).toBeNull();
-  });
-
-  it("survives storage that throws or holds junk", () => {
-    const throwing: StatusStorage = {
-      getItem: () => {
-        throw new Error("blocked");
-      },
-      setItem: () => {
-        throw new Error("quota");
-      },
-    };
-    expect(recordRun(throwing, "acme", "shop", prev)).toBeNull();
-    expect(recordRun(null, "acme", "shop", prev)).toBeNull();
-    const junk = memoryStorage();
-    junk.data[lastRunKey("acme", "shop")] = "{not json";
-    expect(recordRun(junk, "acme", "shop", prev)).toBeNull();
   });
 });

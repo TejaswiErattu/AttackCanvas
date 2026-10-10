@@ -65,13 +65,17 @@ The dashboard compares runs in the browser (`src/client/drift.ts`); nothing chec
   unchanged repository can differ. Listing and counting every scored threat, including those
   below 25% confidence, keeps the dashboard from swinging between "nothing" and "many"
   because of the cutoff, but it does not remove the model's own variation.
-- **Only one run back.** The comparison is with the previous run alone.
+- **Five runs back, per browser.** "Since last run" compares with the previous run alone; the
+  History tab keeps the last five (`src/client/runHistory.ts`) and the oldest is dropped when a
+  sixth arrives. A replayed result is shown against that history but never added to it.
+  A run stored over 200 KB loses its per-threat confidences. The History tab then shows
+  "Found" without a percentage.
 - **Identity is by name.** A threat is matched across runs by normalised title, component
   names and OWASP codes. A reworded title or a renamed component reads as a different
   threat, so its status does not follow and it shows as new.
 - **Status migration guesses the run.** Statuses saved by per-run number before they were
-  keyed by threat identity are converted once, against the last run stored in this
-  browser. If that is not the run they were set on, some are dropped or land on another
+  keyed by threat identity are converted once, against the old single "last run" snapshot
+  (converted into the run history on the same load). If that is not the run they were set on, some are dropped or land on another
   threat.
 - **Not-closed count covers confident threats only.** A threat that was already below 25% in
   the last run and is gone now counts as "not found" but not in "not marked Fixed".

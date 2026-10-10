@@ -93,7 +93,8 @@ line to flag.
   the threat's title, components and OWASP categories, so it follows the same threat to the
   next run.
 - **Since last run** shows how many threats are new and how many were not found again.
-  "Not found" never means fixed; only a status you set says that.
+  "Not found" never means fixed; only a status you set says that. Its **History** tab lists
+  the last five runs of the repository in this browser, with a timeline for any one threat.
 - Status and history are stored in your browser (`localStorage`), not on a server.
 - Five analysis levels trade depth for cost:
 

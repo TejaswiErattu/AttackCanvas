@@ -16,15 +16,14 @@
  * absent from this run is "not found this run", never "resolved" or "fixed": nothing here
  * checks the code changed. Only a status the reader set records that.
  *
- * Pure and DOM-free. Storage is injected and every access is wrapped: the last two runs of
- * a repository live in localStorage under attackcanvas:last:<owner>/<repo> and
- * attackcanvas:prev:<owner>/<repo>, and nothing is stored on a server. Snapshots saved
- * before hidden threats were stored have no `hiddenThreats`; they read as having none.
+ * Pure and DOM-free. The runs themselves are kept in src/client/runHistory.ts, which stores
+ * a ring of the last few under attackcanvas:runs:<owner>/<repo>; this module only compares
+ * them. Snapshots saved before hidden threats were stored have no `hiddenThreats`; they read
+ * as having none.
  */
 
 import type { Severity } from "@/shared/schema";
 import type { DashboardViewModel, ThreatCardData } from "@/shared/viewModel";
-import type { StatusStorage } from "@/client/findingStatus";
 
 export type DriftModel = Pick<DashboardViewModel, "nodes" | "edges" | "threats"> & {
   /** Absent from snapshots saved before hidden threats were kept. */
@@ -145,114 +144,63 @@ export function allThreatRefs(model: DriftModel): ThreatRef[] {
   return refs.filter((r) => (seen.has(r.key) ? false : (seen.add(r.key), true)));
 }
 
-export function diffThreatModels(prev: DriftModel, next: DriftModel): DriftResult {
-  const components = delta(componentsOf(prev), componentsOf(next), componentKey);
-  const flows = delta(flowsOf(prev), flowsOf(next), flowKey);
-  const before = allThreatRefs(prev);
-  const after = allThreatRefs(next);
+/**
+ * The threat half of the diff, over two runs' scored threats (see allThreatRefs). Also what
+ * the stored run history compares, where only threats are kept.
+ */
+export function diffThreatRefs(
+  before: readonly ThreatRef[],
+  after: readonly ThreatRef[],
+): DriftResult["threats"] {
   const beforeKeys = new Set(before.map((r) => r.key));
   const afterByKey = new Map(after.map((r) => [r.key, r]));
   const visibleNow = after.filter((r) => !r.belowCutoff);
   return {
+    new: visibleNow.filter((r) => !beforeKeys.has(r.key)),
+    persisting: visibleNow.filter((r) => beforeKeys.has(r.key)),
+    notFound: before.filter((r) => !afterByKey.has(r.key)),
+    droppedBelowCutoff: before
+      .filter((r) => !r.belowCutoff && afterByKey.get(r.key)?.belowCutoff === true)
+      .map((r) => afterByKey.get(r.key) as ThreatRef),
+  };
+}
+
+export function diffThreatModels(prev: DriftModel, next: DriftModel): DriftResult {
+  const components = delta(componentsOf(prev), componentsOf(next), componentKey);
+  const flows = delta(flowsOf(prev), flowsOf(next), flowKey);
+  return {
     components: { added: components.added, removed: components.removed },
     flows: { added: flows.added, removed: flows.removed },
-    threats: {
-      new: visibleNow.filter((r) => !beforeKeys.has(r.key)),
-      persisting: visibleNow.filter((r) => beforeKeys.has(r.key)),
-      notFound: before.filter((r) => !afterByKey.has(r.key)),
-      droppedBelowCutoff: before
-        .filter((r) => !r.belowCutoff && afterByKey.get(r.key)?.belowCutoff === true)
-        .map((r) => afterByKey.get(r.key) as ThreatRef),
-    },
+    threats: diffThreatRefs(allThreatRefs(prev), allThreatRefs(next)),
   };
+}
+
+/** Keys in `after` that no threat of `before` had, for the "new" badge. */
+export function newKeysFrom(
+  before: readonly ThreatRef[],
+  after: readonly ThreatRef[],
+): Set<string> {
+  const known = new Set(before.map((r) => r.key));
+  return new Set(after.map((r) => r.key).filter((k) => !known.has(k)));
 }
 
 /** Keys of this run's threats (visible or not) that no threat of `prev` had, for the "new" badge. */
 export function newThreatKeys(prev: DriftModel, next: DriftModel): Set<string> {
-  const before = new Set(allThreatRefs(prev).map((r) => r.key));
-  return new Set(allThreatRefs(next).map((r) => r.key).filter((k) => !before.has(k)));
+  return newKeysFrom(allThreatRefs(prev), allThreatRefs(next));
 }
 
 // ---------------------------------------------------------------------------
-// Storage
+// Legacy storage keys
 // ---------------------------------------------------------------------------
 
+/**
+ * The two full snapshots the browser kept before the run ring (src/client/runHistory.ts).
+ * Only the migration reads them now.
+ */
 export function lastRunKey(owner: string, repo: string): string {
   return `attackcanvas:last:${owner}/${repo}`;
 }
 
 export function prevRunKey(owner: string, repo: string): string {
   return `attackcanvas:prev:${owner}/${repo}`;
-}
-
-/** What the stored value must look like to be trusted as a model; anything else is dropped. */
-function isDriftModel(value: unknown): value is DriftModel {
-  if (typeof value !== "object" || value === null) return false;
-  const v = value as Record<string, unknown>;
-  return (
-    Array.isArray(v.nodes) &&
-    Array.isArray(v.edges) &&
-    Array.isArray(v.threats) &&
-    (v.hiddenThreats === undefined || Array.isArray(v.hiddenThreats))
-  );
-}
-
-function read(storage: StatusStorage | null | undefined, key: string): DriftModel | null {
-  try {
-    const raw = storage?.getItem(key);
-    if (!raw) return null;
-    const parsed: unknown = JSON.parse(raw);
-    return isDriftModel(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-function write(storage: StatusStorage | null | undefined, key: string, model: DriftModel): void {
-  try {
-    storage?.setItem(key, JSON.stringify(model));
-  } catch {
-    // Storage unavailable or full: the comparison for this visit still works.
-  }
-}
-
-function analyzedAt(model: DriftModel): string | null {
-  return model.repo?.analyzedAt ?? null;
-}
-
-/**
- * The run stored as "last" for a repository, before this one is recorded: the run the
- * reader was looking at when they last set a status. null when there is none.
- */
-export function readLastRun(
-  storage: StatusStorage | null | undefined,
-  owner: string,
-  repo: string,
-): DriftModel | null {
-  return read(storage, lastRunKey(owner, repo));
-}
-
-/**
- * Records a finished run and returns the run to compare it with.
- *
- * The stored "last" becomes "prev" and this run becomes "last" — unless this run is the one
- * already stored as "last" (same analyzedAt, e.g. the page was reloaded), in which case
- * nothing rotates, so a reload cannot overwrite the real previous run with a copy of this one.
- */
-export function recordRun(
-  storage: StatusStorage | null | undefined,
-  owner: string,
-  repo: string,
-  model: DriftModel,
-): DriftModel | null {
-  const lastKey = lastRunKey(owner, repo);
-  const prevKey = prevRunKey(owner, repo);
-  const last = read(storage, lastKey);
-  const at = analyzedAt(model);
-  if (last && at !== null && analyzedAt(last) === at) {
-    return read(storage, prevKey);
-  }
-  if (last) write(storage, prevKey, last);
-  write(storage, lastKey, model);
-  return last;
 }

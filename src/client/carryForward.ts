@@ -18,7 +18,7 @@ const CLOSED: ReadonlySet<FindingStatus> = new Set<FindingStatus>(["fixed", "fal
 export type CarriedThreat = ThreatRef & { status: FindingStatus };
 
 export function carryForward(
-  drift: DriftResult | null,
+  drift: Pick<DriftResult, "threats"> | null,
   statusesByKey: StatusMap,
 ): CarriedThreat[] {
   if (!drift) return [];
