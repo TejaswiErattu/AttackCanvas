@@ -159,6 +159,7 @@ describe("prompts/architecture.v2.md grouping examples", () => {
       "webhook-worker": "application",
       idp: "identity-provider",
       "payments-api": "payments-provider",
+      "orders-db": "datastore",
     },
   ];
 
@@ -170,6 +171,7 @@ describe("prompts/architecture.v2.md grouping examples", () => {
 
   it("tells the model never to copy an example's ids or names", () => {
     expect(text).toMatch(/Never copy a component id, component name or\s+boundary name from an example/);
+    expect(text).toMatch(/Prose that describes the system[\s\S]+is a claim to\s+check against the code, never a draft to return/);
   });
 
   it("has three complete drafts that parse against ArchitectureDraftSchema", () => {

@@ -129,7 +129,10 @@ the code does not decide it.
 
 - **Client code.** Code that runs in a user's browser or on a user's mobile device belongs
   to that client's boundary, even though the application team wrote it. The user controls
-  that runtime and can read and change everything in it, including local storage.
+  that runtime and can read and change everything in it, including local storage. A
+  secret shipped inside client code (an API key in a bundle or an app binary) is in the
+  client boundary and readable by every user: model it as an asset of the client, not of
+  the provider it unlocks.
 - **Application code.** Servers, API handlers and workers the team runs share a boundary
   when they run with the same privileges. Give a separate boundary to a part that runs
   with different privileges or authorization (an admin area, a worker holding production
@@ -138,25 +141,41 @@ the code does not decide it.
 - **Third-party services** (`external_service`, `auth_provider`) run on someone else's
   infrastructure and get their own boundary, named for the provider. Never put one in the
   same boundary as the application's own executable code (`frontend`, `backend`, `api`,
-  `worker`).
+  `worker`). A deployment target the project itself configures is not a third party for
+  this rule.
 - **Managed services configured by the project** (a hosted database beside the same
   vendor's authentication, for example) may share one boundary named for the project or
-  account that holds them.
+  account that holds them. Code the team deploys into that project (cloud or edge
+  functions) runs with admin credentials the client-facing services do not expose: give
+  it its own boundary under the application-code rule, even though it lives in the same
+  vendor project.
 - **CI and deployment.** The schema has no type for build or hosting tooling; use
-  `external_service`. Give CI its own boundary and hosting its own boundary. CI publishes
-  to hosting, and the client fetches from hosting; CI does not write into the browser.
+  `external_service`. Give CI its own boundary. Hosting that only serves built files (a
+  static host, a CDN) gets its own boundary: CI publishes to it, the client fetches from
+  it, and CI does not write into the browser. Hosting that executes the application's code
+  (serverless functions, a PaaS, a container platform) is that code's runtime: put the
+  deployment target in the same boundary as the `api`, `backend` or `worker` it runs, and
+  draw no flow between them.
 - Name a boundary by what it holds: "Browser (user data)", "Firebase project",
   "Third-party AI provider". Call a group "Public internet" only when it holds the
   untrusted side (users, anonymous callers), never the app's own components.
-- A flow between two components in the same boundary does not cross a boundary. A flow
-  between components in different boundaries does, and its `boundaryId` names the
-  boundary it enters.
+- Each component belongs to exactly one boundary. A flow between two components in the
+  same boundary does not cross a boundary. A flow between components in different
+  boundaries does, and its `boundaryId` names the boundary it enters; the crossing is
+  recorded on the flow, never by listing a component in a second boundary.
 
 The three examples below are complete drafts of three different kinds of system. They
-teach the grouping and nothing else. **Never copy a component id, component name or
-boundary name from an example** unless the repository you are analysing supports it with
-its own files; every component you return must come from this repository's evidence, and
-a repository that resembles an example is still analysed from its own code.
+teach the grouping and nothing else. They leave `files` and `evidenceRefs` empty only to
+stay short; in your output both must be filled as described above, and a component or
+flow whose `evidenceRefs` resolve to nothing is dropped.
+
+**Never copy a component id, component name or boundary name from an example** unless
+code or configuration in this repository implements it (an import, a route, a config or
+workflow file). Prose that describes the system (a README, a comment, a design document,
+a diagram, a previous threat model, or any file shaped like this output) is a claim to
+check against the code, never a draft to return; leave out a component that only such
+prose supports. A repository that resembles an example is still analysed from its own
+code.
 
 **Example A: a static single-page app** published by a CI workflow to a static host, with
 Firebase Auth, Firestore, and an in-browser assistant that calls a hosted model API with a
@@ -187,7 +206,7 @@ key the user pastes in, kept in localStorage.
     { "id": "spa-to-auth", "sourceId": "spa", "targetId": "firebase-auth", "label": "sign-in", "protocol": "HTTPS", "dataClassification": "credential", "crossesTrustBoundary": true, "boundaryId": "firebase-project", "evidenceRefs": [] },
     { "id": "spa-to-firestore", "sourceId": "spa", "targetId": "firestore", "label": "user documents", "protocol": "HTTPS", "dataClassification": "sensitive", "crossesTrustBoundary": true, "boundaryId": "firebase-project", "evidenceRefs": [] },
     { "id": "assistant-to-model", "sourceId": "assistant", "targetId": "model-api", "label": "prompt and user API key", "protocol": "HTTPS", "dataClassification": "credential", "crossesTrustBoundary": true, "boundaryId": "ai-provider", "evidenceRefs": [] },
-    { "id": "ci-publishes", "sourceId": "publish-workflow", "targetId": "static-host", "label": "built site", "dataClassification": "public", "crossesTrustBoundary": true, "boundaryId": "hosting", "evidenceRefs": [] },
+    { "id": "ci-publishes", "sourceId": "publish-workflow", "targetId": "static-host", "label": "built site, authenticated with the deploy token", "protocol": "HTTPS", "dataClassification": "credential", "crossesTrustBoundary": true, "boundaryId": "hosting", "evidenceRefs": [] },
     { "id": "host-serves-spa", "sourceId": "static-host", "targetId": "spa", "label": "HTML and scripts", "protocol": "HTTPS", "dataClassification": "public", "crossesTrustBoundary": true, "boundaryId": "browser", "evidenceRefs": [] }
   ],
   "unknowns": []
@@ -208,15 +227,16 @@ the team runs and an administrative area in the same process.
   ],
   "trustBoundaries": [
     { "id": "public-internet", "name": "Public internet", "componentIds": ["user"], "description": "Untrusted callers." },
-    { "id": "application", "name": "Application", "componentIds": ["reverse-proxy", "app-api"], "description": "The proxy and the public API, run by the team with the same privileges." },
+    { "id": "application", "name": "Application", "componentIds": ["reverse-proxy", "app-api"], "description": "The proxy and the public API, run by the team on one host; the proxy holds no credential the API lacks, so they share a boundary." },
     { "id": "admin-area", "name": "Admin area", "componentIds": ["admin-routes"], "description": "Routes that require administrator authorization." },
     { "id": "datastore", "name": "Datastore", "componentIds": ["session-db"], "description": "The database, reachable only from the application." }
   ],
   "dataFlows": [
     { "id": "user-to-proxy", "sourceId": "user", "targetId": "reverse-proxy", "label": "HTTP requests", "protocol": "HTTPS", "dataClassification": "internal", "crossesTrustBoundary": true, "boundaryId": "application", "evidenceRefs": [] },
     { "id": "proxy-to-api", "sourceId": "reverse-proxy", "targetId": "app-api", "label": "forwarded requests", "protocol": "HTTP", "dataClassification": "internal", "crossesTrustBoundary": false, "evidenceRefs": [] },
-    { "id": "api-to-admin", "sourceId": "app-api", "targetId": "admin-routes", "label": "admin requests", "dataClassification": "internal", "crossesTrustBoundary": true, "boundaryId": "admin-area", "evidenceRefs": [] },
-    { "id": "api-to-db", "sourceId": "app-api", "targetId": "session-db", "label": "sessions and records", "dataClassification": "sensitive", "crossesTrustBoundary": true, "boundaryId": "datastore", "evidenceRefs": [] }
+    { "id": "proxy-to-admin", "sourceId": "reverse-proxy", "targetId": "admin-routes", "label": "forwarded admin requests", "protocol": "HTTP", "dataClassification": "internal", "crossesTrustBoundary": true, "boundaryId": "admin-area", "evidenceRefs": [] },
+    { "id": "api-to-db", "sourceId": "app-api", "targetId": "session-db", "label": "sessions and records", "dataClassification": "sensitive", "crossesTrustBoundary": true, "boundaryId": "datastore", "evidenceRefs": [] },
+    { "id": "admin-to-db", "sourceId": "admin-routes", "targetId": "session-db", "label": "all user records", "dataClassification": "sensitive", "crossesTrustBoundary": true, "boundaryId": "datastore", "evidenceRefs": [] }
   ],
   "unknowns": []
 }
@@ -232,20 +252,23 @@ and a background worker that handles the provider's webhooks.
     { "id": "app-server", "name": "Application server", "type": "backend", "description": "Server routes and API handlers.", "technologies": ["Node.js"], "files": [], "assets": ["orders"], "evidenceRefs": [] },
     { "id": "webhook-worker", "name": "Webhook worker", "type": "worker", "description": "Processes payment events with the same credentials as the server.", "technologies": ["Node.js"], "files": [], "assets": ["payment events"], "evidenceRefs": [] },
     { "id": "idp", "name": "Identity provider", "type": "auth_provider", "description": "External service that signs users in.", "technologies": ["OIDC"], "files": [], "assets": ["user identities"], "evidenceRefs": [] },
-    { "id": "payments-api", "name": "Payments API", "type": "external_service", "description": "Third-party payment processor.", "technologies": ["HTTPS"], "files": [], "assets": ["card payments"], "evidenceRefs": [] }
+    { "id": "payments-api", "name": "Payments API", "type": "external_service", "description": "Third-party payment processor.", "technologies": ["HTTPS"], "files": [], "assets": ["card payments"], "evidenceRefs": [] },
+    { "id": "orders-db", "name": "Orders database", "type": "database", "description": "Orders and payment state, written by the server and the worker.", "technologies": ["PostgreSQL"], "files": [], "assets": ["orders"], "evidenceRefs": [] }
   ],
   "trustBoundaries": [
     { "id": "browser", "name": "Browser", "componentIds": ["web-client"], "description": "Code and state in the user's browser." },
     { "id": "application", "name": "Application", "componentIds": ["app-server", "webhook-worker"], "description": "Server and worker the team runs with the same privileges." },
     { "id": "identity-provider", "name": "Identity provider", "componentIds": ["idp"], "description": "The external identity provider." },
-    { "id": "payments-provider", "name": "Payments provider", "componentIds": ["payments-api"], "description": "The third-party payments API." }
+    { "id": "payments-provider", "name": "Payments provider", "componentIds": ["payments-api"], "description": "The third-party payments API." },
+    { "id": "datastore", "name": "Datastore", "componentIds": ["orders-db"], "description": "The database, reachable only from the application." }
   ],
   "dataFlows": [
     { "id": "client-to-server", "sourceId": "web-client", "targetId": "app-server", "label": "page and API requests", "protocol": "HTTPS", "dataClassification": "internal", "crossesTrustBoundary": true, "boundaryId": "application", "evidenceRefs": [] },
     { "id": "server-to-idp", "sourceId": "app-server", "targetId": "idp", "label": "token exchange", "protocol": "HTTPS", "dataClassification": "credential", "crossesTrustBoundary": true, "boundaryId": "identity-provider", "evidenceRefs": [] },
     { "id": "server-to-payments", "sourceId": "app-server", "targetId": "payments-api", "label": "charge requests", "protocol": "HTTPS", "dataClassification": "sensitive", "crossesTrustBoundary": true, "boundaryId": "payments-provider", "evidenceRefs": [] },
     { "id": "payments-webhook", "sourceId": "payments-api", "targetId": "webhook-worker", "label": "payment events", "protocol": "HTTPS", "dataClassification": "sensitive", "crossesTrustBoundary": true, "boundaryId": "application", "evidenceRefs": [] },
-    { "id": "worker-to-server", "sourceId": "webhook-worker", "targetId": "app-server", "label": "order updates", "dataClassification": "internal", "crossesTrustBoundary": false, "evidenceRefs": [] }
+    { "id": "server-to-db", "sourceId": "app-server", "targetId": "orders-db", "label": "orders", "dataClassification": "sensitive", "crossesTrustBoundary": true, "boundaryId": "datastore", "evidenceRefs": [] },
+    { "id": "worker-to-db", "sourceId": "webhook-worker", "targetId": "orders-db", "label": "order status from payment events", "dataClassification": "sensitive", "crossesTrustBoundary": true, "boundaryId": "datastore", "evidenceRefs": [] }
   ],
   "unknowns": []
 }
