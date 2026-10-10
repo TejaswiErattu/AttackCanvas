@@ -9,7 +9,17 @@ import {
 } from "@/server/analysis/pipeline";
 import { validateThreatModel, type AnalysisStage, type ThreatModel } from "@/shared/schema";
 import { analyseRepo, type PipelineApi } from "../scripts/eval/analyse";
-import { StageTracker, existingResultPaths, formatRunFailure, parseRunArgs, stageBefore } from "../scripts/eval/lib";
+import {
+  DEFAULT_RUN_PROFILE,
+  StageTracker,
+  existingResultPaths,
+  formatRunFailure,
+  parseRunArgs,
+  resolveRunProfile,
+  stageBefore,
+} from "../scripts/eval/lib";
+import { MODELS, activeProfile } from "@/server/ai/models";
+import { planFor } from "@/server/ai/levels";
 import demoJson from "../fixtures/demo-analysis.json";
 
 const parsed = validateThreatModel(demoJson);
@@ -45,6 +55,76 @@ describe("parseRunArgs", () => {
     expect(parse(["--timeout", "--force"])).toMatchObject({ ok: false, message: /needs a value/ });
     expect(parse(["--timeout", "1000", "--timeout", "2000"])).toMatchObject({ ok: false, message: /more than once/ });
     expect(parse(["--timout", "1000"])).toMatchObject({ ok: false, message: /unknown option --timout/ });
+  });
+});
+
+describe("parseRunArgs --profile", () => {
+  const parse = (argv: string[]) => parseRunArgs(argv, PIPELINE_TIMEOUT_MS, MAX_TIMEOUT_MS);
+
+  it("accepts dev and demo, with other flags in any order", () => {
+    expect(parse(["juice-shop-l1-r1", "--profile", "dev", "--level", "1"])).toEqual({
+      ok: true,
+      value: { names: ["juice-shop-l1-r1"], timeoutMs: PIPELINE_TIMEOUT_MS, level: 1, profile: "dev" },
+    });
+    expect(parse(["--profile", "demo", "--timeout", "1200000", "a"])).toEqual({
+      ok: true,
+      value: { names: ["a"], timeoutMs: 1_200_000, level: 2, profile: "demo" },
+    });
+  });
+
+  it("leaves profile unset when the flag is absent", () => {
+    const r = parse(["nodegoat"]);
+    expect(r.ok && "profile" in r.value).toBe(false);
+  });
+
+  it.each([["prod"], ["DEV"], [""], ["dev "]])("rejects --profile %j before any work", (raw) => {
+    expect(parse(["a", "--profile", raw])).toMatchObject({ ok: false, message: /--profile must be one of dev, demo/ });
+  });
+
+  it("rejects a missing value and a repeated flag", () => {
+    expect(parse(["a", "--profile"])).toMatchObject({ ok: false, message: /--profile needs a value/ });
+    expect(parse(["--profile", "--level", "1"])).toMatchObject({ ok: false, message: /--profile needs a value/ });
+    expect(parse(["--profile", "dev", "--profile", "demo"])).toMatchObject({ ok: false, message: /more than once/ });
+  });
+});
+
+describe("resolveRunProfile", () => {
+  it("keeps the demo default when nothing is requested", () => {
+    expect(DEFAULT_RUN_PROFILE).toBe("demo");
+    expect(resolveRunProfile(undefined, undefined)).toEqual({ profile: "demo" });
+    expect(resolveRunProfile(undefined, "demo")).toEqual({ profile: "demo" });
+  });
+
+  it("uses --profile and says so when the shell asked for something else", () => {
+    expect(resolveRunProfile("dev", undefined)).toEqual({ profile: "dev" });
+    expect(resolveRunProfile("dev", "demo")).toEqual({
+      profile: "dev",
+      notice: expect.stringMatching(/"demo" from the environment is ignored; using "dev" from --profile/),
+    });
+  });
+
+  it("never replaces a different shell value silently", () => {
+    const r = resolveRunProfile(undefined, "dev");
+    expect(r.profile).toBe("demo");
+    expect(r.notice).toMatch(/"dev" from the environment is ignored; using "demo" from the eval default/);
+  });
+});
+
+describe("the profile the runner sets is the one the pipeline plans with", () => {
+  const saved = process.env.ATTACKCANVAS_MODEL_PROFILE;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.ATTACKCANVAS_MODEL_PROFILE;
+    else process.env.ATTACKCANVAS_MODEL_PROFILE = saved;
+  });
+
+  it.each(["dev", "demo"] as const)("%s reaches planFor through ATTACKCANVAS_MODEL_PROFILE", (requested) => {
+    process.env.ATTACKCANVAS_MODEL_PROFILE = resolveRunProfile(requested, "dev").profile;
+    expect(activeProfile()).toBe(requested);
+    expect(planFor(2, activeProfile()).models).toEqual(MODELS[requested]);
+  });
+
+  it("level 1 runs Sonnet on every reasoning stage under either profile", () => {
+    expect(planFor(1, "dev").models).toEqual(planFor(1, "demo").models);
   });
 });
 

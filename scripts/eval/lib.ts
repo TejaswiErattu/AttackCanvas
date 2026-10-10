@@ -10,6 +10,7 @@
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+import { isModelProfile, MODEL_PROFILES, type ModelProfile } from "@/server/ai/models";
 import { isHidden } from "@/server/scoring";
 import { AnalysisLevelSchema, ThreatModelSchema, type AnalysisLevel, type AnalysisStage, type Evidence, type Threat, type ThreatModel } from "@/shared/schema";
 
@@ -527,12 +528,34 @@ export function mergeEvaluationReport(generated: string, existing: string | unde
 // run.ts: arguments and failure reporting
 // ---------------------------------------------------------------------------
 
-export type RunArgs = { names: string[]; timeoutMs: number; level: AnalysisLevel };
+export type RunArgs = { names: string[]; timeoutMs: number; level: AnalysisLevel; profile?: ModelProfile };
 
 export const DEFAULT_LEVEL: AnalysisLevel = 2;
 
+/** The profile run.ts uses when --profile is absent. */
+export const DEFAULT_RUN_PROFILE: ModelProfile = "demo";
+
 /**
- * Reads `[repo...] [--timeout <ms>] [--level <0-4>]`. The timeout defaults to `defaultMs` (the pipeline's
+ * The profile a run uses and, when the shell asked for a different one, the line saying
+ * so. --profile wins; without it the runner keeps its demo default, as it always has, but
+ * no longer overrides ATTACKCANVAS_MODEL_PROFILE silently.
+ */
+export function resolveRunProfile(
+  requested: ModelProfile | undefined,
+  envValue: string | undefined,
+): { profile: ModelProfile; notice?: string } {
+  const profile = requested ?? DEFAULT_RUN_PROFILE;
+  const shell = envValue?.trim();
+  if (!shell || shell === profile) return { profile };
+  const source = requested ? "--profile" : "the eval default (pass --profile to change it)";
+  return {
+    profile,
+    notice: `ATTACKCANVAS_MODEL_PROFILE="${shell}" from the environment is ignored; using "${profile}" from ${source}.`,
+  };
+}
+
+/**
+ * Reads `[repo...] [--timeout <ms>] [--level <0-4>] [--profile dev|demo]`. The timeout defaults to `defaultMs` (the pipeline's
  * PIPELINE_TIMEOUT_MS) and is validated with the same rule try-pipeline.ts uses, before
  * any paid work starts. Any other --flag is rejected rather than silently read as a repo
  * name or ignored.
@@ -545,6 +568,7 @@ export function parseRunArgs(
   const names: string[] = [];
   let raw: string | undefined;
   let rawLevel: string | undefined;
+  let rawProfile: string | undefined;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--timeout") {
@@ -557,15 +581,26 @@ export function parseRunArgs(
       rawLevel = argv[i + 1];
       if (rawLevel === undefined || rawLevel.startsWith("--")) return { ok: false, message: "--level needs a value from 0 to 4." };
       i += 1;
+    } else if (arg === "--profile") {
+      if (rawProfile !== undefined) return { ok: false, message: "--profile given more than once." };
+      rawProfile = argv[i + 1];
+      if (rawProfile === undefined || rawProfile.startsWith("--")) {
+        return { ok: false, message: `--profile needs a value: ${MODEL_PROFILES.join(" or ")}.` };
+      }
+      i += 1;
     } else if (arg.startsWith("--")) {
-      return { ok: false, message: `unknown option ${arg}; usage: run.ts [repo...] [--timeout <ms>] [--level <0-4>]` };
+      return { ok: false, message: `unknown option ${arg}; usage: run.ts [repo...] [--timeout <ms>] [--level <0-4>] [--profile ${MODEL_PROFILES.join("|")}]` };
     } else {
       names.push(arg);
     }
   }
   const level = AnalysisLevelSchema.safeParse(rawLevel === undefined ? DEFAULT_LEVEL : /^\d$/.test(rawLevel) ? Number(rawLevel) : NaN);
   if (!level.success) return { ok: false, message: `--level must be an integer from 0 to 4, got "${rawLevel}".` };
-  if (raw === undefined) return { ok: true, value: { names, timeoutMs: defaultMs, level: level.data } };
+  if (rawProfile !== undefined && !isModelProfile(rawProfile)) {
+    return { ok: false, message: `--profile must be one of ${MODEL_PROFILES.join(", ")}, got "${rawProfile}".` };
+  }
+  const profile = rawProfile === undefined ? {} : { profile: rawProfile as ModelProfile };
+  if (raw === undefined) return { ok: true, value: { names, timeoutMs: defaultMs, level: level.data, ...profile } };
   const value = Number(raw);
   if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value <= 0 || value > maxMs) {
     return {
@@ -573,7 +608,7 @@ export function parseRunArgs(
       message: `--timeout must be a positive integer number of milliseconds no greater than ${maxMs}, got "${raw}".`,
     };
   }
-  return { ok: true, value: { names, timeoutMs: value, level: level.data } };
+  return { ok: true, value: { names, timeoutMs: value, level: level.data, ...profile } };
 }
 
 /** The order a successful job moves through; "failed" can replace any of them. */

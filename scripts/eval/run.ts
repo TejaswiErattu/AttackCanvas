@@ -25,8 +25,14 @@
  * and cost at the moment it failed (never an estimate), elapsed time and the safe error;
  * nothing is written to eval/results.
  *
- * Runs on the demo model profile (ATTACKCANVAS_MODEL_PROFILE=demo, set here regardless of
- * the shell) with every developer question answered "skipped", so a result depends only on
+ * --profile <dev|demo> picks the model profile (default demo). The runner sets
+ * ATTACKCANVAS_MODEL_PROFILE to it before any pipeline work, prints a line when that replaces
+ * a different value from the shell or .env.local, and records the profile the pipeline
+ * actually resolves in the saved result's modelProfile. Note that level 1 and level 0 use
+ * Sonnet on every stage under either profile (src/server/ai/levels.ts); the profile only
+ * changes models at levels 2-4.
+ *
+ * Every developer question is answered "skipped", so a result depends only on
  * the repository. Needs ANTHROPIC_API_KEY, GITHUB_PERSONAL_ACCESS_TOKEN and Docker, plus
  * the semgrep CLI (see scripts/try-pipeline.ts). A failed job also logs one metadata-only
  * diagnostic line to stderr (pipeline.ts logFailure; never prompts, responses or content).
@@ -48,6 +54,7 @@ import {
   runAnalysis,
 } from "@/server/analysis/pipeline";
 import { analyseRepo, type PipelineApi } from "./analyse";
+import { activeProfile } from "@/server/ai/models";
 import { formatUsd } from "@/server/ai/usage";
 import {
   ReposFileSchema,
@@ -57,6 +64,7 @@ import {
   parseRunArgs,
   parseYamlWith,
   requireRepoUrl,
+  resolveRunProfile,
   selectRepos,
 } from "./lib";
 
@@ -66,12 +74,10 @@ try {
   // No .env.local: fall back to the ambient environment.
 }
 
-const PROFILE = "demo";
 const ROOT = process.cwd();
 const PIPELINE: PipelineApi = { createAnalysis, runAnalysis, resumeWithAnswers, getAnalysis };
 
 async function main(): Promise<void> {
-  process.env.ATTACKCANVAS_MODEL_PROFILE = PROFILE;
   // A failed job logs one metadata line (stage, batch, attempts, status, error type) to
   // stderr. NODE_ENV is untouched, so no prompt dumps are written under .debug/.
   process.env[FAILURE_DIAGNOSTICS_ENV] = "1";
@@ -82,6 +88,11 @@ async function main(): Promise<void> {
     return;
   }
   const { names, timeoutMs, level } = args.value;
+  const { profile: requested, notice } = resolveRunProfile(args.value.profile, process.env.ATTACKCANVAS_MODEL_PROFILE);
+  if (notice) console.log(notice);
+  process.env.ATTACKCANVAS_MODEL_PROFILE = requested;
+  // What the pipeline will read (planFor(level, activeProfile())), recorded as modelProfile.
+  const profile = activeProfile();
   const config = parseYamlWith(readFileSync(`${ROOT}/eval/repos.yaml`, "utf8"), ReposFileSchema, "eval/repos.yaml");
   const repos = selectRepos(config.repos, names);
   // Fail on a blank URL before spending anything on the earlier repos.
@@ -105,11 +116,11 @@ async function main(): Promise<void> {
 
   for (const repo of repos) {
     console.log(
-      `\n${repo.name}: analysing ${repo.url} (profile ${PROFILE}, level ${level}, questions skipped, ` +
+      `\n${repo.name}: analysing ${repo.url} (profile ${profile}, level ${level}, questions skipped, ` +
         `timeout ${(timeoutMs / 1000).toFixed(0)}s per phase)`,
     );
     try {
-      const outcome = await analyseRepo(PIPELINE, repo, { timeoutMs, profile: PROFILE, level });
+      const outcome = await analyseRepo(PIPELINE, repo, { timeoutMs, profile, level });
       if (!outcome.ok) {
         for (const line of formatRunFailure(outcome.failure)) console.error(line);
         process.exitCode = 1;
