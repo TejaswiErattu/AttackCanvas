@@ -1316,3 +1316,59 @@ describe("redaction keeps the line count", () => {
     expect(() => assertNoSecrets(once)).not.toThrow();
   });
 });
+
+describe("sk- keys start at a boundary, not inside a kebab-case word", () => {
+  const KEY = "0123456789abcdefghijklmnopQRSTUV";
+  const findings = (text: string) => {
+    try {
+      assertNoSecrets(text);
+      return [];
+    } catch (e) {
+      return (e as SecretLeakError).findings.map((f) => f.type);
+    }
+  };
+
+  it.each([
+    "user-ask-chatbot-for-coupon-code",
+    "kiosk-payment-processing-service",
+    "chatbot-task-orchestrator-service",
+    "risk-assessment-reporting-pipeline-worker",
+    "flow-user-desk-ticket-escalation-queue",
+  ])("does not flag or rewrite the identifier %s", (id) => {
+    expect(findings(id)).toEqual([]);
+    expect(() => assertNoSecretsInPrompt(`- component ${id}: handles requests`)).not.toThrow();
+    expect(redact(`component ${id} calls ${id}-api`, "src/app.ts").content).toBe(`component ${id} calls ${id}-api`);
+  });
+
+  it.each([
+    ["an environment variable", `OPENAI_API_KEY=sk-proj-${KEY}`, "openai_key"],
+    ["a quoted JSON value", `{"apiKey": "sk-${KEY}"}`, "openai_key"],
+    ["an authorization header", `Authorization: Bearer sk-proj-${KEY}`, "openai_key"],
+    ["the start of the text", `sk-${KEY}`, "openai_key"],
+    ["an Anthropic environment variable", `ANTHROPIC_API_KEY=sk-ant-api03-${KEY}`, "anthropic_key"],
+    ["an Anthropic JSON value", `{"key":"sk-ant-api03-${KEY}"}`, "anthropic_key"],
+    ["an Anthropic header", `x-api-key: sk-ant-api03-${KEY}`, "anthropic_key"],
+    ["a percent-encoded '='", `https://example.test/?key%3Dsk-${KEY}`, "openai_key"],
+    ["a percent-encoded space", `Bearer%20sk-proj-${KEY}`, "openai_key"],
+    ["a JSON \\u escape", `"\\u0022sk-${KEY}"`, "openai_key"],
+    ["a \\n escape inside a string", `"first line\\nsk-ant-api03-${KEY}"`, "anthropic_key"],
+  ])("still detects a key after %s", (_where, text, type) => {
+    expect(findings(text)).toEqual([type]);
+    expect(redact(text, "src/config.ts").content).toContain(`[REDACTED:${type}]`);
+    expect(redact(text, "src/config.ts").content).not.toContain(KEY);
+  });
+
+  it("keeps the final prompt guard closed on a real key beside an identifier that looks like one", () => {
+    const prompt = `- component kiosk-payment-processing-service\n  env: OPENAI_API_KEY=sk-proj-${KEY}\n`;
+    expect(() => assertNoSecretsInPrompt(prompt)).toThrow(SecretLeakError);
+    try {
+      assertNoSecretsInPrompt(prompt);
+    } catch (e) {
+      expect((e as SecretLeakError).findings).toEqual([{ type: "openai_key", line: 2 }]);
+    }
+  });
+
+  it("documents the trade-off: a key glued onto a word with no separator is not an sk- finding", () => {
+    expect(findings(`tokensk-${KEY}`)).not.toContain("openai_key");
+  });
+});

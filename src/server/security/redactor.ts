@@ -287,6 +287,22 @@ export function isConfigFilePath(path: string): boolean {
 }
 
 /**
+ * Where an "sk-" key may start. Unanchored, the OpenAI shape matched inside ordinary
+ * kebab-case words: "user-ask-chatbot-for-coupon-code", "kiosk-payment-processing-service"
+ * and "chatbot-task-orchestrator-service" all contain "sk-" plus 20 id characters, so a
+ * model-chosen component id stopped a threat batch as a leaked key and redaction mangled
+ * the same words in descriptions ("kio[REDACTED:openai_key]").
+ *
+ * A key therefore starts where no letter, digit, "_" or "-" precedes it: after a quote,
+ * "=", ":", whitespace, a slash or the start of the text. Three encoded separators also
+ * count, since their last character is a letter or digit: a percent-encoded byte
+ * ("key%3Dsk-...", "Bearer%20sk-..."), a JSON \uXXXX escape and a \n, \r or \t escape.
+ * None of those can occur inside a kebab-case id. The trade-off: a key glued straight onto
+ * a word with no separator at all ("tokensk-...") is no longer recognised as an sk- key.
+ */
+const SK_KEY_START = String.raw`(?:(?<![A-Za-z0-9_-])|(?<=%[0-9A-Fa-f]{2})|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\[nrt]))`;
+
+/**
  * Order is priority: when matches overlap, the earliest rule names the finding.
  *
  * anthropic_key must precede openai_key, because "sk-ant-..." also satisfies the
@@ -305,8 +321,8 @@ const RULES: readonly Rule[] = [
     pattern: /gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{50,}/g,
   },
   { type: "stripe_key", pattern: /(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}/g },
-  { type: "anthropic_key", pattern: /sk-ant-[A-Za-z0-9_-]{20,}/g },
-  { type: "openai_key", pattern: /sk-(?:proj-)?[A-Za-z0-9_-]{20,}/g },
+  { type: "anthropic_key", pattern: new RegExp(`${SK_KEY_START}sk-ant-[A-Za-z0-9_-]{20,}`, "g") },
+  { type: "openai_key", pattern: new RegExp(`${SK_KEY_START}sk-(?:proj-)?[A-Za-z0-9_-]{20,}`, "g") },
   { type: "slack_token", pattern: /xox[baprs]-[A-Za-z0-9-]{10,}/g },
   { type: "google_api_key", pattern: /AIza[0-9A-Za-z_-]{35}/g },
   {
