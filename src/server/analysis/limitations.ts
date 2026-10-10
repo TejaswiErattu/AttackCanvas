@@ -42,11 +42,31 @@ export type Note = {
   detail: string;
   /** A plain name for what the note is about, e.g. "GitHub Actions workflow lint.yml". */
   subject?: string;
+  /** The detector kind of the gap a "gap_bound_broadly" note is about (a GapKind). */
+  gapKind?: string;
 };
 
-export function note(code: LimitationCode, detail: string, subject?: string): Note {
-  return subject === undefined ? { code, detail } : { code, detail, subject };
+export function note(
+  code: LimitationCode,
+  detail: string,
+  subject?: string,
+  gapKind?: string,
+): Note {
+  return {
+    code,
+    detail,
+    ...(subject === undefined ? {} : { subject }),
+    ...(gapKind === undefined ? {} : { gapKind }),
+  };
 }
+
+/** One Limitations line and what its fold-out lists; the server's LimitationDetail. */
+export type LimitationEntry = {
+  code: LimitationCode | "plain";
+  sentence: string;
+  subjects: string[];
+  gapKinds?: string[];
+};
 
 /** Distinct subjects in first-seen order. */
 function subjectsOf(notes: readonly Note[]): string[] {
@@ -124,18 +144,65 @@ const CODE_ORDER: readonly LimitationCode[] = [
   "threat_ruled_out_by_answer",
 ];
 
+/** Distinct gap kinds in first-seen order. */
+function gapKindsOf(notes: readonly Note[]): string[] {
+  return [...new Set(notes.flatMap((n) => (n.gapKind ? [n.gapKind] : [])))];
+}
+
+/**
+ * The Limitations section with its detail: one entry per code that has any notes, in
+ * CODE_ORDER, then `plain` (messages already written for a reader, such as the OSV
+ * caveats; code "plain", no subjects). Blank and exactly repeated sentences are removed
+ * and the first occurrence's order kept, as for userLimitations().
+ */
+export function limitationDetails(
+  notes: readonly Note[],
+  plain: readonly string[] = [],
+): LimitationEntry[] {
+  const grouped = CODE_ORDER.flatMap((code): LimitationEntry[] => {
+    const matching = notes.filter((n) => n.code === code);
+    const sentence = matching.length ? sentenceFor(code, matching) : undefined;
+    if (!sentence) return [];
+    const gapKinds = code === "gap_bound_broadly" ? gapKindsOf(matching) : [];
+    return [
+      {
+        code,
+        sentence,
+        subjects: subjectsOf(matching),
+        ...(gapKinds.length ? { gapKinds } : {}),
+      },
+    ];
+  });
+  const seen = new Set<string>();
+  return [
+    ...grouped,
+    ...plain.map((sentence): LimitationEntry => ({ code: "plain", sentence, subjects: [] })),
+  ].flatMap((entry) => {
+    const sentence = entry.sentence.trim();
+    if (sentence === "" || seen.has(sentence)) return [];
+    seen.add(sentence);
+    return [{ ...entry, sentence }];
+  });
+}
+
 /**
  * The Limitations section: one sentence per code that has any notes, in CODE_ORDER, then
  * `plain` (messages already written for a reader, such as the OSV caveats), with exact
- * duplicates and blanks removed and the first occurrence's order kept.
+ * duplicates and blanks removed and the first occurrence's order kept. The same list as
+ * limitationDetails(), as strings: this is what goes on the wire.
  */
 export function userLimitations(notes: readonly Note[], plain: readonly string[] = []): string[] {
-  const sentences = CODE_ORDER.flatMap((code) => {
-    const matching = notes.filter((n) => n.code === code);
-    const sentence = matching.length ? sentenceFor(code, matching) : undefined;
-    return sentence ? [sentence] : [];
+  return limitationDetails(notes, plain).map((entry) => entry.sentence);
+}
+
+/** Entries with a sentence already seen dropped; the first occurrence wins. */
+export function mergeDetails(...lists: readonly (readonly LimitationEntry[])[]): LimitationEntry[] {
+  const seen = new Set<string>();
+  return lists.flat().filter((entry) => {
+    if (seen.has(entry.sentence)) return false;
+    seen.add(entry.sentence);
+    return true;
   });
-  return dedupe([...sentences, ...plain]);
 }
 
 /** Every note's diagnostic text, in order, duplicates removed. */

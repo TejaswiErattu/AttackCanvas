@@ -19,6 +19,7 @@
  */
 
 import ComingSoon from "@/components/ComingSoon";
+import Limitations from "@/components/Limitations";
 import { useEffect, useMemo, useState } from "react";
 import type { DashboardViewModel } from "@/shared/viewModel";
 import { assignBoundaries } from "@/client/layoutGraph";
@@ -498,11 +499,12 @@ export default function Dashboard({
                 <h3 className="text-[11px] font-medium uppercase tracking-[0.14em] text-sev-medium">
                   Limitations
                 </h3>
-                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted">
-                  {limitations.map((item, index) => (
-                    <li key={index}>{item}</li>
-                  ))}
-                </ul>
+                <Limitations
+                  lines={limitations}
+                  details={view.limitationDetails}
+                  nodes={nodes}
+                  onSelectNode={handleSelectNode}
+                />
               </div>
             ) : null}
             {!assumptions.length && !limitations.length ? (

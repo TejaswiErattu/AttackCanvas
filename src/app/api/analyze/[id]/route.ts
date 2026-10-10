@@ -47,7 +47,12 @@ export async function GET(
   return NextResponse.json({
     ...status,
     questions: state.questions ? toQuestionData(state.questions) : undefined,
-    threatModel: state.threatModel ? toDashboardViewModel(state.threatModel) : undefined,
+    threatModel: state.threatModel
+      ? {
+          ...toDashboardViewModel(state.threatModel),
+          ...(state.limitationDetails ? { limitationDetails: state.limitationDetails } : {}),
+        }
+      : undefined,
     basisCounts: state.threatModel ? countByBasis(state.threatModel.threats) : undefined,
     hiddenSummary: state.threatModel ? summarizeHidden(state.threatModel.threats) : undefined,
     ...(state.replayed ? { replayed: true } : {}),

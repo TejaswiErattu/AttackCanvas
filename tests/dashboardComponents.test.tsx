@@ -173,3 +173,27 @@ describe("Dashboard diagram sub-views", () => {
     expect(screen.getByTestId("graph").getAttribute("data-nodes")).toBe(view.nodes.map((n) => n.id).join(","));
   });
 });
+
+describe("Limitations fold-out in the Dashboard", () => {
+  const SENTENCE = "The diagram shows the Stripe and the build job as external systems.";
+
+  it("selects the node a listed subject names, and shows other subjects as text", () => {
+    const view = {
+      ...demoView(),
+      limitations: [SENTENCE],
+      limitationDetails: [
+        {
+          code: "deployment_modelled_as_external",
+          sentence: SENTENCE,
+          subjects: ["the Stripe", "the build job"],
+        },
+      ],
+    };
+    render(<Dashboard view={view} basisCounts={{ evidence_backed: 7, assumption_dependent: 2 }} />);
+
+    const link = screen.getByRole("button", { name: /^the Stripe/ });
+    expect(screen.queryByRole("button", { name: /build job/ })).toBeNull();
+    fireEvent.click(link);
+    expect(screen.getByTestId("graph").getAttribute("data-selected")).toBe("stripe");
+  });
+});

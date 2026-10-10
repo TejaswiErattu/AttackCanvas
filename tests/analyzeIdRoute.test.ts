@@ -36,6 +36,34 @@ beforeEach(() => {
   vi.mocked(getAnalysis).mockReset();
 });
 
+describe("GET /api/analyze/[id]: limitation detail", () => {
+  const entry = { code: "threat_discarded", sentence: "1 candidate threat was discarded.", subjects: [] };
+
+  it("sends the job's limitation details beside the strings, which stay strings", async () => {
+    vi.mocked(getAnalysis).mockReturnValue({
+      id: "job-2",
+      stage: "complete",
+      cost: { calls: 0, totalUsd: 0 },
+      threatModel: { ...EMPTY_MODEL, limitations: [entry.sentence] },
+      limitationDetails: [entry],
+    } as never);
+    const json = await (await get("job-2")).json();
+    expect(json.threatModel.limitations).toEqual([entry.sentence]);
+    expect(json.threatModel.limitationDetails).toEqual([entry]);
+  });
+
+  it("omits the field when the job has none", async () => {
+    vi.mocked(getAnalysis).mockReturnValue({
+      id: "job-3",
+      stage: "complete",
+      cost: { calls: 0, totalUsd: 0 },
+      threatModel: EMPTY_MODEL,
+    } as never);
+    const json = await (await get("job-3")).json();
+    expect(json.threatModel).not.toHaveProperty("limitationDetails");
+  });
+});
+
 describe("GET /api/analyze/[id]", () => {
   it("404s for an unknown id", async () => {
     vi.mocked(getAnalysis).mockReturnValue(undefined);

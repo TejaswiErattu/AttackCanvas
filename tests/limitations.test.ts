@@ -14,6 +14,8 @@ import { describe, expect, it } from "vitest";
 import {
   dedupe,
   diagnosticsOf,
+  limitationDetails,
+  mergeDetails,
   note,
   userLimitations,
   type Note,
@@ -131,6 +133,55 @@ describe("userLimitations: grouping and wording", () => {
     expect(userLimitations(reversed).map((l) => l.replace(/the .*? as external/, "X"))).toEqual(
       userLimitations(REAL_RUN_NOTES).map((l) => l.replace(/the .*? as external/, "X")),
     );
+  });
+});
+
+describe("limitationDetails: the structured list beside the strings", () => {
+  const plain = [OSV_LINE, OSV_LINE, "  "];
+
+  it("has the same length and order as userLimitations, sentence for sentence", () => {
+    const strings = userLimitations(REAL_RUN_NOTES, plain);
+    const details = limitationDetails(REAL_RUN_NOTES, plain);
+    expect(details).toHaveLength(strings.length);
+    expect(details.map((d) => d.sentence)).toEqual(strings);
+  });
+
+  it("carries each code's plain subjects, and none for plain lines", () => {
+    const details = limitationDetails(REAL_RUN_NOTES, [OSV_LINE]);
+    expect(details.map((d) => [d.code, d.subjects])).toEqual([
+      [
+        "deployment_modelled_as_external",
+        [
+          "the Docker Compose service web",
+          "the GitHub Actions workflow e2e-test.yml",
+          "the GitHub Actions workflow lint.yml",
+        ],
+      ],
+      ["component_added_from_code", ["mongodb datastore"]],
+      ["threat_discarded", []],
+      ["plain", []],
+    ]);
+  });
+
+  it("lists the distinct gap kinds behind a broadly bound gap, and only there", () => {
+    const notes = [
+      note("gap_bound_broadly", "g1", undefined, "rate_limit_missing"),
+      note("gap_bound_broadly", "g2", undefined, "authn_missing"),
+      note("gap_bound_broadly", "g3", undefined, "rate_limit_missing"),
+      note("threat_discarded", "t"),
+    ];
+    const details = limitationDetails(notes);
+    expect(details[0]).toMatchObject({
+      code: "gap_bound_broadly",
+      gapKinds: ["rate_limit_missing", "authn_missing"],
+    });
+    expect(details[1]).not.toHaveProperty("gapKinds");
+  });
+
+  it("merges by sentence, keeping the first entry", () => {
+    const a = limitationDetails([note("threat_discarded", "x")]);
+    const b = limitationDetails([note("threat_discarded", "y"), note("answer_not_applied", "z")]);
+    expect(mergeDetails(a, b).map((d) => d.code)).toEqual(["threat_discarded", "answer_not_applied"]);
   });
 });
 

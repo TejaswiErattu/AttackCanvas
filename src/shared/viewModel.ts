@@ -187,7 +187,24 @@ export type DashboardViewModel = {
   visibleFilterOptions: FilterOptions;
   assumptions: string[];
   limitations: string[];
+  /** Optional: absent for a saved or demo result, where every limitation is plain text. */
+  limitationDetails?: LimitationDetail[];
   filterOptions: FilterOptions;
+};
+
+/**
+ * One Limitations line with what the fold-out lists. `sentence` is byte-identical to the
+ * string of the same text in `limitations`; the dashboard matches the two by it. Lines with
+ * no entry here (the OSV caveats, the static-analysis note) are plain text.
+ */
+export type LimitationDetail = {
+  /** A server LimitationCode, or "plain" for a line that was already written for a reader. */
+  code: string;
+  sentence: string;
+  /** Plain names the sentence groups: a route, a component, a workflow file. */
+  subjects: string[];
+  /** Detector gap kinds (keys of GAP_KIND_LABELS) behind a "gap_bound_broadly" line. */
+  gapKinds?: string[];
 };
 
 export type AnalysisStatus = {

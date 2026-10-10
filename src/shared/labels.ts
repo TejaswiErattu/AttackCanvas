@@ -53,6 +53,26 @@ export const EVIDENCE_SOURCE_LABELS = {
   developer: "Developer",
 } as const satisfies Record<EvidenceSource, string>;
 
+/**
+ * What each control-gap check looks for, as a reader would name it. Keyed by the detector's
+ * GapKind (src/server/detect/types.ts); the server asserts it covers every kind.
+ */
+export const GAP_KIND_LABELS = {
+  authz_missing: "ownership and role checks",
+  authn_missing: "authentication",
+  rate_limit_missing: "rate limiting",
+  csrf_missing: "CSRF protection",
+  security_headers_missing: "security response headers",
+  input_validation_missing: "input validation",
+  transport_insecure: "transport encryption",
+  password_storage_weak: "password hashing",
+  logging_missing: "security logging",
+  error_handling_gap: "error handling",
+  cors_permissive: "cross-origin (CORS) policy",
+  supply_chain_integrity: "dependency integrity",
+  client_secret_storage: "secret storage in the browser",
+} as const;
+
 export const STAGE_LABELS = {
   queued: "Queued",
   loading_repo: "Loading repository",

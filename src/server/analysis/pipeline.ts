@@ -104,7 +104,12 @@ import {
 } from "@/server/analysis/architecture";
 import { failedBatchOf, generateThreats } from "@/server/analysis/threats";
 import { assembleThreatModel } from "@/server/analysis/assemble";
-import { dedupe, userLimitations } from "@/server/analysis/limitations";
+import {
+  dedupe,
+  limitationDetails,
+  mergeDetails,
+  type LimitationEntry,
+} from "@/server/analysis/limitations";
 import { selectQuestions, type QuestionEffects } from "@/server/questions";
 import { applyAnswers, type DeveloperAnswer } from "@/server/analysis/answers";
 import { AiError, type CallFailure, type ClaudeDeps, type RequestDiagnostic } from "@/server/ai/claude";
@@ -207,6 +212,12 @@ export type AnalysisState = {
    * Logged in development and saved by the eval runner.
    */
   diagnostics: string[];
+  /**
+   * What the fold-out under each Limitations line lists (subjects, gap kinds), parallel to
+   * the sentences in `threatModel.limitations`, which stay plain strings. Sent to the
+   * dashboard beside the view model, never inside the ThreatModel.
+   */
+  limitationDetails?: LimitationEntry[];
   /** Non-fatal degradations (Semgrep down), surfaced as assemble's droppedStages. */
   droppedStages: string[];
   /**
@@ -847,6 +858,7 @@ export async function architectureAndThreats(input: ModelStagesInput): Promise<{
   architecture: ReturnType<typeof mergeArchitecture>;
   engine: Awaited<ReturnType<typeof generateThreats>>;
   model: ThreatModel;
+  limitationDetails: LimitationEntry[];
 }> {
   const { scanned, deps } = input;
   const facts = buildRepoFacts({
@@ -901,6 +913,12 @@ export async function architectureAndThreats(input: ModelStagesInput): Promise<{
   });
   input.checkDeadline?.(); // don't start the paid selectQuestions call if already past
 
+  // Reader-facing: one plain sentence per kind of uncertainty. The merge's and the
+  // engine's own messages (component ids, batch numbers) go to diagnostics in runSteps.
+  const details = limitationDetails(
+    [...(architecture.notes ?? []), ...(engine.notes ?? [])],
+    scanned.osvLimitations,
+  );
   const assembled = assembleThreatModel({
     analysisLevel: input.analysisLevel,
     repo: facts.summary,
@@ -912,12 +930,7 @@ export async function architectureAndThreats(input: ModelStagesInput): Promise<{
     threats: engine.threats,
     gaps: scanned.detector.gaps,
     assumptions: [],
-    // Reader-facing: one plain sentence per kind of uncertainty. The merge's and the
-    // engine's own messages (component ids, batch numbers) go to diagnostics in runSteps.
-    limitations: userLimitations(
-      [...(architecture.notes ?? []), ...(engine.notes ?? [])],
-      scanned.osvLimitations,
-    ),
+    limitations: details.map((entry) => entry.sentence),
     droppedStages: scanned.droppedStages,
   });
   if (!assembled.ok) {
@@ -925,7 +938,7 @@ export async function architectureAndThreats(input: ModelStagesInput): Promise<{
       issues: assembled.issues,
     });
   }
-  return { architecture, engine, model: assembled.model };
+  return { architecture, engine, model: assembled.model, limitationDetails: details };
 }
 
 async function runSteps(state: AnalysisState, deps: PipelineDeps): Promise<AnalysisState> {
@@ -1020,6 +1033,7 @@ async function runSteps(state: AnalysisState, deps: PipelineDeps): Promise<Analy
     shouldContinue: () => !state.cancelled && Date.now() < state.deadlineAt,
   });
   const { architecture, engine } = assembled;
+  state.limitationDetails = assembled.limitationDetails;
 
   const outputIssues = checkModelOutput({
     threats: assembled.model.threats,
@@ -1167,7 +1181,7 @@ export async function resumeWithAnswers(
     (async () => {
       // applyAnswers already adds its reader-facing sentences to model.limitations; its
       // diagnostic lines (question and threat ids) go to the job, not the model.
-      const { model, limitations } = applyAnswers({
+      const { model, limitations, notes } = applyAnswers({
         model: threatModel,
         effects: pending.effects,
         gaps: pending.gaps,
@@ -1177,6 +1191,10 @@ export async function resumeWithAnswers(
       setStage(state, "finalizing");
 
       addDiagnostics(state, limitations);
+      state.limitationDetails = mergeDetails(
+        state.limitationDetails ?? [],
+        limitationDetails(notes),
+      );
       const patched: ThreatModel = { ...model, limitations: dedupe(model.limitations) };
       const validated = validateThreatModel(patched);
       if (!validated.ok) {

@@ -918,11 +918,11 @@ function bindAll(
     const bound = ids.length > 0 ? ids.join(", ") : "none";
     if (repoWide) {
       limitations.push(
-        note("gap_bound_broadly", `Gap ${oneLine(gap.id)} (${oneLine(gap.control)}) is in ${oneLine(gap.file)}, a repository-wide file (dependency manifest or deployment config); repository-wide fallback binding used ${VIA_TEXT[via]}: ${bound}.`),
+        note("gap_bound_broadly", `Gap ${oneLine(gap.id)} (${oneLine(gap.control)}) is in ${oneLine(gap.file)}, a repository-wide file (dependency manifest or deployment config); repository-wide fallback binding used ${VIA_TEXT[via]}: ${bound}.`, undefined, gap.kind),
       );
     } else if (gap.scope !== "repository" && via !== "exact") {
       limitations.push(
-        note("gap_bound_broadly", `Gap ${oneLine(gap.id)} (${oneLine(gap.control)}) in ${oneLine(gap.file)} has no component listing that file; fallback binding used ${VIA_TEXT[via]}: ${bound}.`),
+        note("gap_bound_broadly", `Gap ${oneLine(gap.id)} (${oneLine(gap.control)}) in ${oneLine(gap.file)} has no component listing that file; fallback binding used ${VIA_TEXT[via]}: ${bound}.`, undefined, gap.kind),
       );
     }
   }

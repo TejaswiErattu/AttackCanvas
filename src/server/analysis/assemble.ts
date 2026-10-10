@@ -17,6 +17,7 @@
 import type { ControlGap, GapKind } from "@/server/detect/types";
 import { dedupe } from "@/server/analysis/limitations";
 import { isGapEvidence, scoreThreat } from "@/server/scoring";
+import { GAP_KIND_LABELS } from "@/shared/labels";
 import { mapOwasp2021 } from "@/shared/owaspMap";
 import {
   Owasp2025Schema,
@@ -197,22 +198,8 @@ function unresolvedEvidenceIssues(
 export const STATIC_ANALYSIS_LIMITATION =
   "Findings come from reading the source code, not running it. Routes registered at run time, framework conventions the analysis does not recognise, and controls applied in code it could not trace may be missed, or reported as missing when they are present.";
 
-/** What each gap check looks for, as a reader would name it. */
-const GAP_KIND_TEXT: Record<GapKind, string> = {
-  authz_missing: "ownership and role checks",
-  authn_missing: "authentication",
-  rate_limit_missing: "rate limiting",
-  csrf_missing: "CSRF protection",
-  security_headers_missing: "security response headers",
-  input_validation_missing: "input validation",
-  transport_insecure: "transport encryption",
-  password_storage_weak: "password hashing",
-  logging_missing: "security logging",
-  error_handling_gap: "error handling",
-  cors_permissive: "cross-origin (CORS) policy",
-  supply_chain_integrity: "dependency integrity",
-  client_secret_storage: "secret storage in the browser",
-};
+/** What each gap check looks for, as a reader would name it (src/shared/labels.ts). */
+const GAP_KIND_TEXT: Record<GapKind, string> = GAP_KIND_LABELS;
 
 /** Plain names for upstream stages a caller may report as dropped. */
 const STAGE_TEXT: Record<string, string> = {
