@@ -1685,3 +1685,80 @@ describe("mergeArchitecture notes: the reported GitHub Actions case", () => {
     }
   });
 });
+
+describe("a boundary that may mix an external service with application code is flagged, not fixed", () => {
+  const boundary = (id: string, componentIds: string[], name = id) => ({
+    id,
+    name,
+    componentIds,
+    description: `${name} boundary`,
+  });
+  const mixed = (r: MergedArchitecture) =>
+    (r.notes ?? []).filter((n) => n.code === "boundary_mixes_parties").map((n) => n.subject);
+  const run = (
+    components: DraftComponent[],
+    componentIds: string[],
+    facts: RepoFacts = makeFacts(),
+  ) =>
+    mergeArchitecture(
+      draft({ components, trustBoundaries: [boundary("group", componentIds, "Group")] }),
+      facts,
+    );
+
+  it("stays quiet for a managed auth provider and database grouped as one project", () => {
+    const r = run(
+      [
+        comp("firebase-auth", ["src/web/app.tsx"], "auth_provider"),
+        comp("firestore", ["src/db/pool.ts"], "database"),
+      ],
+      ["firebase-auth", "firestore"],
+    );
+    expect(mixed(r)).toEqual([]);
+  });
+
+  it("stays quiet for an actor beside an external identity provider", () => {
+    const r = run(
+      [comp("user", ["src/web/app.tsx"], "actor"), comp("idp", ["src/web/app.tsx"], "auth_provider")],
+      ["user", "idp"],
+    );
+    expect(mixed(r)).toEqual([]);
+  });
+
+  it("warns for an application worker beside a third-party service", () => {
+    const r = run(
+      [comp("jobs", ["src/worker/jobs.ts"], "worker"), comp("mailer", ["src/worker/jobs.ts"], "external_service")],
+      ["jobs", "mailer"],
+    );
+    expect(mixed(r)).toEqual(["Group"]);
+  });
+
+  it("warns for a backend beside a third-party service", () => {
+    const r = run(
+      [comp("orders-api", ["src/api/orders.ts"], "backend"), comp("payments", ["src/api/orders.ts"], "external_service")],
+      ["orders-api", "payments"],
+    );
+    expect(mixed(r)).toEqual(["Group"]);
+    expect(r.trustBoundaries[0].componentIds).toEqual(["orders-api", "payments"]);
+    expect(userLimitations(r.notes ?? [])).toContain(
+      'Boundary "Group" may combine an external service with application-controlled code; review the grouping.',
+    );
+  });
+
+  it("stays quiet for an external_service matched to a detected deployment target beside a backend", () => {
+    const r = run(
+      [comp("container", ["Dockerfile"], "external_service"), comp("orders-api", ["src/api/orders.ts"], "backend")],
+      ["container", "orders-api"],
+      makeFacts({ deployment: [docker()], evidence: [dockerEvidence()] }),
+    );
+    expect(byIdOf(r, "container").type).toBe("external_service");
+    expect(mixed(r)).toEqual([]);
+  });
+
+  it("still warns when the deployment-shaped external_service has no deployment fact behind it", () => {
+    const r = run(
+      [comp("container", ["Dockerfile"], "external_service"), comp("orders-api", ["src/api/orders.ts"], "backend")],
+      ["container", "orders-api"],
+    );
+    expect(mixed(r)).toEqual(["Group"]);
+  });
+});

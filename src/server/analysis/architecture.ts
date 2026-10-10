@@ -1197,6 +1197,59 @@ export function validateMerged(r: MergedArchitecture): MergeIssue[] {
 }
 
 // ---------------------------------------------------------------------------
+// Boundary sanity check
+// ---------------------------------------------------------------------------
+
+/** Types that may be a service someone else runs. Deployment targets share external_service. */
+const EXTERNAL_TYPES: ReadonlySet<ComponentType> = new Set(["external_service", "auth_provider"]);
+/**
+ * Types that are executable code the application team runs. A database, storage or actor
+ * says nothing about who controls it: a managed Firestore sits beside Firebase Auth by
+ * design, and a user is not the application's code.
+ */
+const APP_CODE_TYPES: ReadonlySet<ComponentType> = new Set(["frontend", "backend", "api", "worker"]);
+
+/**
+ * Ids of components tied to a detected deployment target, by the same anchor that
+ * matches a draft component to a deployment fact. Such an external_service is the
+ * project's own build or hosting, not a third party.
+ */
+function deploymentComponentIds(kept: readonly Kept[], groups: readonly FactGroup[]): Set<string> {
+  const deployments = groups.filter((g) => g.kind === "deployment");
+  return new Set(
+    kept.filter((k) => deployments.some((g) => anchored(k, g))).map((k) => k.component.id),
+  );
+}
+
+/**
+ * One "boundary_mixes_parties" note per boundary holding both an external service that is
+ * not a known deployment target and application code. Conservative: types are the model's
+ * and ownership is not proved, so the note says the boundary may mix the two. Nothing is
+ * moved: the diagram shows what the model said, and the note says why to doubt it. Pure.
+ */
+export function mixedBoundaryNotes(
+  boundaries: readonly TrustBoundary[],
+  components: readonly Component[],
+  deploymentIds: ReadonlySet<string> = new Set(),
+): Note[] {
+  const byId = new Map(components.map((c) => [c.id, c]));
+  return boundaries.flatMap((boundary) => {
+    const members = boundary.componentIds.flatMap((id) => byId.get(id) ?? []);
+    const external = members.some((c) => EXTERNAL_TYPES.has(c.type) && !deploymentIds.has(c.id));
+    const appCode = members.some((c) => APP_CODE_TYPES.has(c.type));
+    return external && appCode
+      ? [
+          note(
+            "boundary_mixes_parties",
+            `Trust boundary ${oneLine(boundary.id)} holds an external service that is not a detected deployment target together with application code.`,
+            oneLine(boundary.name),
+          ),
+        ]
+      : [];
+  });
+}
+
+// ---------------------------------------------------------------------------
 // mergeArchitecture
 // ---------------------------------------------------------------------------
 
@@ -1230,12 +1283,8 @@ export function mergeArchitecture(
   // 2. Add back certain facts. Ids of dropped draft components stay reserved so a
   //    synthesized component can never inherit their boundary or unknown references.
   const taken = new Set(draft.components.map((c) => c.id));
-  const kept = addBackFacts(
-    survivors,
-    groupFacts(facts, evidence),
-    taken,
-    limitations,
-  );
+  const factGroups = groupFacts(facts, evidence);
+  const kept = addBackFacts(survivors, factGroups, taken, limitations);
   const components = kept.map((k) => k.component);
 
   // 3. Bind gaps.
@@ -1286,7 +1335,14 @@ export function mergeArchitecture(
     issues: [],
   };
 
-  // 7. Validate. Issues are returned; nothing throws.
+  // 7. Doubt, do not fix: a boundary that mixes a third party with first-party code is
+  //    drawn as the model said and flagged.
+  limitations.push(
+    ...mixedBoundaryNotes(trustBoundaries, laidOut, deploymentComponentIds(kept, factGroups)),
+  );
+  result.limitations = diagnosticsOf(limitations);
+
+  // 8. Validate. Issues are returned; nothing throws.
   result.issues = validateMerged(result);
   return result;
 }

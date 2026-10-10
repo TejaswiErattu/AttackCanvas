@@ -25,6 +25,8 @@ export type LimitationCode =
   | "component_added_from_code"
   /** A proposed component, flow or boundary could not be tied to loaded code and was left out. */
   | "architecture_item_dropped"
+  /** A trust boundary may hold both an external service and application code (by component type). */
+  | "boundary_mixes_parties"
   /** A possible missing control could not be tied to one component. */
   | "gap_bound_broadly"
   /** A candidate threat was discarded because it could not be verified. */
@@ -106,6 +108,11 @@ function sentenceFor(code: LimitationCode, notes: readonly Note[]): string | und
         `analysed code and ${plural(count, "was", "were")} left out, so the diagram may be missing ` +
         "a component or a data flow."
       );
+    case "boundary_mixes_parties":
+      return subjects.length
+        ? `${plural(subjects.length, "Boundary", "Boundaries")} ${listOf(subjects.map((b) => `"${b}"`))} ` +
+            `${plural(subjects.length, "may combine", "may each combine")} an external service with application-controlled code; review the grouping.`
+        : `${count} ${plural(count, "boundary", "boundaries")} may combine an external service with application-controlled code; review the grouping.`;
     case "gap_bound_broadly":
       return (
         `${count} possible missing ${plural(count, "control", "controls")} could not be tied to a single ` +
@@ -138,6 +145,7 @@ const CODE_ORDER: readonly LimitationCode[] = [
   "deployment_modelled_as_external",
   "component_added_from_code",
   "architecture_item_dropped",
+  "boundary_mixes_parties",
   "gap_bound_broadly",
   "threat_discarded",
   "answer_not_applied",
