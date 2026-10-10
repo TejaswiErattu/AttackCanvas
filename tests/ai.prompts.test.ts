@@ -2,6 +2,8 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -14,6 +16,8 @@ import {
   loadPrompt,
 } from "@/server/ai/prompts";
 import { SECURITY_PREAMBLE } from "@/server/security/injection";
+import { ArchitectureDraftSchema } from "@/shared/schema";
+import { mixedBoundaryNotes } from "@/server/analysis/architecture";
 
 let root: string;
 let dir: string;
@@ -102,5 +106,117 @@ describe("loadPrompt rejects bad input before touching the filesystem", () => {
     // succeeds, returning content from above prompts/ -- which is the whole point.
     expect(() => loadPrompt("../outside", 1, dir)).toThrow(/prompt name must be/);
     expect(existsSync(join(root, "outside.v1.md"))).toBe(true);
+  });
+});
+
+describe("every prompt on disk", () => {
+  const files = readdirSync(PROMPTS_DIR).filter((f) => /^[a-z]+\.v\d+\.md$/.test(f));
+
+  it("finds the prompts", () => {
+    expect(files).toContain("architecture.v2.md");
+  });
+
+  it.each(files)("%s goes on the wire behind SECURITY_PREAMBLE", (file) => {
+    const [name, version] = file.replace(/\.md$/, "").split(".v");
+    const prompt = loadPrompt(name, Number(version));
+    expect(prompt.text.startsWith(SECURITY_PREAMBLE)).toBe(true);
+    expect(prompt.text).toBe(SECURITY_PREAMBLE + prompt.body);
+  });
+});
+
+describe("prompts/architecture.v2.md grouping examples", () => {
+  const text = readFileSync(join(PROMPTS_DIR, "architecture.v2.md"), "utf8");
+  const examples = [...text.matchAll(/```json\n([\s\S]*?)```/g)].map((m) =>
+    ArchitectureDraftSchema.strict().parse(JSON.parse(m[1])),
+  );
+  const [a, b, c] = examples;
+
+  /**
+   * The boundary each component is meant to sit in, written out here rather than read from
+   * the examples, so a regrouped example fails instead of agreeing with itself.
+   */
+  const INTENDED: Record<string, string>[] = [
+    {
+      spa: "browser",
+      assistant: "browser",
+      "local-storage": "browser",
+      "firebase-auth": "firebase-project",
+      firestore: "firebase-project",
+      "model-api": "ai-provider",
+      "publish-workflow": "ci",
+      "static-host": "hosting",
+    },
+    {
+      user: "public-internet",
+      "reverse-proxy": "application",
+      "app-api": "application",
+      "admin-routes": "admin-area",
+      "session-db": "datastore",
+    },
+    {
+      "web-client": "browser",
+      "app-server": "application",
+      "webhook-worker": "application",
+      idp: "identity-provider",
+      "payments-api": "payments-provider",
+    },
+  ];
+
+  it("keeps v1's text and adds only the grouping section", () => {
+    const v1 = readFileSync(join(PROMPTS_DIR, "architecture.v1.md"), "utf8");
+    const added = /### How to group[\s\S]*?(?=## What you must not do)/;
+    expect(text.replace(added, "")).toBe(v1);
+  });
+
+  it("tells the model never to copy an example's ids or names", () => {
+    expect(text).toMatch(/Never copy a component id, component name or\s+boundary name from an example/);
+  });
+
+  it("has three complete drafts that parse against ArchitectureDraftSchema", () => {
+    expect(examples).toHaveLength(3);
+  });
+
+  it.each([0, 1, 2])("example %i puts every component in its intended boundary, once", (i) => {
+    const { components, trustBoundaries } = examples[i];
+    const placed = trustBoundaries.flatMap((bd) => bd.componentIds.map((id) => [id, bd.id]));
+    expect(Object.fromEntries(placed)).toEqual(INTENDED[i]);
+    expect(placed).toHaveLength(components.length);
+    expect(components.map((k) => k.id).sort()).toEqual(Object.keys(INTENDED[i]).sort());
+  });
+
+  it.each([0, 1, 2])("example %i marks crossings by the intended boundaries", (i) => {
+    for (const f of examples[i].dataFlows) {
+      const from = INTENDED[i][f.sourceId];
+      const to = INTENDED[i][f.targetId];
+      expect(from && to, f.id).toBeTruthy();
+      expect(f.crossesTrustBoundary, f.id).toBe(from !== to);
+      expect(f.boundaryId, f.id).toBe(from !== to ? to : undefined);
+    }
+  });
+
+  it("example A: CI publishes to hosting and the browser is served from hosting", () => {
+    const edges = a.dataFlows.map((f) => `${INTENDED[0][f.sourceId]}->${INTENDED[0][f.targetId]}`);
+    expect(edges).toContain("ci->hosting");
+    expect(edges).toContain("hosting->browser");
+    expect(edges).not.toContain("ci->browser");
+  });
+
+  it.each([0, 1, 2])("example %i draws no boundary_mixes_parties warning", (i) => {
+    const { components, trustBoundaries } = examples[i];
+    expect(mixedBoundaryNotes(trustBoundaries, components)).toEqual([]);
+  });
+
+  it("warns when an example's third party is moved in with application code", () => {
+    const merged = c.trustBoundaries.map((bd) =>
+      bd.id === "application" ? { ...bd, componentIds: [...bd.componentIds, "payments-api"] } : bd,
+    );
+    expect(mixedBoundaryNotes(merged, c.components).map((n) => n.subject)).toEqual(["Application"]);
+
+    const proxyWithModel = b.trustBoundaries.map((bd) =>
+      bd.id === "application" ? { ...bd, componentIds: [...bd.componentIds, "model-api"] } : bd,
+    );
+    expect(
+      mixedBoundaryNotes(proxyWithModel, [...b.components, ...a.components]).map((n) => n.subject),
+    ).toEqual(["Application"]);
   });
 });

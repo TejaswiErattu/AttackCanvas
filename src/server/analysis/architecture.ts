@@ -65,7 +65,7 @@ import {
 // ---------------------------------------------------------------------------
 
 export const ARCHITECTURE_PROMPT_NAME = "architecture";
-export const ARCHITECTURE_PROMPT_VERSION = 1;
+export const ARCHITECTURE_PROMPT_VERSION = 2;
 
 /**
  * Output budget. Above the client's 8000 default because a draft carrying a dozen
@@ -124,7 +124,7 @@ export type InferArchitectureResult = {
   usage: CallUsage;
   /** 1 when the first reply validated, 2 when the retry saved it. */
   attempts: number;
-  /** "architecture.v1". Recorded alongside whatever the draft becomes. */
+  /** "architecture.v2". Recorded alongside whatever the draft becomes. */
   promptId: string;
   /** Where the raw draft was dumped, when it was. Development only. */
   draftPath?: string;

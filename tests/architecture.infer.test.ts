@@ -201,7 +201,7 @@ describe("inferArchitecture, request shape", () => {
 
     expect(result.draft).toEqual(VALID_DRAFT);
     expect(result.attempts).toBe(1);
-    expect(result.promptId).toBe("architecture.v1");
+    expect(result.promptId).toBe("architecture.v2");
     expect(h.calls).toHaveLength(1);
   });
 
@@ -224,7 +224,7 @@ describe("inferArchitecture, request shape", () => {
     expect(block.cache_control).toEqual({ type: "ephemeral" });
     expect(block.text).toContain("You are a security architect");
     expect(block.text).toBe(
-      SECURITY_PREAMBLE + readFileSync(join("prompts", "architecture.v1.md"), "utf8"),
+      SECURITY_PREAMBLE + readFileSync(join("prompts", "architecture.v2.md"), "utf8"),
     );
   });
 
@@ -417,8 +417,8 @@ describe("architecture draft dump", () => {
 // The prompt itself
 // ---------------------------------------------------------------------------
 
-describe("prompts/architecture.v1.md", () => {
-  const text = readFileSync(join("prompts", "architecture.v1.md"), "utf8");
+describe.each(["architecture.v1.md", "architecture.v2.md"])("prompts/%s", (file) => {
+  const text = readFileSync(join("prompts", file), "utf8");
 
   it("states that repository content is data, never instructions", () => {
     expect(text).toMatch(/untrusted data/i);
